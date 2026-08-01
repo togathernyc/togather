@@ -95,6 +95,15 @@ import {
   type RoleCatalogEntry,
 } from "../utils/taskAuthoring";
 import {
+  formatSharedTaskTeams,
+  formatTaskProvenance,
+  heldRolePairs,
+  planSubtitle,
+  shouldShowTaskProvenance,
+  shouldShowTeamNames,
+  type RolePair,
+} from "../utils/servingProvenance";
+import {
   diagnoseMineEmpty,
   mineEmptyCopy,
   myRoleNamesFromCrew,
@@ -129,6 +138,12 @@ type ServingTask = {
   segment: Segment;
   isPersonal: boolean;
   completed: boolean;
+  /**
+   * The viewer's own (team, role) pairs this task matched on — the WHY of it
+   * being in their list. Empty for personal tasks. Only rendered when the
+   * viewer holds more than one pair; see `utils/servingProvenance.ts`.
+   */
+  roles?: RolePair[];
   timeLabel?: string | null;
   // Personal-only
   note?: string | null;
@@ -245,15 +260,18 @@ function notify(title: string, message: string) {
 
 /**
  * A `getServingEligibility` plan. Matches `CachedServingPlan` so the whole list
- * can be persisted for offline via `useCachedServingPlans` — the child section
- * only reads `planId`/`title`/`startsAt`.
+ * can be persisted for offline via `useCachedServingPlans`.
  */
 type EligiblePlan = {
   planId: string;
   groupId: string;
+  /** The campus that rostered the viewer — the plan header's subtitle. */
+  groupName?: string;
   title: string;
   startsAt: number;
   endsAt: number;
+  /** The viewer's own teams on this plan (mirrors the backend's `teamIds`). */
+  teamNames?: string[];
 };
 
 /**
@@ -763,6 +781,18 @@ function ServingTasksPlanSection({ plan, wa }: { plan: EligiblePlan; wa: boolean
   // personal tasks are the ones the user adds themselves.
   const myTemplateTaskCount = allTasks.filter((t) => !t.isPersonal).length;
 
+  // --- Provenance ------------------------------------------------------------
+  // Every (team, role) the viewer holds on THIS plan, from the crew rows alone —
+  // the only complete source. `null` until they resolve (offline: until the
+  // cached copy loads), which suppresses every label rather than deciding from
+  // the task rows, whose roles are a subset that can only under-report. See
+  // `utils/servingProvenance.ts` for why that matters here specifically.
+  // (Not memoised: `allTasks` is rebuilt every render anyway, and this is a
+  // handful of array passes over a list that is already being mapped to rows.)
+  const heldPairs = heldRolePairs(effCrew);
+  const showProvenance = shouldShowTaskProvenance(heldPairs);
+  const showTeamNames = shouldShowTeamNames(heldPairs);
+
   // WHY the "Mine" list is empty. Three unrelated causes used to share one
   // message ("No preloaded task. Please contact your team lead to add tasks.")
   // that was wrong for two of them; `diagnoseMineEmpty` tells them apart from
@@ -805,6 +835,7 @@ function ServingTasksPlanSection({ plan, wa }: { plan: EligiblePlan; wa: boolean
 
         <ServingHeader
           title={plan.title}
+          subtitle={planSubtitle(plan.groupName, plan.teamNames)}
           startsAt={plan.startsAt}
           done={overallDone}
           total={overallTotal}
@@ -918,6 +949,11 @@ function ServingTasksPlanSection({ plan, wa }: { plan: EligiblePlan; wa: boolean
                       <TaskRow
                         key={task.key}
                         task={task}
+                        provenance={
+                          showProvenance
+                            ? formatTaskProvenance(task.roles, showTeamNames)
+                            : null
+                        }
                         first={i === 0}
                         colors={colors}
                         primaryColor={primaryColor}
@@ -1018,6 +1054,7 @@ function ServingTasksPlanSection({ plan, wa }: { plan: EligiblePlan; wa: boolean
           <SharedSection
             tasks={effShared}
             optimistic={sharedOverlay}
+            heldPairs={heldPairs}
             colors={colors}
             primaryColor={primaryColor}
             onToggle={toggleShared}
@@ -1093,6 +1130,7 @@ function formatWhen(startsAt: number): string {
 
 function ServingHeader({
   title,
+  subtitle,
   startsAt,
   done,
   total,
@@ -1102,6 +1140,7 @@ function ServingHeader({
   wa,
 }: {
   title: string;
+  subtitle: string | null;
   startsAt?: number;
   done: number;
   total: number;
@@ -1119,6 +1158,18 @@ function ServingHeader({
       >
         {title}
       </Text>
+      {subtitle ? (
+        <Text
+          style={[
+            styles.headerSubtitle,
+            wa && waStyles.headerSubtitle,
+            { color: colors.textSecondary },
+          ]}
+          numberOfLines={2}
+        >
+          {subtitle}
+        </Text>
+      ) : null}
       {startsAt ? (
         <Text
           style={[
@@ -1168,6 +1219,12 @@ type ThemeColors = ReturnType<typeof useTheme>["colors"];
 
 interface TaskRowProps {
   task: ServingTask;
+  /**
+   * "Camera", or "Production · Camera" — which of the viewer's roles rostered
+   * this task. `null` means don't say (the single-role case, and every personal
+   * task); the row then renders exactly as it always has.
+   */
+  provenance: string | null;
   first: boolean;
   colors: ThemeColors;
   primaryColor: string;
@@ -1195,6 +1252,7 @@ const VIEWER_HOW_TO_ICONS: Record<
 
 function TaskRow({
   task,
+  provenance,
   first,
   colors,
   primaryColor,
@@ -1278,6 +1336,31 @@ function TaskRow({
               <Text style={[styles.taskMeta, wa && waStyles.taskMeta, { color: colors.textTertiary }]}>
                 Added by you
               </Text>
+            </View>
+          ) : provenance ? (
+            <View style={styles.taskMetaRow}>
+              <View style={styles.teamCue}>
+                <Ionicons
+                  name="person-circle-outline"
+                  size={12}
+                  color={colors.textTertiary}
+                />
+                {/* Capped like the plan title (1 line) and the header
+                    subtitle (2): two roles across two teams reads
+                    "Production · Camera & Usher, Hospitality · Greeter", which
+                    with real team names wraps several lines deep on EVERY row
+                    of the checklist. */}
+                <Text
+                  style={[
+                    styles.taskMeta,
+                    wa && waStyles.taskMeta,
+                    { color: colors.textTertiary },
+                  ]}
+                  numberOfLines={2}
+                >
+                  {provenance}
+                </Text>
+              </View>
             </View>
           ) : null}
 
@@ -1592,6 +1675,7 @@ function SectionPills({
 function SharedSection({
   tasks,
   optimistic,
+  heldPairs,
   colors,
   primaryColor,
   onToggle,
@@ -1600,6 +1684,8 @@ function SharedSection({
 }: {
   tasks: SharedTask[] | undefined;
   optimistic: Record<string, boolean>;
+  /** The viewer's (team, role) pairs — decides whether teams get named. */
+  heldPairs: RolePair[];
   colors: ThemeColors;
   primaryColor: string;
   onToggle: (taskId: string, next: boolean) => void;
@@ -1667,6 +1753,7 @@ function SharedSection({
                 <SharedTaskRow
                   key={task.taskId}
                   task={task}
+                  teamLabel={formatSharedTaskTeams(task.teamNames, heldPairs)}
                   completed={stateOf(task)}
                   first={i === 0}
                   colors={colors}
@@ -1686,6 +1773,7 @@ function SharedSection({
 
 function SharedTaskRow({
   task,
+  teamLabel,
   completed,
   first,
   colors,
@@ -1695,6 +1783,12 @@ function SharedTaskRow({
   onOpenHowTo,
 }: {
   task: SharedTask;
+  /**
+   * The task's own team name(s), or `null` when the viewer is on a single team
+   * and naming it would be noise — the row then reads plain "Team task", as it
+   * always has.
+   */
+  teamLabel: string | null;
   completed: boolean;
   first: boolean;
   colors: ThemeColors;
@@ -1760,8 +1854,13 @@ function SharedTaskRow({
           <View style={styles.taskMetaRow}>
             <View style={styles.teamCue}>
               <Ionicons name="people" size={12} color={colors.textTertiary} />
-              <Text style={[styles.taskMeta, wa && waStyles.taskMeta, { color: colors.textTertiary }]}>
-                Team task
+              {/* Capped for the same reason as the Mine rows' provenance: a
+                  shared task names every team it spans. */}
+              <Text
+                style={[styles.taskMeta, wa && waStyles.taskMeta, { color: colors.textTertiary }]}
+                numberOfLines={2}
+              >
+                {teamLabel ? `${teamLabel} team task` : "Team task"}
               </Text>
             </View>
             {completed && task.completedByName ? (
@@ -3317,6 +3416,7 @@ const styles = StyleSheet.create({
   // Header
   header: { paddingHorizontal: 16, marginBottom: 20 },
   headerTitle: { fontSize: 26, fontWeight: "700", letterSpacing: -0.4 },
+  headerSubtitle: { fontSize: 14, fontWeight: "600", marginTop: 4 },
   headerWhen: { fontSize: 14, marginTop: 4 },
   readiness: { marginTop: 16, gap: 8 },
   readinessLabelRow: {
@@ -3557,6 +3657,11 @@ const waStyles = StyleSheet.create({
     fontSize: WA_TYPE_HEADER_BLOCK,
     fontWeight: WA_WEIGHT_BOLD,
     letterSpacing: 0,
+  },
+  headerSubtitle: {
+    fontSize: WA_TYPE_SUBTITLE,
+    fontWeight: WA_WEIGHT_SEMIBOLD,
+    marginTop: 6,
   },
   headerWhen: { fontSize: WA_TYPE_SUBTITLE, marginTop: 6 },
   readinessLabel: { fontSize: WA_TYPE_SUBTITLE, fontWeight: WA_WEIGHT_REGULAR },

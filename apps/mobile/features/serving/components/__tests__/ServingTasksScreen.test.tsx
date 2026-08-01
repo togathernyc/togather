@@ -205,7 +205,13 @@ function personalTask(overrides: Record<string, unknown> = {}) {
   };
 }
 
-type EligiblePlan = { planId: string; title: string; startsAt: number };
+type EligiblePlan = {
+  planId: string;
+  title: string;
+  startsAt: number;
+  groupName?: string;
+  teamNames?: string[];
+};
 
 const DEFAULT_PLANS: EligiblePlan[] = [
   { planId: "plan-1", title: "Sunday Gathering", startsAt: 0 },
@@ -236,14 +242,21 @@ function allTeamsRow(taskIds: string[], teamId = "team-1", roleNames = ["Camera"
 }
 
 /** A `getCrewTasks` row for the viewer themself (they hold `roleName`). */
-function myCrewRow(roleName: string) {
+function myCrewRow(
+  roleName: string,
+  team: { teamId: string; teamName: string } = {
+    teamId: "team-1",
+    teamName: "Hospitality",
+  },
+) {
   return {
     userId: "user-1",
     name: "Alex",
-    roleId: `role-${roleName}`,
+    // Role ids are team-scoped, so two teams' same-named roles differ.
+    roleId: `${team.teamId}:${roleName}`,
     roleName,
-    teamId: "team-1",
-    teamName: "Hospitality",
+    teamId: team.teamId,
+    teamName: team.teamName,
     isCurrentUser: true,
     status: "confirmed",
     done: 0,
@@ -251,6 +264,24 @@ function myCrewRow(roleName: string) {
     tasks: [],
   };
 }
+
+/** The `roles` provenance `getMyServingTasks` now attaches to a role task. */
+function rolePair(
+  roleName: string,
+  team: { teamId: string; teamName: string } = {
+    teamId: "team-1",
+    teamName: "Hospitality",
+  },
+) {
+  return {
+    roleId: `${team.teamId}:${roleName}`,
+    roleName,
+    teamId: team.teamId,
+    teamName: team.teamName,
+  };
+}
+
+const PRODUCTION = { teamId: "team-prod", teamName: "Production" };
 
 /** A `getSharedTeamTasks` row (team-level task, Shared pill only). */
 function sharedRow(taskId: string, title: string) {
@@ -1381,5 +1412,396 @@ describe("ServingTasksScreen — whatsapp-shell skin", () => {
     expect(getByText("Shared")).toBeTruthy();
     expect(getByText("Crew")).toBeTruthy();
     expect(getByText("All teams")).toBeTruthy();
+  });
+});
+
+/**
+ * Provenance: what rostered me, and which of my roles each task belongs to.
+ *
+ * Multi-plan / multi-role rendering already worked — the queries just threw
+ * away WHICH role matched, so a volunteer holding two roles (or serving two
+ * campuses on one morning) got a flat, unattributed list under headers that
+ * read identically. These pin the labels AND — just as importantly — that the
+ * single-role volunteer's list is untouched.
+ */
+describe("ServingTasksScreen — task provenance (Mine)", () => {
+  beforeEach(() => {
+    mockIsServingMode = true;
+    mockWhatsappShell = false;
+  });
+  afterEach(() => jest.clearAllMocks());
+
+  it("adds NO role chrome for a volunteer holding a single role", () => {
+    mockQueries(
+      {
+        before: [templateTask({ roles: [rolePair("Greeter")] })],
+        during: [],
+        after: [],
+      },
+      DEFAULT_PLANS,
+      { crew: [myCrewRow("Greeter")] },
+    );
+    const { getByText, queryByText } = render(<ServingTasksScreen />);
+
+    expect(getByText("Set up chairs")).toBeTruthy();
+    // The row's only meta line stays absent — nothing to disambiguate.
+    expect(queryByText("Greeter")).toBeNull();
+    expect(queryByText("Hospitality · Greeter")).toBeNull();
+  });
+
+  it("names the role once the viewer holds two on the SAME team", () => {
+    mockQueries(
+      {
+        before: [
+          templateTask({ roles: [rolePair("Greeter")] }),
+          templateTask({
+            key: "t2",
+            taskId: "task-2",
+            title: "Count the offering",
+            roles: [rolePair("Usher")],
+          }),
+        ],
+        during: [],
+        after: [],
+      },
+      DEFAULT_PLANS,
+      { crew: [myCrewRow("Greeter"), myCrewRow("Usher")] },
+    );
+    const { getByText, queryByText } = render(<ServingTasksScreen />);
+
+    expect(getByText("Greeter")).toBeTruthy();
+    expect(getByText("Usher")).toBeTruthy();
+    // One team => naming it would be pure noise.
+    expect(queryByText("Hospitality · Greeter")).toBeNull();
+  });
+
+  it("leads with the team once the viewer is on two teams", () => {
+    mockQueries(
+      {
+        before: [
+          templateTask({ roles: [rolePair("Camera", PRODUCTION)] }),
+          templateTask({
+            key: "t2",
+            taskId: "task-2",
+            title: "Greet at the door",
+            roles: [rolePair("Greeter")],
+          }),
+        ],
+        during: [],
+        after: [],
+      },
+      DEFAULT_PLANS,
+      {
+        crew: [myCrewRow("Camera", PRODUCTION), myCrewRow("Greeter")],
+      },
+    );
+    const { getByText } = render(<ServingTasksScreen />);
+
+    expect(getByText("Production · Camera")).toBeTruthy();
+    expect(getByText("Hospitality · Greeter")).toBeTruthy();
+  });
+
+  it("shows EVERY role a task matched, not just the first", () => {
+    // A task carries several roleIds; a viewer can hold more than one of them.
+    mockQueries(
+      {
+        before: [
+          templateTask({
+            roles: [rolePair("Camera", PRODUCTION), rolePair("Sound", PRODUCTION)],
+          }),
+          templateTask({
+            key: "t2",
+            taskId: "task-2",
+            title: "Greet at the door",
+            roles: [rolePair("Greeter")],
+          }),
+        ],
+        during: [],
+        after: [],
+      },
+      DEFAULT_PLANS,
+      {
+        crew: [
+          myCrewRow("Camera", PRODUCTION),
+          myCrewRow("Sound", PRODUCTION),
+          myCrewRow("Greeter"),
+        ],
+      },
+    );
+    const { getByText } = render(<ServingTasksScreen />);
+
+    expect(getByText("Production · Camera & Sound")).toBeTruthy();
+  });
+
+  it("leaves a personal task's 'Added by you' marker alone", () => {
+    mockQueries(
+      {
+        before: [
+          personalTask(),
+          templateTask({ roles: [rolePair("Camera", PRODUCTION)] }),
+        ],
+        during: [],
+        after: [],
+      },
+      DEFAULT_PLANS,
+      { crew: [myCrewRow("Camera", PRODUCTION), myCrewRow("Greeter")] },
+    );
+    const { getByText } = render(<ServingTasksScreen />);
+
+    // Nobody rostered a personal task, so it keeps its own marker only.
+    expect(getByText("Added by you")).toBeTruthy();
+    expect(getByText("Production · Camera")).toBeTruthy();
+  });
+
+  it("labels NOTHING until the crew section resolves", () => {
+    // The two sections are independent subscriptions and the tasks usually win
+    // the race. Deciding from them would render an unlabelled list and then
+    // grow a meta line on EVERY row a beat later — a full-list reflow on a
+    // checklist of toggle Pressables, where a tap already in flight lands on
+    // the neighbouring task's checkbox.
+    mockQueries(
+      {
+        before: [
+          templateTask({ roles: [rolePair("Camera", PRODUCTION)] }),
+          templateTask({
+            key: "t2",
+            taskId: "task-2",
+            title: "Greet at the door",
+            roles: [rolePair("Greeter")],
+          }),
+        ],
+        during: [],
+        after: [],
+      },
+      DEFAULT_PLANS,
+      { crew: undefined },
+    );
+    const { getByText, queryByText } = render(<ServingTasksScreen />);
+
+    expect(getByText("Set up chairs")).toBeTruthy();
+    expect(queryByText("Production · Camera")).toBeNull();
+    expect(queryByText("Hospitality · Greeter")).toBeNull();
+  });
+
+  it("labels rows for a role the plan has no tasks for", () => {
+    // The viewer holds Camera AND Usher; the plan only has Camera tasks. Only
+    // the crew rows know about Usher — the task roles are a strict subset — so
+    // reading them would call this a single-role volunteer and drop the labels.
+    // That degradation would bite hardest offline, at the venue, which is
+    // exactly where "which roster is this from?" gets asked.
+    mockQueries(
+      {
+        before: [templateTask({ roles: [rolePair("Camera", PRODUCTION)] })],
+        during: [],
+        after: [],
+      },
+      DEFAULT_PLANS,
+      { crew: [myCrewRow("Camera", PRODUCTION), myCrewRow("Usher")] },
+    );
+    const { getByText } = render(<ServingTasksScreen />);
+
+    expect(getByText("Production · Camera")).toBeTruthy();
+  });
+
+  it("caps the label's height so a long one can't push the list around", () => {
+    // "Production · Camera & Usher, Hospitality · Greeter" with real team names
+    // wraps several lines deep, on every row — the plan title and the header
+    // subtitle are both capped for the same reason.
+    mockQueries(
+      {
+        before: [
+          templateTask({
+            roles: [rolePair("Camera", PRODUCTION), rolePair("Sound", PRODUCTION)],
+          }),
+          templateTask({
+            key: "t2",
+            taskId: "task-2",
+            title: "Greet at the door",
+            roles: [rolePair("Greeter")],
+          }),
+        ],
+        during: [],
+        after: [],
+      },
+      DEFAULT_PLANS,
+      {
+        crew: [
+          myCrewRow("Camera", PRODUCTION),
+          myCrewRow("Sound", PRODUCTION),
+          myCrewRow("Greeter"),
+        ],
+      },
+    );
+    const { getByText } = render(<ServingTasksScreen />);
+
+    expect(getByText("Production · Camera & Sound").props.numberOfLines).toBe(2);
+  });
+
+  it("adds no chrome for two DISTINCT roles that share a name on one team", () => {
+    // Nothing stops a team defining "Camera" twice (`createRole` only rejects
+    // an empty name). Both rows would be stamped with an identical bare
+    // "Camera" — noise that resolves nothing — so the gate has to count role
+    // NAMES per team, not raw pairs.
+    mockQueries(
+      {
+        before: [templateTask({ roles: [rolePair("Camera", PRODUCTION)] })],
+        during: [],
+        after: [],
+      },
+      DEFAULT_PLANS,
+      {
+        crew: [
+          { ...myCrewRow("Camera", PRODUCTION), roleId: "team-prod:camera-a" },
+          { ...myCrewRow("Camera", PRODUCTION), roleId: "team-prod:camera-b" },
+        ],
+      },
+    );
+    const { getByText, queryByText } = render(<ServingTasksScreen />);
+
+    expect(getByText("Set up chairs")).toBeTruthy();
+    expect(queryByText("Camera")).toBeNull();
+    expect(queryByText("Production · Camera")).toBeNull();
+  });
+
+  it("keeps the labels under the whatsapp-shell flag", () => {
+    mockWhatsappShell = true;
+    mockQueries(
+      {
+        before: [
+          templateTask({ roles: [rolePair("Camera", PRODUCTION)] }),
+          templateTask({
+            key: "t2",
+            taskId: "task-2",
+            title: "Greet at the door",
+            roles: [rolePair("Greeter")],
+          }),
+        ],
+        during: [],
+        after: [],
+      },
+      DEFAULT_PLANS,
+      { crew: [myCrewRow("Camera", PRODUCTION), myCrewRow("Greeter")] },
+    );
+    const { getByText } = render(<ServingTasksScreen />);
+
+    expect(getByText("Production · Camera")).toBeTruthy();
+    expect(getByText("Hospitality · Greeter")).toBeTruthy();
+  });
+});
+
+/**
+ * The Shared tab already received `teamNames` from the backend and rendered the
+ * literal string "Team task" instead. Same conditional rule as above: name the
+ * team only when the viewer is on more than one.
+ */
+describe("ServingTasksScreen — shared task team names", () => {
+  beforeEach(() => {
+    mockIsServingMode = true;
+    mockWhatsappShell = false;
+  });
+  afterEach(() => jest.clearAllMocks());
+
+  it("keeps the plain 'Team task' cue for a viewer on one team", () => {
+    mockQueries(EMPTY_MINE, DEFAULT_PLANS, {
+      shared: [sharedRow("shared-1", "Stack the chairs")],
+      crew: [myCrewRow("Greeter")],
+    });
+    const { getByText, getByLabelText, queryByText } = render(
+      <ServingTasksScreen />,
+    );
+    fireEvent.press(getByLabelText("Shared"));
+
+    expect(getByText("Team task")).toBeTruthy();
+    expect(queryByText("Hospitality team task")).toBeNull();
+  });
+
+  it("names the task's team once the viewer is on more than one", () => {
+    mockQueries(EMPTY_MINE, DEFAULT_PLANS, {
+      shared: [sharedRow("shared-1", "Stack the chairs")],
+      crew: [myCrewRow("Greeter"), myCrewRow("Camera", PRODUCTION)],
+    });
+    const { getByText, getByLabelText, queryByText } = render(
+      <ServingTasksScreen />,
+    );
+    fireEvent.press(getByLabelText("Shared"));
+
+    expect(getByText("Hospitality team task")).toBeTruthy();
+    expect(queryByText("Team task")).toBeNull();
+  });
+
+  it("names every team a multi-team shared task spans", () => {
+    mockQueries(EMPTY_MINE, DEFAULT_PLANS, {
+      shared: [
+        {
+          ...sharedRow("shared-1", "Stack the chairs"),
+          teamIds: ["team-1", "team-prod"],
+          teamNames: ["Hospitality", "Production"],
+        },
+      ],
+      crew: [myCrewRow("Greeter"), myCrewRow("Camera", PRODUCTION)],
+    });
+    const { getByText, getByLabelText } = render(<ServingTasksScreen />);
+    fireEvent.press(getByLabelText("Shared"));
+
+    expect(getByText("Hospitality, Production team task")).toBeTruthy();
+  });
+});
+
+/**
+ * Plan headers. Three same-day plans used to stack as three sections headed by
+ * byte-identical strings, which is how a leader concluded their own authored
+ * tasks had vanished: they authored on one plan and were rostered on another.
+ */
+describe("ServingTasksScreen — plan header provenance", () => {
+  beforeEach(() => {
+    mockIsServingMode = true;
+    mockWhatsappShell = false;
+  });
+  afterEach(() => jest.clearAllMocks());
+
+  it("names the group that rostered the viewer under the plan title", () => {
+    mockQueries(EMPTY_MINE, [
+      {
+        planId: "plan-1",
+        title: "Sunday Gathering",
+        startsAt: 0,
+        groupName: "FOUNT Brooklyn",
+        teamNames: ["Production"],
+      },
+    ]);
+    const { getByText } = render(<ServingTasksScreen />);
+
+    expect(getByText("FOUNT Brooklyn · Production")).toBeTruthy();
+  });
+
+  it("tells two identically-titled same-day plans apart", () => {
+    mockQueries(EMPTY_MINE, [
+      {
+        planId: "plan-1",
+        title: "Sunday Gathering",
+        startsAt: 0,
+        groupName: "FOUNT Brooklyn",
+      },
+      {
+        planId: "plan-2",
+        title: "Sunday Gathering",
+        startsAt: 0,
+        groupName: "FOUNT Manhattan",
+      },
+    ]);
+    const { getByText, getAllByText } = render(<ServingTasksScreen />);
+
+    expect(getAllByText("Sunday Gathering")).toHaveLength(2);
+    expect(getByText("FOUNT Brooklyn")).toBeTruthy();
+    expect(getByText("FOUNT Manhattan")).toBeTruthy();
+  });
+
+  it("renders no subtitle when an older offline cache has no group name", () => {
+    mockQueries(EMPTY_MINE, DEFAULT_PLANS);
+    const { getByText, queryByText } = render(<ServingTasksScreen />);
+
+    expect(getByText("Sunday Gathering")).toBeTruthy();
+    expect(queryByText("undefined")).toBeNull();
+    expect(queryByText("")).toBeNull();
   });
 });

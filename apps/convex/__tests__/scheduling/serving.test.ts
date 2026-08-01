@@ -783,3 +783,104 @@ describe("getServingEligibility", () => {
     expect(res.plans).toEqual([]);
   });
 });
+
+/**
+ * Plan provenance — the group (and the viewer's teams) behind each plan.
+ *
+ * Two campuses on one Sunday used to render as two stacked sections whose
+ * headers were byte-identical, so a leader concluded the tasks they had just
+ * authored were missing — they had authored on one plan and been rostered on
+ * the other. The names were always one `ctx.db.get` away; they just weren't
+ * returned.
+ */
+describe("serving plan provenance", () => {
+  it("names the group and the viewer's teams on every eligible plan", async () => {
+    const { t, world } = await setup();
+    const memberTok = (await generateTokens(world.channelMemberId)).accessToken;
+    const today = Date.now();
+    const plan = await insertPlan(t, world, "Sunday Service", today);
+
+    const production = await insertTeam(t, world, "Production");
+    const camera = await insertRole(t, world, production, "Camera");
+
+    await insertAssignment(t, world, {
+      planId: plan,
+      teamId: world.teamId,
+      roleId: world.roleId,
+      userId: world.channelMemberId,
+      eventDate: today,
+      status: "confirmed",
+    });
+    await insertAssignment(t, world, {
+      planId: plan,
+      teamId: production,
+      roleId: camera,
+      userId: world.channelMemberId,
+      eventDate: today,
+      status: "confirmed",
+    });
+
+    const eligibility = await t.query(
+      api.functions.scheduling.serving.getServingEligibility,
+      { token: memberTok },
+    );
+    expect(eligibility.plans).toHaveLength(1);
+    expect(eligibility.plans[0].groupName).toBe("Brooklyn Campus");
+    // `teamNames` mirrors `teamIds` — the viewer's own teams, same order.
+    expect(eligibility.plans[0].teamNames).toEqual(
+      eligibility.plans[0].teamIds.map((id) =>
+        id === (production as string) ? "Production" : "Worship Team",
+      ),
+    );
+    expect([...eligibility.plans[0].teamNames].sort()).toEqual([
+      "Production",
+      "Worship Team",
+    ]);
+  });
+
+  it("names the group on a plan opened early to prepare", async () => {
+    const { t, world } = await setup();
+    const memberTok = (await generateTokens(world.channelMemberId)).accessToken;
+    const future = Date.now() + 7 * DAY;
+    const plan = await insertPlan(t, world, "Next Sunday", future);
+
+    await insertAssignment(t, world, {
+      planId: plan,
+      teamId: world.teamId,
+      roleId: world.roleId,
+      userId: world.channelMemberId,
+      eventDate: future,
+      status: "confirmed",
+    });
+
+    const eligibility = await t.query(
+      api.functions.scheduling.serving.getServingEligibility,
+      { token: memberTok },
+    );
+    expect(eligibility.upcomingPlans).toHaveLength(1);
+    expect(eligibility.upcomingPlans[0].groupName).toBe("Brooklyn Campus");
+  });
+
+  it("names the group on every Team-roster plan section", async () => {
+    const { t, world } = await setup();
+    const memberTok = (await generateTokens(world.channelMemberId)).accessToken;
+    const today = Date.now();
+    const plan = await insertPlan(t, world, "Sunday Service", today);
+
+    await insertAssignment(t, world, {
+      planId: plan,
+      teamId: world.teamId,
+      roleId: world.roleId,
+      userId: world.channelMemberId,
+      eventDate: today,
+      status: "confirmed",
+    });
+
+    const roster = await t.query(
+      api.functions.scheduling.serving.getServingTeamRoster,
+      { token: memberTok },
+    );
+    expect(roster.plans).toHaveLength(1);
+    expect(roster.plans[0].groupName).toBe("Brooklyn Campus");
+  });
+});

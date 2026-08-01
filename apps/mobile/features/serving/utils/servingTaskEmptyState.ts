@@ -31,6 +31,7 @@
  *   • shared task count     ← `getSharedTeamTasks`
  *   • the viewer's own list ← `getMyServingTasks`
  */
+import { distinctRolePairs, type RolePair } from "./servingProvenance";
 
 /**
  * Which empty-state story to tell. Precedence is deliberate — see
@@ -134,18 +135,42 @@ export function planTaskCountsFromAllTeams(
  * serving on, so the viewer's own rows name every role they hold. An empty
  * result means the viewer has no non-declined assignment at all — `getCrewTasks`
  * short-circuits to `[]` in that case. Returns `null` while unresolved.
+ *
+ * De-duped by (team, role), NOT by role name. Two teams may each define a role
+ * called "Camera"; collapsing them told a volunteer holding both "You're
+ * serving as Camera" — understating what they hold, which is exactly the doubt
+ * ("did I miss a roster?") this copy exists to settle. When a role name DOES
+ * appear on more than one team, it is qualified with its team ("Camera
+ * (Production)"); unambiguous names stay bare so the common case reads clean.
+ *
+ * The final de-dupe is on the resulting DISPLAY STRING, not the pair. Nothing
+ * stops ONE team defining two roles both called "Camera" (`createRole` only
+ * rejects an empty name), and those two pairs qualify to the same bare
+ * "Camera" — printed per-pair that reads "You're serving as Camera and
+ * Camera." Collapsing identical strings keeps the cross-team case intact (the
+ * team qualifier makes those strings differ) while an unsayable duplicate says
+ * itself once.
  */
 export function myRoleNamesFromCrew(
-  crew: ReadonlyArray<{ isCurrentUser: boolean; roleName: string }> | undefined,
+  crew: ReadonlyArray<{ isCurrentUser: boolean } & RolePair> | undefined,
 ): string[] | null {
   if (crew === undefined) return null;
-  const seen = new Set<string>();
+  const pairs = distinctRolePairs(crew.filter((m) => m.isCurrentUser));
+
+  const teamsPerName = new Map<string, Set<string>>();
+  for (const p of pairs) {
+    const teams = teamsPerName.get(p.roleName) ?? new Set<string>();
+    teams.add(p.teamId);
+    teamsPerName.set(p.roleName, teams);
+  }
+
   const names: string[] = [];
-  for (const member of crew) {
-    if (!member.isCurrentUser) continue;
-    if (seen.has(member.roleName)) continue;
-    seen.add(member.roleName);
-    names.push(member.roleName);
+  for (const p of pairs) {
+    const name =
+      (teamsPerName.get(p.roleName)?.size ?? 0) > 1
+        ? `${p.roleName} (${p.teamName})`
+        : p.roleName;
+    if (!names.includes(name)) names.push(name);
   }
   return names;
 }
