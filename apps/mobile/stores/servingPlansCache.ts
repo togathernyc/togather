@@ -20,9 +20,18 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 export interface CachedServingPlan {
   planId: string;
   groupId: string;
+  /**
+   * The group that rostered the viewer. Cached alongside the rest because the
+   * plan headers read it — offline, two same-day plans would otherwise fall
+   * back to identical headers, the exact ambiguity it exists to remove.
+   * Optional so a cache written by an older build still rehydrates.
+   */
+  groupName?: string;
   title: string;
   startsAt: number;
   endsAt: number;
+  /** The viewer's own teams on this plan. Same optionality rationale. */
+  teamNames?: string[];
 }
 
 interface ServingPlansCacheState {

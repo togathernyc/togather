@@ -460,8 +460,8 @@ gh pr view <PR_NUMBER> --json files --jq '.files[].path'
 
 ### 4.7.2 Map Changed Files to Guides
 
-Use the **feature → guide map** in `CLAUDE.md` (section "Onboarding Guides
-(apps/web)") as the source of truth. The key mappings:
+Use the **feature → guide map** in the `guides-and-link-previews` skill
+(`.claude/skills/guides-and-link-previews/SKILL.md`) as the source of truth. The key mappings:
 
 | Changed path matches…                                                       | Guide that must stay in sync                       |
 | --------------------------------------------------------------------------- | -------------------------------------------------- |
@@ -497,7 +497,7 @@ For each documented feature touched **without** its guide being updated:
    redesigned): do **not** guess. Post a single PR comment flagging it and let
    the author decide:
    ```bash
-   gh pr comment <PR_NUMBER> --body "📝 Heads up: this PR changes \`<feature>\` but doesn't update its onboarding guide (\`apps/web/src/pages/guides/<Guide>.tsx\`). If the user-facing flow/labels changed, please update the guide (prose + mockups). See the feature→guide map in CLAUDE.md."
+   gh pr comment <PR_NUMBER> --body "📝 Heads up: this PR changes \`<feature>\` but doesn't update its onboarding guide (\`apps/web/src/pages/guides/<Guide>.tsx\`). If the user-facing flow/labels changed, please update the guide (prose + mockups). See the feature→guide map in .claude/skills/guides-and-link-previews/SKILL.md."
    ```
 
 This check is **advisory** — a missing guide update does not by itself block

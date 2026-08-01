@@ -37,10 +37,19 @@ async function createPlan(
   groupId: Id<"groups">,
   title: string,
   eventDate: number,
+  /** Opt in to a second plan on an already-planned day (multi-service Sunday). */
+  allowSameDay = false,
 ) {
   const { planId } = await t.mutation(
     api.functions.scheduling.events.createEvent,
-    { token, groupId, title, eventDate, times: [{ label: "9 AM", startsAt: eventDate }] },
+    {
+      token,
+      groupId,
+      title,
+      eventDate,
+      times: [{ label: "9 AM", startsAt: eventDate }],
+      allowSameDay,
+    },
   );
   return planId as Id<"eventPlans">;
 }
@@ -54,7 +63,7 @@ describe("rosterMatrix", () => {
 
     const sameDay = Date.now() + 7 * DAY;
     const planA = await createPlan(t, leader, world.groupId, "Service A", sameDay);
-    const planB = await createPlan(t, leader, world.groupId, "Service B", sameDay);
+    const planB = await createPlan(t, leader, world.groupId, "Service B", sameDay, true);
 
     // Need 2 Drums on A, 1 on B.
     await t.mutation(api.functions.scheduling.events.setNeededRoles, {

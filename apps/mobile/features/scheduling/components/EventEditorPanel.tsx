@@ -47,6 +47,23 @@ import {
 import type { Id } from "@services/api/convex";
 import { useAuth } from "@providers/AuthProvider";
 import { confirmAsync, notify } from "@/utils/platformAlert";
+import { errorMessage } from "@utils/error-handling";
+import {
+  parseDuplicatePlanDate,
+  savePlanDate,
+} from "../utils/duplicatePlanDate";
+
+/**
+ * Best-effort human message from a thrown value.
+ *
+ * Delegates to the shared extractor rather than reading `.message` directly: a
+ * real Convex client puts the payload on `.data` and leaves `.message` as a
+ * hybrid stacktrace with the serialized JSON embedded in it — which is what a
+ * leader was shown when a mutation failed.
+ */
+function errMessage(e: unknown): string {
+  return errorMessage(e, "Please try again.");
+}
 import { NeededRolesModal } from "./NeededRolesModal";
 import { TimesEditor } from "./TimesEditor";
 
@@ -216,12 +233,12 @@ export function EventEditorPanel({
 
   const handleChangeDate = useCallback(
     async (date: Date | null) => {
-      if (!date) return;
-      try {
-        await updateEvent({ planId, eventDate: date.getTime() });
-      } catch (e: any) {
-        notify("Couldn't update date", e?.message ?? "Please try again.");
-      }
+      await savePlanDate({
+        date,
+        save: (eventDate, allowSameDay) =>
+          updateEvent({ planId, eventDate, allowSameDay }),
+        onError: (m) => notify("Couldn't update date", m),
+      });
     },
     [updateEvent, planId],
   );
@@ -278,15 +295,33 @@ export function EventEditorPanel({
   const handleDuplicate = useCallback(async () => {
     if (!event) return;
     setMenuOpen(false);
-    try {
-      const result = await duplicateEvent({ planId });
+    const openCopy = (copyId: string) => {
       // The reactive grid will show the new column; jump the panel to the copy
       // so the leader can set its date right away.
-      router.push(
-        `/rostering/${event.groupId}/event/${result.planId}` as never,
-      );
-    } catch (e: any) {
-      notify("Couldn't duplicate", e?.message ?? "Please try again.");
+      router.push(`/rostering/${event.groupId}/event/${copyId}` as never);
+    };
+    try {
+      const result = await duplicateEvent({ planId });
+      openCopy(result.planId);
+    } catch (e) {
+      // The copy lands a week out, so duplicating twice collides.
+      const duplicate = parseDuplicatePlanDate(e);
+      if (!duplicate) {
+        notify("Couldn't duplicate", errMessage(e));
+        return;
+      }
+      const ok = await confirmAsync({
+        title: `Already a plan on ${duplicate.dayLabel}`,
+        message: `"${duplicate.existingPlanTitle}" is already on that date. Add this copy as a second plan for the same day?`,
+        confirmText: "Duplicate anyway",
+      });
+      if (!ok) return;
+      try {
+        const result = await duplicateEvent({ planId, allowSameDay: true });
+        openCopy(result.planId);
+      } catch (e2) {
+        notify("Couldn't duplicate", errMessage(e2));
+      }
     }
   }, [event, duplicateEvent, planId, router]);
 

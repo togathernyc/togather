@@ -21,6 +21,14 @@
  * A "＋ Add task" affordance opens a small inline form (title + optional note +
  * segment; a time label when adding under During) that calls `addPersonalTask`.
  *
+ * When "Mine" is empty, `MineEmptyNotice` says WHY — a plan with no tasks at
+ * all, a viewer who holds no role on the plan, or tasks that exist but name
+ * other roles are three different problems with three different fixes (see
+ * `utils/servingTaskEmptyState.ts`). It also offers a jump to "Shared" when the
+ * team has whole-team tasks, and — for a leader on a task-less plan —
+ * `PopulateFromTemplate`, which links one of the group's saved task templates
+ * via the existing `setPlanTaskTemplate`.
+ *
  * A fifth pill, "Edit", appears only for a leader/community admin
  * (`canAuthorPlanTasks` — mirrors the backend's `isGroupScheduler` gate on
  * `createTask`/`updateTask`/`deleteTask`): `AuthorSection` lets them switch
@@ -80,9 +88,30 @@ import { HowToViewer, type HowToViewerContent } from "./HowToViewer";
 import {
   buildRoleCatalog,
   canAuthorPlanTasks,
+  isTeamLevelTask,
+  roleCoveredTaskCounts,
+  roleTaskCounts,
   tasksForRole,
   type RoleCatalogEntry,
 } from "../utils/taskAuthoring";
+import {
+  formatSharedTaskTeams,
+  formatTaskProvenance,
+  heldRolePairs,
+  planSubtitle,
+  shouldShowTaskProvenance,
+  shouldShowTeamNames,
+  type RolePair,
+} from "../utils/servingProvenance";
+import {
+  diagnoseMineEmpty,
+  mineEmptyCopy,
+  myRoleNamesFromCrew,
+  planTaskCountsFromAllTeams,
+  shouldOfferSharedJump,
+  type MineEmptyFacts,
+  type MineEmptyReason,
+} from "../utils/servingTaskEmptyState";
 
 type Segment = "before" | "during" | "after";
 
@@ -109,6 +138,12 @@ type ServingTask = {
   segment: Segment;
   isPersonal: boolean;
   completed: boolean;
+  /**
+   * The viewer's own (team, role) pairs this task matched on — the WHY of it
+   * being in their list. Empty for personal tasks. Only rendered when the
+   * viewer holds more than one pair; see `utils/servingProvenance.ts`.
+   */
+  roles?: RolePair[];
   timeLabel?: string | null;
   // Personal-only
   note?: string | null;
@@ -225,15 +260,18 @@ function notify(title: string, message: string) {
 
 /**
  * A `getServingEligibility` plan. Matches `CachedServingPlan` so the whole list
- * can be persisted for offline via `useCachedServingPlans` — the child section
- * only reads `planId`/`title`/`startsAt`.
+ * can be persisted for offline via `useCachedServingPlans`.
  */
 type EligiblePlan = {
   planId: string;
   groupId: string;
+  /** The campus that rostered the viewer — the plan header's subtitle. */
+  groupName?: string;
   title: string;
   startsAt: number;
   endsAt: number;
+  /** The viewer's own teams on this plan (mirrors the backend's `teamIds`). */
+  teamNames?: string[];
 };
 
 /**
@@ -402,7 +440,7 @@ export function ServingTasksScreen() {
  * the parent — only the per-plan reconcile lives here.
  */
 function ServingTasksPlanSection({ plan, wa }: { plan: EligiblePlan; wa: boolean }) {
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const { primaryColor } = useCommunityTheme();
   const { user } = useAuth();
   const planId = plan.planId as Id<"eventPlans">;
@@ -740,10 +778,42 @@ function ServingTasksPlanSection({ plan, wa }: { plan: EligiblePlan; wa: boolean
   const overallTotal = allTasks.length;
 
   // "Preloaded" tasks are the template (assigned) tasks for the user's role;
-  // personal tasks are the ones the user adds themselves. When the role has no
-  // preloaded tasks, we guide the user to their team lead while still letting
-  // them add their own tasks per segment.
-  const hasPreloadedTasks = allTasks.some((t) => !t.isPersonal);
+  // personal tasks are the ones the user adds themselves.
+  const myTemplateTaskCount = allTasks.filter((t) => !t.isPersonal).length;
+
+  // --- Provenance ------------------------------------------------------------
+  // Every (team, role) the viewer holds on THIS plan, from the crew rows alone —
+  // the only complete source. `null` until they resolve (offline: until the
+  // cached copy loads), which suppresses every label rather than deciding from
+  // the task rows, whose roles are a subset that can only under-report. See
+  // `utils/servingProvenance.ts` for why that matters here specifically.
+  // (Not memoised: `allTasks` is rebuilt every render anyway, and this is a
+  // handful of array passes over a list that is already being mapped to rows.)
+  const heldPairs = heldRolePairs(effCrew);
+  const showProvenance = shouldShowTaskProvenance(heldPairs);
+  const showTeamNames = shouldShowTeamNames(heldPairs);
+
+  // WHY the "Mine" list is empty. Three unrelated causes used to share one
+  // message ("No preloaded task. Please contact your team lead to add tasks.")
+  // that was wrong for two of them; `diagnoseMineEmpty` tells them apart from
+  // data these four queries already carry. See `servingTaskEmptyState.ts`.
+  const mineFacts = useMemo(
+    () => ({
+      planTaskCounts: planTaskCountsFromAllTeams(effAllTeams),
+      myRoleNames: myRoleNamesFromCrew(effCrew),
+      myTemplateTaskCount,
+      // `null`, not 0, while unresolved — offline this NEVER self-corrects when
+      // the shared section was never cached, and a defaulted 0 hid the "Open
+      // Shared" pointer exactly when it matters most.
+      sharedTaskCount: effShared?.length ?? null,
+    }),
+    [effAllTeams, effCrew, myTemplateTaskCount, effShared],
+  );
+  const mineEmptyReason: MineEmptyReason = diagnoseMineEmpty(mineFacts);
+  // `loading` renders nothing, so the per-segment empty cards stay visible
+  // until we can say something true.
+  const showMineNotice =
+    mineEmptyReason !== "has-tasks" && mineEmptyReason !== "loading";
 
   // Small badges on the section pills (null hides the badge).
   const sectionCounts: Record<Section, string | null> = {
@@ -765,6 +835,7 @@ function ServingTasksPlanSection({ plan, wa }: { plan: EligiblePlan; wa: boolean
 
         <ServingHeader
           title={plan.title}
+          subtitle={planSubtitle(plan.groupName, plan.teamNames)}
           startsAt={plan.startsAt}
           done={overallDone}
           total={overallTotal}
@@ -801,7 +872,21 @@ function ServingTasksPlanSection({ plan, wa }: { plan: EligiblePlan; wa: boolean
             )
           ) : (
             <>
-            {!hasPreloadedTasks ? <NoPreloadedNotice colors={colors} wa={wa} /> : null}
+            {showMineNotice ? (
+              <MineEmptyNotice
+                reason={mineEmptyReason}
+                facts={mineFacts}
+                onViewShared={() => setSection("shared")}
+                leader={
+                  canAuthor && mineEmptyReason === "no-plan-tasks"
+                    ? { planId, groupId, isEffectivelyOffline }
+                    : null
+                }
+                colors={colors}
+                primaryColor={primaryColor}
+                wa={wa}
+              />
+            ) : null}
             {SEGMENTS.map(({ key, label }) => {
             const segmentTasks = mineWithOverlay[key] ?? [];
             const done = segmentTasks.filter((t) => t.completed).length;
@@ -837,10 +922,11 @@ function ServingTasksPlanSection({ plan, wa }: { plan: EligiblePlan; wa: boolean
                   height={4}
                 />
 
-                {/* When the role has no preloaded tasks, the notice above already
-                    explains the empty state, so we skip the per-segment empty
-                    card and leave just the "Add my own task" affordance. */}
-                {segmentTasks.length === 0 && !hasPreloadedTasks ? null : (
+                {/* When the notice above is explaining the empty state, skip
+                    the per-segment empty card and leave just the "Add my own
+                    task" affordance. (While the diagnosis is still `loading`
+                    no notice shows, so the cards stay.) */}
+                {segmentTasks.length === 0 && showMineNotice ? null : (
                 <View
                   style={[
                     styles.card,
@@ -863,6 +949,11 @@ function ServingTasksPlanSection({ plan, wa }: { plan: EligiblePlan; wa: boolean
                       <TaskRow
                         key={task.key}
                         task={task}
+                        provenance={
+                          showProvenance
+                            ? formatTaskProvenance(task.roles, showTeamNames)
+                            : null
+                        }
                         first={i === 0}
                         colors={colors}
                         primaryColor={primaryColor}
@@ -963,6 +1054,7 @@ function ServingTasksPlanSection({ plan, wa }: { plan: EligiblePlan; wa: boolean
           <SharedSection
             tasks={effShared}
             optimistic={sharedOverlay}
+            heldPairs={heldPairs}
             colors={colors}
             primaryColor={primaryColor}
             onToggle={toggleShared}
@@ -1003,6 +1095,7 @@ function ServingTasksPlanSection({ plan, wa }: { plan: EligiblePlan; wa: boolean
             groupId={groupId}
             isEffectivelyOffline={isEffectivelyOffline}
             colors={colors}
+            isDark={isDark}
             primaryColor={primaryColor}
             wa={wa}
           />
@@ -1037,6 +1130,7 @@ function formatWhen(startsAt: number): string {
 
 function ServingHeader({
   title,
+  subtitle,
   startsAt,
   done,
   total,
@@ -1046,6 +1140,7 @@ function ServingHeader({
   wa,
 }: {
   title: string;
+  subtitle: string | null;
   startsAt?: number;
   done: number;
   total: number;
@@ -1063,6 +1158,18 @@ function ServingHeader({
       >
         {title}
       </Text>
+      {subtitle ? (
+        <Text
+          style={[
+            styles.headerSubtitle,
+            wa && waStyles.headerSubtitle,
+            { color: colors.textSecondary },
+          ]}
+          numberOfLines={2}
+        >
+          {subtitle}
+        </Text>
+      ) : null}
       {startsAt ? (
         <Text
           style={[
@@ -1112,6 +1219,12 @@ type ThemeColors = ReturnType<typeof useTheme>["colors"];
 
 interface TaskRowProps {
   task: ServingTask;
+  /**
+   * "Camera", or "Production · Camera" — which of the viewer's roles rostered
+   * this task. `null` means don't say (the single-role case, and every personal
+   * task); the row then renders exactly as it always has.
+   */
+  provenance: string | null;
   first: boolean;
   colors: ThemeColors;
   primaryColor: string;
@@ -1139,6 +1252,7 @@ const VIEWER_HOW_TO_ICONS: Record<
 
 function TaskRow({
   task,
+  provenance,
   first,
   colors,
   primaryColor,
@@ -1222,6 +1336,31 @@ function TaskRow({
               <Text style={[styles.taskMeta, wa && waStyles.taskMeta, { color: colors.textTertiary }]}>
                 Added by you
               </Text>
+            </View>
+          ) : provenance ? (
+            <View style={styles.taskMetaRow}>
+              <View style={styles.teamCue}>
+                <Ionicons
+                  name="person-circle-outline"
+                  size={12}
+                  color={colors.textTertiary}
+                />
+                {/* Capped like the plan title (1 line) and the header
+                    subtitle (2): two roles across two teams reads
+                    "Production · Camera & Usher, Hospitality · Greeter", which
+                    with real team names wraps several lines deep on EVERY row
+                    of the checklist. */}
+                <Text
+                  style={[
+                    styles.taskMeta,
+                    wa && waStyles.taskMeta,
+                    { color: colors.textTertiary },
+                  ]}
+                  numberOfLines={2}
+                >
+                  {provenance}
+                </Text>
+              </View>
             </View>
           ) : null}
 
@@ -1536,6 +1675,7 @@ function SectionPills({
 function SharedSection({
   tasks,
   optimistic,
+  heldPairs,
   colors,
   primaryColor,
   onToggle,
@@ -1544,6 +1684,8 @@ function SharedSection({
 }: {
   tasks: SharedTask[] | undefined;
   optimistic: Record<string, boolean>;
+  /** The viewer's (team, role) pairs — decides whether teams get named. */
+  heldPairs: RolePair[];
   colors: ThemeColors;
   primaryColor: string;
   onToggle: (taskId: string, next: boolean) => void;
@@ -1611,6 +1753,7 @@ function SharedSection({
                 <SharedTaskRow
                   key={task.taskId}
                   task={task}
+                  teamLabel={formatSharedTaskTeams(task.teamNames, heldPairs)}
                   completed={stateOf(task)}
                   first={i === 0}
                   colors={colors}
@@ -1630,6 +1773,7 @@ function SharedSection({
 
 function SharedTaskRow({
   task,
+  teamLabel,
   completed,
   first,
   colors,
@@ -1639,6 +1783,12 @@ function SharedTaskRow({
   onOpenHowTo,
 }: {
   task: SharedTask;
+  /**
+   * The task's own team name(s), or `null` when the viewer is on a single team
+   * and naming it would be noise — the row then reads plain "Team task", as it
+   * always has.
+   */
+  teamLabel: string | null;
   completed: boolean;
   first: boolean;
   colors: ThemeColors;
@@ -1704,8 +1854,13 @@ function SharedTaskRow({
           <View style={styles.taskMetaRow}>
             <View style={styles.teamCue}>
               <Ionicons name="people" size={12} color={colors.textTertiary} />
-              <Text style={[styles.taskMeta, wa && waStyles.taskMeta, { color: colors.textTertiary }]}>
-                Team task
+              {/* Capped for the same reason as the Mine rows' provenance: a
+                  shared task names every team it spans. */}
+              <Text
+                style={[styles.taskMeta, wa && waStyles.taskMeta, { color: colors.textTertiary }]}
+                numberOfLines={2}
+              >
+                {teamLabel ? `${teamLabel} team task` : "Team task"}
               </Text>
             </View>
             {completed && task.completedByName ? (
@@ -2186,6 +2341,7 @@ function TeamRow({
 /** The slice of a `listPlanTasks` row this section reads. */
 type AuthorTask = {
   _id: string;
+  teamIds: string[];
   roleIds: string[];
   segment: Segment;
   title: string;
@@ -2197,6 +2353,7 @@ function AuthorSection({
   groupId,
   isEffectivelyOffline,
   colors,
+  isDark,
   primaryColor,
   wa,
 }: {
@@ -2204,6 +2361,7 @@ function AuthorSection({
   groupId: Id<"groups">;
   isEffectivelyOffline: boolean;
   colors: ThemeColors;
+  isDark: boolean;
   primaryColor: string;
   wa: boolean;
 }) {
@@ -2253,9 +2411,30 @@ function AuthorSection({
     (r) => r.roleId === selectedRoleId,
   );
 
+  // Team-scoped: `listPlanTasks` is plan-wide and the role catalog spans every
+  // team in the group, so team-level tasks must be matched on the SELECTED
+  // role's team or a leader would see (and be able to delete) another team's.
   const bySegment = useMemo(
-    () => tasksForRole(planTasks ?? [], selectedRoleId),
-    [planTasks, selectedRoleId],
+    () => tasksForRole(planTasks ?? [], selectedRole ?? null),
+    [planTasks, selectedRole],
+  );
+
+  // Badge numbers for the role pills. Deliberately NOT `bySegment`-derived:
+  // these count each role's OWN tasks, excluding the team-level ones
+  // `tasksForRole` folds in — see `roleTaskCounts`. A leader has to be able to
+  // spot the role with none WITHOUT tapping through every pill.
+  const countsByRoleId = useMemo(
+    () => roleTaskCounts(planTasks ?? [], roleCatalog),
+    [planTasks, roleCatalog],
+  );
+
+  // What the pill's WARNING tint is allowed to mean: nothing at all reaches a
+  // volunteer in this role. A role whose team authored everything at team level
+  // has an own-count of 0 but is fully covered — alarming on that told a leader
+  // their finished event was unauthored.
+  const coveredByRoleId = useMemo(
+    () => roleCoveredTaskCounts(planTasks ?? [], roleCatalog),
+    [planTasks, roleCatalog],
   );
 
   const [addingSegment, setAddingSegment] = useState<Segment | null>(null);
@@ -2294,6 +2473,9 @@ function AuthorSection({
           selectedRoleId={selectedRoleId}
           selectedRole={selectedRole}
           onSelectRole={setSelectedRoleId}
+          countsByRoleId={countsByRoleId}
+          coveredByRoleId={coveredByRoleId}
+          planHasTasks={planTasks.length > 0}
           bySegment={bySegment}
           planId={planId}
           isEffectivelyOffline={isEffectivelyOffline}
@@ -2305,6 +2487,7 @@ function AuthorSection({
           updateTask={updateTask}
           deleteTask={deleteTask}
           colors={colors}
+          isDark={isDark}
           primaryColor={primaryColor}
           wa={wa}
         />
@@ -2324,6 +2507,9 @@ function AuthorRoleAndSegments({
   selectedRoleId,
   selectedRole,
   onSelectRole,
+  countsByRoleId,
+  coveredByRoleId,
+  planHasTasks,
   bySegment,
   planId,
   isEffectivelyOffline,
@@ -2335,6 +2521,7 @@ function AuthorRoleAndSegments({
   updateTask,
   deleteTask,
   colors,
+  isDark,
   primaryColor,
   wa,
 }: {
@@ -2342,6 +2529,12 @@ function AuthorRoleAndSegments({
   selectedRoleId: string | null;
   selectedRole: RoleCatalogEntry | undefined;
   onSelectRole: (roleId: string) => void;
+  /** Each role's OWN task count (team-level excluded) — see `roleTaskCounts`. */
+  countsByRoleId: Record<string, number>;
+  /** Own + team-level, i.e. everything that reaches the role — the tint's input. */
+  coveredByRoleId: Record<string, number>;
+  /** False for a brand-new plan, where an all-orange row would be noise. */
+  planHasTasks: boolean;
   bySegment: Record<Segment, AuthorTask[]>;
   planId: Id<"eventPlans">;
   isEffectivelyOffline: boolean;
@@ -2356,9 +2549,15 @@ function AuthorRoleAndSegments({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   deleteTask: (args: any) => Promise<unknown>;
   colors: ThemeColors;
+  isDark: boolean;
   primaryColor: string;
   wa: boolean;
 }) {
+  // Dark ink for the warning badge. `colors.warning` is a mid-orange in every
+  // palette, so white on it measures ~2.1–2.6:1 — well under AA for 11pt/700
+  // text. These two tokens are the theme's dark ink in all four palettes
+  // (light/dark x default/Knicks), which lands at 6:1 or better on the orange.
+  const alarmInk = isDark ? colors.textInverse : colors.text;
   return (
     <>
       <ScrollView
@@ -2369,13 +2568,32 @@ function AuthorRoleAndSegments({
       >
         {roleCatalog.map((role) => {
           const active = role.roleId === selectedRoleId;
+          const count = countsByRoleId[role.roleId] ?? 0;
+          const covered = coveredByRoleId[role.roleId] ?? 0;
+          // The tint is an ALARM, so it fires only when NOTHING reaches this
+          // role — not merely when the role has no tasks of its own. A team
+          // whose plan is written entirely as "Whole team" tasks is fully
+          // authored; tinting all of its roles told the leader the opposite.
+          // Suppressed entirely on a task-less plan: every role is uncovered
+          // there, and a wall of orange adds nothing to the empty-state notice
+          // and "Populate from template" already on screen.
+          const uncovered = planHasTasks && covered === 0;
           return (
             <Pressable
               key={role.roleId}
               onPress={() => onSelectRole(role.roleId)}
               accessibilityRole="button"
               accessibilityState={{ selected: active }}
-              accessibilityLabel={`View and edit ${role.teamName} ${role.roleName} tasks`}
+              // The badge counts the role's OWN tasks, so the label has to say
+              // so: "no tasks yet" was an absolute claim that a screen reader
+              // then contradicted by reading out the team-level tasks in the
+              // list below. The team-level tally is spoken too, since it is
+              // the reason the number is 0 — and the reason there's no tint.
+              accessibilityLabel={`View and edit ${role.teamName} ${role.roleName} tasks, ${count} ${
+                count === 1 ? "task" : "tasks"
+              } of its own${
+                count === 0 && covered > 0 ? `, ${covered} for the whole team` : ""
+              }`}
               style={[
                 styles.pill,
                 wa && waStyles.pill,
@@ -2393,6 +2611,46 @@ function AuthorRoleAndSegments({
               >
                 {role.teamName} · {role.roleName}
               </Text>
+              <View
+                style={[
+                  styles.pillBadge,
+                  wa && waStyles.pillBadge,
+                  // A solid warning fill alone DISAPPEARS on the selected pill
+                  // whenever the community's primary color is orange-ish
+                  // (Knicks mode makes both `#F58426` exactly), leaving a bare
+                  // floating number. The dark-ink ring is what keeps the chip
+                  // readable as a chip against any pill background, in either
+                  // direction: where the fill matches the pill, the ring
+                  // contrasts; where the ring matches, the fill does.
+                  uncovered
+                    ? {
+                        backgroundColor: colors.warning,
+                        borderWidth: 1,
+                        borderColor: alarmInk,
+                      }
+                    : {
+                        backgroundColor: active
+                          ? colors.onAccent
+                          : colors.background,
+                      },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.pillBadgeText,
+                    wa && waStyles.pillBadgeText,
+                    {
+                      color: uncovered
+                        ? alarmInk
+                        : active
+                          ? primaryColor
+                          : colors.textTertiary,
+                    },
+                  ]}
+                >
+                  {count}
+                </Text>
+              </View>
             </Pressable>
           );
         })}
@@ -2447,6 +2705,7 @@ function AuthorRoleAndSegments({
                   <AuthorTaskRow
                     key={task._id}
                     title={task.title}
+                    teamLevel={isTeamLevelTask(task)}
                     first={i === 0}
                     editable={!isEffectivelyOffline}
                     editing={editingTaskId === task._id}
@@ -2561,9 +2820,14 @@ function RoleLoader({
 }
 
 /** One task row in the Edit surface: title, tap-to-edit (title only) when
- *  online; read-only when offline (see the OFFLINE note above). */
+ *  online; read-only when offline (see the OFFLINE note above).
+ *
+ *  `teamLevel` rows belong to the WHOLE TEAM, not the role currently selected
+ *  in the switcher — they show under every role (that's the only place a
+ *  leader can reach them), so they carry a caption saying so. */
 function AuthorTaskRow({
   title,
+  teamLevel,
   first,
   editable,
   editing,
@@ -2576,6 +2840,7 @@ function AuthorTaskRow({
   onDelete,
 }: {
   title: string;
+  teamLevel: boolean;
   first: boolean;
   editable: boolean;
   editing: boolean;
@@ -2607,6 +2872,19 @@ function AuthorTaskRow({
         <Text style={[styles.taskTitle, wa && waStyles.taskTitle, { color: colors.text }]}>
           {title}
         </Text>
+        {teamLevel ? (
+          <View style={styles.taskMetaRow}>
+            <Text
+              style={[
+                styles.taskMeta,
+                wa && waStyles.taskMeta,
+                { color: colors.textTertiary },
+              ]}
+            >
+              Whole team — not just this role
+            </Text>
+          </View>
+        ) : null}
       </Pressable>
 
       {editing && editable ? (
@@ -2817,11 +3095,44 @@ function OfflineBanner({ colors, wa }: { colors: ThemeColors; wa: boolean }) {
 }
 
 /**
- * Shown at the top of the "Mine" section when the user's role has no preloaded
- * (template) tasks. Explains the empty state and points the user to their team
- * lead, while the per-segment "Add my own task" affordances remain available.
+ * Shown at the top of the "Mine" section when the viewer has no preloaded
+ * (template) tasks — and says WHICH of the several possible reasons applies
+ * (`diagnoseMineEmpty`). The per-segment "Add my own task" affordances stay
+ * available underneath in every case.
+ *
+ * Two extra affordances hang off it:
+ *   • a one-tap jump to "Shared" whenever the team HAS whole-team tasks AND the
+ *     diagnosis is one that Shared could answer (`shouldOfferSharedJump`) — the
+ *     screen opens on "Mine" and `getMyServingTasks` deliberately omits
+ *     team-level tasks, so otherwise the viewer has to guess they exist;
+ *   • for a leader on a plan with NO tasks, `PopulateFromTemplate` — the
+ *     nothing-backfills-a-new-plan case is theirs to fix, in place.
  */
-function NoPreloadedNotice({ colors, wa }: { colors: ThemeColors; wa: boolean }) {
+function MineEmptyNotice({
+  reason,
+  facts,
+  onViewShared,
+  leader,
+  colors,
+  primaryColor,
+  wa,
+}: {
+  reason: MineEmptyReason;
+  facts: MineEmptyFacts;
+  onViewShared: () => void;
+  /** Non-null only for a leader on a plan with zero tasks (see `canAuthorPlanTasks`). */
+  leader: {
+    planId: Id<"eventPlans">;
+    groupId: Id<"groups">;
+    isEffectivelyOffline: boolean;
+  } | null;
+  colors: ThemeColors;
+  primaryColor: string;
+  wa: boolean;
+}) {
+  const copy = mineEmptyCopy(reason, facts);
+  if (!copy) return null;
+
   return (
     <View style={[styles.segment, wa && waStyles.segment]}>
       <View
@@ -2840,7 +3151,7 @@ function NoPreloadedNotice({ colors, wa }: { colors: ThemeColors; wa: boolean })
           <Text
             style={[styles.noticeMessage, wa && waStyles.noticeMessage, { color: colors.text }]}
           >
-            No preloaded task. Please contact your team lead to add tasks.
+            {copy.title}
           </Text>
           <Text
             style={[
@@ -2849,10 +3160,180 @@ function NoPreloadedNotice({ colors, wa }: { colors: ThemeColors; wa: boolean })
               { color: colors.textTertiary },
             ]}
           >
-            You can still add your own tasks below.
+            {copy.hint}
           </Text>
+
+          {shouldOfferSharedJump(reason, facts) ? (
+            <Pressable
+              onPress={onViewShared}
+              style={styles.noticeAction}
+              accessibilityRole="button"
+              accessibilityLabel="Open the Shared tab"
+            >
+              <Text
+                style={[
+                  styles.noticeActionText,
+                  wa && waStyles.noticeActionText,
+                  { color: primaryColor },
+                ]}
+              >
+                {`Open Shared (${facts.sharedTaskCount ?? 0})`}
+              </Text>
+              <Ionicons name="arrow-forward" size={15} color={primaryColor} />
+            </Pressable>
+          ) : null}
+
+          {leader ? (
+            <PopulateFromTemplate
+              planId={leader.planId}
+              groupId={leader.groupId}
+              isEffectivelyOffline={leader.isEffectivelyOffline}
+              colors={colors}
+              primaryColor={primaryColor}
+              wa={wa}
+            />
+          ) : null}
         </View>
       </View>
+    </View>
+  );
+}
+
+/**
+ * Leader-only: fill an EMPTY plan's task list from one of the group's saved
+ * task templates, without leaving serving mode.
+ *
+ * A plan created by `createEventDraftImpl` has no `taskTemplateId` and no
+ * tasks, and nothing ever backfills it — tasks only materialise when someone
+ * links a template from the rostering grid (or duplicates an event). That grid
+ * is where a leader would otherwise have to go, on a laptop, mid-service. This
+ * calls the SAME existing `setPlanTaskTemplate` mutation the grid uses (no new
+ * backend surface), with `carryover: "copy"` so a concurrent write from the
+ * grid can't be destroyed by this device's stale "the plan is empty" snapshot.
+ *
+ * Only rendered when the plan has zero tasks, so there is nothing to destroy
+ * and no confirmation step is warranted — and only on an UPCOMING plan, since
+ * the backend freezes template linkage once the event has started (see below).
+ *
+ * OFFLINE: hidden, for the same reason `AuthorSection` hides its controls —
+ * this is a plan-wide, server-validated write with no dedupe key.
+ */
+function PopulateFromTemplate({
+  planId,
+  groupId,
+  isEffectivelyOffline,
+  colors,
+  primaryColor,
+  wa,
+}: {
+  planId: Id<"eventPlans">;
+  groupId: Id<"groups">;
+  isEffectivelyOffline: boolean;
+  colors: ThemeColors;
+  primaryColor: string;
+  wa: boolean;
+}) {
+  const templates = useAuthenticatedQuery(
+    api.functions.scheduling.taskTemplates.listTaskTemplates,
+    isEffectivelyOffline ? "skip" : { groupId },
+  ) as Array<{ _id: string; name: string; itemCount: number }> | undefined;
+  // `setPlanTaskTemplate` throws "Past events are frozen and cannot be
+  // re-linked." once `plan.eventDate` (the FIRST service's start time, not a
+  // day bucket) has passed — which is most of the serving window this
+  // affordance exists for: serving opens 12h before the plan and stays open 4h
+  // past the last service, so for a 9:00 service every tap from 09:00 to 13:00
+  // would fail with a raw ConvexError. Read the same `isPast` the rostering
+  // grid's `PlanTemplateToolbar` uses and don't offer the rows at all.
+  // `createTask` has NO past-plan freeze, so the Edit tab genuinely still works.
+  const linkage = useAuthenticatedQuery(
+    api.functions.scheduling.planTemplates.getPlanTemplateState,
+    isEffectivelyOffline ? "skip" : { planId },
+  ) as { isPast: boolean } | undefined;
+  const setPlanTaskTemplate = useAuthenticatedMutation(
+    api.functions.scheduling.planTemplates.setPlanTaskTemplate,
+  );
+  const [applyingId, setApplyingId] = useState<string | null>(null);
+
+  if (isEffectivelyOffline || templates === undefined || linkage === undefined) {
+    return null;
+  }
+
+  // A template with no items would link cleanly and still leave the plan empty.
+  const usable = linkage.isPast ? [] : templates.filter((t) => t.itemCount > 0);
+
+  if (usable.length === 0) {
+    return (
+      <Text
+        style={[
+          styles.noticeHint,
+          wa && waStyles.noticeHint,
+          { color: colors.textTertiary },
+        ]}
+      >
+        {linkage.isPast
+          ? "This event has already started, so it can no longer be linked to a saved task list. Use the Edit tab above to add tasks role by role."
+          : "This campus has no saved task lists yet. Use the Edit tab above to add tasks role by role."}
+      </Text>
+    );
+  }
+
+  return (
+    <View style={styles.noticeActions}>
+      <Text
+        style={[
+          styles.noticeHint,
+          wa && waStyles.noticeHint,
+          { color: colors.textTertiary },
+        ]}
+      >
+        Add this event&apos;s tasks from a saved list:
+      </Text>
+      {usable.map((template) => (
+        <Pressable
+          key={template._id}
+          disabled={applyingId !== null}
+          onPress={async () => {
+            setApplyingId(template._id);
+            try {
+              await setPlanTaskTemplate({
+                planId,
+                templateId: template._id as Id<"eventTaskTemplates">,
+                // "copy" — NOT the backend's "discard" default. This affordance
+                // only renders off a `no-plan-tasks` snapshot, but that snapshot
+                // is reactive and can be stale: if another leader adds tasks
+                // from the grid between their write and this device receiving
+                // the update, "discard" would silently delete every one of them
+                // and cascade their completions, with no confirm and no undo.
+                // On a genuinely empty plan "copy" is a no-op.
+                carryover: "copy",
+              });
+            } catch (err) {
+              notify(
+                "Couldn't add these tasks",
+                String((err as Error)?.message ?? err),
+              );
+            } finally {
+              setApplyingId(null);
+            }
+          }}
+          style={styles.noticeAction}
+          accessibilityRole="button"
+          accessibilityLabel={`Add tasks from ${template.name}`}
+        >
+          <Ionicons name="add" size={16} color={primaryColor} />
+          <Text
+            style={[
+              styles.noticeActionText,
+              wa && waStyles.noticeActionText,
+              { color: primaryColor },
+            ]}
+          >
+            {`${template.name} · ${template.itemCount} ${
+              template.itemCount === 1 ? "task" : "tasks"
+            }`}
+          </Text>
+        </Pressable>
+      ))}
     </View>
   );
 }
@@ -2935,6 +3416,7 @@ const styles = StyleSheet.create({
   // Header
   header: { paddingHorizontal: 16, marginBottom: 20 },
   headerTitle: { fontSize: 26, fontWeight: "700", letterSpacing: -0.4 },
+  headerSubtitle: { fontSize: 14, fontWeight: "600", marginTop: 4 },
   headerWhen: { fontSize: 14, marginTop: 4 },
   readiness: { marginTop: 16, gap: 8 },
   readinessLabelRow: {
@@ -2975,6 +3457,16 @@ const styles = StyleSheet.create({
   noticeBody: { flex: 1 },
   noticeMessage: { fontSize: 14, lineHeight: 20, fontWeight: "500" },
   noticeHint: { fontSize: 13, lineHeight: 18, marginTop: 4 },
+  // Actions inside the "Mine" empty-state notice (jump to Shared; a leader's
+  // "populate from a saved task list" rows).
+  noticeActions: { marginTop: 4 },
+  noticeAction: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingVertical: 8,
+  },
+  noticeActionText: { fontSize: 14, fontWeight: "600" },
 
   // Author (leader "Edit" surface) role-switcher caption
   authorHint: {
@@ -3166,6 +3658,11 @@ const waStyles = StyleSheet.create({
     fontWeight: WA_WEIGHT_BOLD,
     letterSpacing: 0,
   },
+  headerSubtitle: {
+    fontSize: WA_TYPE_SUBTITLE,
+    fontWeight: WA_WEIGHT_SEMIBOLD,
+    marginTop: 6,
+  },
   headerWhen: { fontSize: WA_TYPE_SUBTITLE, marginTop: 6 },
   readinessLabel: { fontSize: WA_TYPE_SUBTITLE, fontWeight: WA_WEIGHT_REGULAR },
   readinessCount: { fontSize: WA_TYPE_SUBTITLE, fontWeight: WA_WEIGHT_SEMIBOLD },
@@ -3184,6 +3681,7 @@ const waStyles = StyleSheet.create({
   noticeCard: { borderRadius: WA_GROUP_RADIUS, borderWidth: 0, padding: WA_CELL_PADDING },
   noticeMessage: { fontSize: WA_TYPE_ROW_TITLE, lineHeight: 22, fontWeight: WA_WEIGHT_REGULAR },
   noticeHint: { fontSize: WA_TYPE_FOOTNOTE, lineHeight: 18 },
+  noticeActionText: { fontSize: WA_TYPE_SUBTITLE, fontWeight: WA_WEIGHT_SEMIBOLD },
   authorHint: { fontSize: WA_TYPE_FOOTNOTE, marginHorizontal: WA_GROUP_MARGIN },
 
   // Task rows (§3.2 cell anatomy)
