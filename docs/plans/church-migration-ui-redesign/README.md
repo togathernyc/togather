@@ -452,7 +452,7 @@ merge and the staff screens get real navigation instead of URL-only access.
 - Bridge: no WhatsApp Business API dependency for P1 — share-sheet/copy-based
   handoff only. (API-based auto-posting is a P2 question with real cost/ToS
   implications.)
-- The CLAUDE.md guides rule applies: this redesign touches Create Community,
+- The guides rule (`.claude/skills/guides-and-link-previews/SKILL.md`) applies: this redesign touches Create Community,
   Branding, Groups & Channels, Events, Prayer guides — update in the same PRs,
   and add a new **"Moving from WhatsApp"** guide to `guides/registry.ts`.
 

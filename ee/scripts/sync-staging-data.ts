@@ -36,7 +36,7 @@ import * as readline from "readline";
 const ALLOWLISTED_PHONES = [
   // Add phone numbers here that should keep real data
   // Format: E.164 without the + prefix
-  "12025550123", // Test user - see CLAUDE.md for credentials
+  "12025550123", // Test user - see .claude/skills/onboarding-new-dev/SKILL.md for credentials
   "15550001001", // Additional test user (replace with real number from secrets manager)
   "15550001002", // Additional test user (replace with real number from secrets manager)
   "15550001003", // Additional test user (replace with real number from secrets manager)
