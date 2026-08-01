@@ -1,8 +1,6 @@
 # Agent Instructions
 
-Guidelines for AI agents (Claude, Cursor, Copilot, etc.) working on this codebase.
-
-Specialized guidance lives in on-demand skills — see **Skills Index** at the bottom; load the relevant skill *before* you start that kind of work, not after.
+Guidelines for AI agents (Claude, Cursor, Copilot, etc.) working on this codebase. Specialized guidance lives in on-demand skills — see **Skills Index** at the bottom; load the relevant skill *before* you start that kind of work, not after.
 
 ## Native Safety (distilled — full details in the `native-deps-safety` skill)
 
@@ -17,14 +15,17 @@ builds fine). Learned from PRs #548, #619, #629. Non-negotiable rules:
   A `pnpm.overrides` pin does NOT save you. Web-only UI must be dependency-free.
 - New native deps must be **gated** behind `NativeModules` runtime checks and
   classified in `apps/mobile/native-deps.json`.
-- **Use scoped installs** (`pnpm add -D <pkg> --filter mobile`), never a bare
-  workspace-root `pnpm install` — the latter can non-deterministically re-key the
-  Expo/react-native graph onto a second React or a second native instance.
+- **When adding a dependency, use a scoped install** (`pnpm add -D <pkg> --filter mobile`),
+  never a bare workspace-root `pnpm install` — the latter re-resolves and can
+  non-deterministically re-key the Expo/react-native graph onto a second React or a
+  second native instance. (A bare `pnpm install` to bootstrap a fresh clone from the
+  committed lockfile is fine — the rule is about *adding* deps.)
 - **After ANY dependency change** run `check-react-consistency` **and**
   `node scripts/check-native-instance.js`. Never paper over a failure with `pnpm.overrides`.
 - The `react: "19.1.0"` **and** `react-dom: "19.1.0"` devDependency pins in
   `apps/convex/package.json` are **load-bearing** — do not remove either, keep them
   the same exact version.
+- **Don't attach effects/listeners to a native view's player/lifecycle** — prop-only changes. A `player.addListener('sourceLoad', …)` on `ExpoVideoPlayer` crashed the native `VideoView`, and a crashed native view corrupts the Fabric registry: **"video and GIF break together" is ONE bug, not two.**
 - Any change touching native media/views (video, GIF, blur, `expo-*` native views) or the mobile dependency graph **MUST be device/staging-OTA verified before merge**.
 
 Read the `native-deps-safety` skill for the mechanisms, war stories, and CI guards.
@@ -45,6 +46,9 @@ Read the `native-deps-safety` skill for the mechanisms, war stories, and CI guar
 ### Commands
 
 - `pnpm dev` (Convex + Expo) · `pnpm dev --mobile` · `pnpm dev --convex`
+- **Maintainer CI agents: pick a backend FIRST** (`pnpm dev:backend --backend=<choice>`,
+  never a bare `pnpm dev`) — concurrent agents **must** use different backends or they
+  corrupt each other's data. Load `secrets-and-backends` before any backend command.
 - Expo/Metro: http://localhost:8081 · `pnpm convex:dashboard` · `pnpm convex:logs`
 - No data / "Demo Community not found"? `npx convex run functions/seed:seedDemoData`
 
@@ -108,9 +112,7 @@ Read the `native-deps-safety` skill for the mechanisms, war stories, and CI guar
   link frontend types to backend schemas where applicable
 - ADRs (Architecture Decision Records) live in `/docs/architecture/`; feature
   folders may have an `ARCHITECTURE.md` explaining their structure
-- **Update documentation when implementing features** - don't leave stale docs.
-  Change an API → update its contracts and types. Refactor a feature → update its
-  ARCHITECTURE.md. If docs are wrong, fix them - don't just work around them.
+- **Update documentation when implementing features** - don't leave stale docs. Change an API → update its contracts and types. Refactor a feature → update its ARCHITECTURE.md. If docs are wrong, fix them - don't just work around them.
 - User-facing changes may need an `apps/web` guide update — see `guides-and-link-previews`
 
 ## File and Project Hygiene
@@ -119,10 +121,7 @@ Read the `native-deps-safety` skill for the mechanisms, war stories, and CI guar
   `/docs/architecture/` (ADRs), `/docs/archive/` (historical analysis, completed
   migrations), feature folders (feature-specific docs). Only `README.md` and
   `CLAUDE.md` belong in root. Delete temporary/one-off analysis files after use.
-- **Leave code better than you found it** - simplify complex code you encounter or
-  document why it's complex; add `// TODO: Investigate - [reason]` for suspicious
-  patterns; remove dead code, unused imports, and commented-out blocks; fix small
-  issues you notice (typos, formatting) while working on related code
+- **Leave code better than you found it** - simplify complex code you encounter or document why it's complex; add `// TODO: Investigate - [reason]` for suspicious patterns; remove dead code, unused imports, and commented-out blocks; fix small issues you notice (typos, formatting) while working on related code
 - **Document complexity** you can't remove, and leave breadcrumbs:
   `// NOTE: This workaround is needed because [reason]  // See: [link]`.
   Flag technical debt explicitly rather than hiding it.
@@ -187,8 +186,7 @@ api.functions.groups.list           ->  useQuery()              ->  GroupListScr
 
 ## Skills Index
 
-Specialized rules live in `.claude/skills/<name>/SKILL.md`. Load one **before**
-doing the work it covers:
+Specialized rules live in `.claude/skills/<name>/SKILL.md`. Load one **before** doing the work it covers:
 
 | Skill | Load it before… |
 | --- | --- |
@@ -198,3 +196,4 @@ doing the work it covers:
 | `guides-and-link-previews` | changing user-facing behavior documented by the `apps/web` guides (communities, branding, group types, groups/channels, events, prayer), adding a marketing page, or adding OG/link-preview metadata |
 | `offline-support` | adding/changing a mobile data-loading feature, or touching connectivity detection, `stores/*Cache.ts` caches, or the write queues |
 | `supa-framework` | changing behavior owned by a `@supa-media/*` package, shared bin, or reusable workflow (upstream-first rule), or debugging GitHub Packages auth |
+| `code-review` | reviewing a completed chunk of work against the plan and these standards (`/code-review`) |

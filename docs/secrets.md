@@ -18,7 +18,7 @@ pnpm dev
 
 ## Agent Backend Selection Policy (Maintainer CI Agents Only)
 
-> **Open-source contributors**: This section does not apply to you. Create your own personal Convex deployment via `npx convex dev` — see `CLAUDE.md` for setup instructions.
+> **Open-source contributors**: This section does not apply to you. Create your own personal Convex deployment via `npx convex dev` — see the `onboarding-new-dev` skill (`.claude/skills/onboarding-new-dev/SKILL.md`) for setup instructions.
 
 - Allowed backend names are defined in `config/allowed-backends.json`.
 - Required launcher command: `pnpm dev:backend --backend=<choice>`.
@@ -193,8 +193,9 @@ When building or updating the mobile app via EAS (Expo Application Services), `a
 
 `eas build` (no `--local`) does its own `pnpm install` on Expo's own remote
 infrastructure — a separate machine from the GitHub Actions runner. Since
-`.npmrc` points `@supa-media/*` at `npm.pkg.github.com` (see the "Supa
-Framework" section of `CLAUDE.md`), that remote install needs a
+`.npmrc` points `@supa-media/*` at `npm.pkg.github.com` (see the
+`supa-framework` skill, `.claude/skills/supa-framework/SKILL.md`), that remote
+install needs a
 `GITHUB_TOKEN` env var to authenticate — GitHub Packages requires auth for
 every install, public or private packages alike. The Actions runner's own
 `secrets.GITHUB_TOKEN` never reaches that remote machine, and is the wrong

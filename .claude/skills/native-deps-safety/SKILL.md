@@ -52,6 +52,9 @@ appear on a real device — so CI cannot catch them. Rules:
   legitimately uses). **Use a scoped `pnpm add -D <pkg> --filter mobile`** (or
   `--filter <workspace>`) instead of a bare `pnpm install` when adding a new
   dependency — it resolves surgically and doesn't disturb this dedup group.
+  (A bare `pnpm install` to bootstrap a fresh clone from the committed lockfile
+  is fine and is what `onboarding-new-dev` step 1 does; the rule is about
+  *adding* a dependency, where pnpm re-resolves.)
   Always run `check-react-consistency` **and**
   `node scripts/check-native-instance.js` after any dependency change to confirm.
 - **A second React VERSION is not the only way to break the native graph — a

@@ -25,9 +25,9 @@ the step-by-step. In short:
 - To add a new secret: (1) add the item to 1Password vault `Togather` with
   `staging`/`production` fields; (2) add `<KEY>` to the `required` or
   `optional` list in `ee/secrets-allowlist.json` (a key not listed is never
-  synced — see the `supa-framework` skill for what `required` vs
-  `optional` means, including that `optional` gets **pruned** from GitHub when
-  absent from 1Password); (3) **only if a Convex function needs it**, also add
+  synced — see that file's `$comment` and `docs/secrets.md`'s Secret Update
+  Flow for what `required` vs `optional` means, including that `optional` gets
+  **pruned** from GitHub when absent from 1Password); (3) **only if a Convex function needs it**, also add
   it to `SECRET_KEYS` in `ee/scripts/sync-secrets-to-convex.sh` — CI-only
   tokens stop at GitHub; (4) run
   `gh workflow run sync-secrets.yml -f environment=both` to push it to GitHub

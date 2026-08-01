@@ -4,7 +4,8 @@ This guide documents Critical User Journeys (CUJs) for navigation testing in the
 
 ## Test Credentials
 
-Use the test credentials from the seed script. See `CLAUDE.md` for details.
+Use the test credentials from the seed script. See the `onboarding-new-dev`
+skill (`.claude/skills/onboarding-new-dev/SKILL.md`) for details.
 
 ## CUJ 1: Chat Room Navigation
 

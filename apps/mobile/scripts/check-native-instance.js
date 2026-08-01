@@ -10,8 +10,8 @@
  * `npx check-react-consistency` step, exactly as #628 did for
  * check-react-consistency.js after #619 added it locally.
  *
- * Do NOT fix bugs here only — fix them upstream and re-sync (CLAUDE.md's
- * upstream-first rule).
+ * Do NOT fix bugs here only — fix them upstream and re-sync (the upstream-first
+ * rule in .claude/skills/supa-framework/SKILL.md).
  *
  * ---------------------------------------------------------------------------
  * What this catches (and why gate #1 can't)

@@ -29,6 +29,11 @@ They need:
    ```bash
    pnpm install
    ```
+   (This is the legitimate bare `pnpm install` — bootstrapping a fresh clone from
+   the committed lockfile. The `native-deps-safety` rule against a bare
+   workspace-root install applies to *adding* a dependency, where the re-resolution
+   can re-key the Expo/react-native graph. To add a dep, use a scoped
+   `pnpm add -D <pkg> --filter <workspace>` instead.)
 
 2. **Set up environment variables:**
    ```bash

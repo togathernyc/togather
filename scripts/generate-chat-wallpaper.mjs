@@ -40,7 +40,8 @@ import fs from 'node:fs';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
 // Resolve @resvg/resvg-js from apps/web, which already depends on it for the
-// OG-image build — keeps apps/mobile's dependency graph untouched (CLAUDE.md
+// OG-image build — keeps apps/mobile's dependency graph untouched (see the
+// `native-deps-safety` skill, .claude/skills/native-deps-safety/SKILL.md,
 // "JS Changes Can Break Native Rendering").
 const requireFromWeb = createRequire(path.join(repoRoot, 'apps/web/package.json'));
 const { Resvg } = requireFromWeb('@resvg/resvg-js');
