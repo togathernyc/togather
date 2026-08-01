@@ -57,6 +57,8 @@ import type { Id } from "@services/api/convex";
 import { useAuth } from "@providers/AuthProvider";
 import { confirmAsync, notify } from "@/utils/platformAlert";
 import { NeededRolesModal } from "./NeededRolesModal";
+import { DuplicateDateFlag } from "./DuplicateDateFlag";
+import { parseDuplicatePlanDate } from "../utils/duplicatePlanDate";
 
 type Colors = ReturnType<typeof useTheme>["colors"];
 
@@ -67,6 +69,12 @@ export type HeaderEvent = {
   eventDate: number;
   times: Array<{ label: string; startsAt: number }>;
   status: "draft" | "published";
+  /**
+   * How many of the group's plans share this one's local day, itself included.
+   * >1 flags the column — otherwise two same-date headers are identical, which
+   * is how a leader edits one plan while rostered on the other.
+   */
+  sameDatePlanCount: number;
 };
 
 type EventRole = { roleId: Id<"teamRoles">; teamId: Id<"teams">; needed: number };
@@ -232,7 +240,29 @@ export function DateColumnHeaderEditor({
       try {
         await updateEvent({ planId: event._id, eventDate: ms });
       } catch (e) {
-        notify("Couldn't update date", errMessage(e));
+        // Rescheduling onto an already-planned day is blocked for the same
+        // reason creating one there is — but moving a plan to sit alongside an
+        // existing service is a real thing to want, so offer it.
+        const duplicate = parseDuplicatePlanDate(e);
+        if (!duplicate) {
+          notify("Couldn't update date", errMessage(e));
+          return;
+        }
+        const ok = await confirmAsync({
+          title: `Already a plan on ${duplicate.dayLabel}`,
+          message: `"${duplicate.existingPlanTitle}" is already on that date. Move this plan there anyway, so the day has two?`,
+          confirmText: "Move it there",
+        });
+        if (!ok) return;
+        try {
+          await updateEvent({
+            planId: event._id,
+            eventDate: ms,
+            allowSameDay: true,
+          });
+        } catch (e2) {
+          notify("Couldn't update date", errMessage(e2));
+        }
       }
     },
     [updateEvent, event._id],
@@ -285,13 +315,32 @@ export function DateColumnHeaderEditor({
     router.push(`/rostering/${groupId}/tasks/${event._id}` as never);
   }, [router, groupId, event._id]);
 
+  // A duplicate lands one week after the source, so duplicating twice — or
+  // duplicating a plan whose next week is already planned — collides. The
+  // backend refuses it; ask rather than dead-ending, since a second service on
+  // that day is legitimate.
   const handleDuplicate = useCallback(async () => {
     setMenuOpen(false);
     try {
       await duplicateEvent({ planId: event._id });
       // The reactive grid adds the copy's column on its own.
     } catch (e) {
-      notify("Couldn't duplicate", errMessage(e));
+      const duplicate = parseDuplicatePlanDate(e);
+      if (!duplicate) {
+        notify("Couldn't duplicate", errMessage(e));
+        return;
+      }
+      const ok = await confirmAsync({
+        title: `Already a plan on ${duplicate.dayLabel}`,
+        message: `"${duplicate.existingPlanTitle}" is already on that date. Add this copy as a second plan for the same day?`,
+        confirmText: "Duplicate anyway",
+      });
+      if (!ok) return;
+      try {
+        await duplicateEvent({ planId: event._id, allowSameDay: true });
+      } catch (e2) {
+        notify("Couldn't duplicate", errMessage(e2));
+      }
     }
   }, [duplicateEvent, event._id]);
 
@@ -410,6 +459,13 @@ export function DateColumnHeaderEditor({
         >
           {dateLabel(event.eventDate)}
         </Text>
+        {/* Another plan of this group is on this date — same ⚠ language the
+            grid uses for a person staffed twice in a day. */}
+        <DuplicateDateFlag
+          sameDatePlanCount={event.sameDatePlanCount}
+          colors={colors}
+          withLabel={!narrow}
+        />
       </TouchableOpacity>
 
       {/* Coverage / availability tally (rendered by the caller, view-aware). */}

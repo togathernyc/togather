@@ -53,6 +53,60 @@ export function confirmAsync(opts: {
   });
 }
 
+/** Which button the user picked in {@link chooseAsync}. */
+export type Choice = "primary" | "secondary" | "cancel";
+
+/**
+ * Imperative two-action prompt ("open the one you have" / "add another" /
+ * cancel). Native gets a single three-button `Alert.alert`.
+ *
+ * Web has no three-way primitive — `window.confirm` is binary — so it asks the
+ * primary action first and, only if declined, offers the secondary. Two small
+ * dialogs beats inventing a modal here, and each question stays unambiguous.
+ * Order the actions so the one a user most often wants is `primary`.
+ */
+export function chooseAsync(opts: {
+  title: string;
+  message?: string;
+  primaryText: string;
+  secondaryText: string;
+  cancelText?: string;
+}): Promise<Choice> {
+  const {
+    title,
+    message = "",
+    primaryText,
+    secondaryText,
+    cancelText = "Cancel",
+  } = opts;
+
+  if (Platform.OS === "web") {
+    if (typeof window === "undefined" || !window.confirm) {
+      return Promise.resolve("cancel");
+    }
+    const head = message ? `${title}\n\n${message}` : title;
+    if (window.confirm(`${head}\n\n${primaryText}?`)) {
+      return Promise.resolve("primary");
+    }
+    return Promise.resolve(
+      window.confirm(`${secondaryText}?`) ? "secondary" : "cancel",
+    );
+  }
+
+  return new Promise((resolve) => {
+    Alert.alert(
+      title,
+      message || undefined,
+      [
+        { text: cancelText, style: "cancel", onPress: () => resolve("cancel") },
+        { text: secondaryText, onPress: () => resolve("secondary") },
+        { text: primaryText, onPress: () => resolve("primary") },
+      ],
+      { onDismiss: () => resolve("cancel") },
+    );
+  });
+}
+
 /**
  * One-button informational / error notice. Web uses window.alert (Alert.alert
  * is a no-op there), so a failure message isn't swallowed silently.

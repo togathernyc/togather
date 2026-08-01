@@ -47,6 +47,13 @@ import {
 import type { Id } from "@services/api/convex";
 import { useAuth } from "@providers/AuthProvider";
 import { confirmAsync, notify } from "@/utils/platformAlert";
+import { parseDuplicatePlanDate } from "../utils/duplicatePlanDate";
+
+/** Best-effort human message from a thrown value (mirrors DateColumnHeaderEditor). */
+function errMessage(e: unknown): string {
+  const err = e as { data?: { message?: string }; message?: string };
+  return err?.data?.message ?? err?.message ?? "Please try again.";
+}
 import { NeededRolesModal } from "./NeededRolesModal";
 import { TimesEditor } from "./TimesEditor";
 
@@ -220,7 +227,29 @@ export function EventEditorPanel({
       try {
         await updateEvent({ planId, eventDate: date.getTime() });
       } catch (e: any) {
-        notify("Couldn't update date", e?.message ?? "Please try again.");
+        // A group may hold only one plan per local day unless the leader says
+        // otherwise — moving a plan alongside an existing service is a real
+        // thing to want, so ask instead of just refusing.
+        const duplicate = parseDuplicatePlanDate(e);
+        if (!duplicate) {
+          notify("Couldn't update date", e?.message ?? "Please try again.");
+          return;
+        }
+        const ok = await confirmAsync({
+          title: `Already a plan on ${duplicate.dayLabel}`,
+          message: `"${duplicate.existingPlanTitle}" is already on that date. Move this plan there anyway, so the day has two?`,
+          confirmText: "Move it there",
+        });
+        if (!ok) return;
+        try {
+          await updateEvent({
+            planId,
+            eventDate: date.getTime(),
+            allowSameDay: true,
+          });
+        } catch (e2) {
+          notify("Couldn't update date", errMessage(e2));
+        }
       }
     },
     [updateEvent, planId],
@@ -278,15 +307,33 @@ export function EventEditorPanel({
   const handleDuplicate = useCallback(async () => {
     if (!event) return;
     setMenuOpen(false);
-    try {
-      const result = await duplicateEvent({ planId });
+    const openCopy = (copyId: string) => {
       // The reactive grid will show the new column; jump the panel to the copy
       // so the leader can set its date right away.
-      router.push(
-        `/rostering/${event.groupId}/event/${result.planId}` as never,
-      );
+      router.push(`/rostering/${event.groupId}/event/${copyId}` as never);
+    };
+    try {
+      const result = await duplicateEvent({ planId });
+      openCopy(result.planId);
     } catch (e: any) {
-      notify("Couldn't duplicate", e?.message ?? "Please try again.");
+      // The copy lands a week out, so duplicating twice collides.
+      const duplicate = parseDuplicatePlanDate(e);
+      if (!duplicate) {
+        notify("Couldn't duplicate", e?.message ?? "Please try again.");
+        return;
+      }
+      const ok = await confirmAsync({
+        title: `Already a plan on ${duplicate.dayLabel}`,
+        message: `"${duplicate.existingPlanTitle}" is already on that date. Add this copy as a second plan for the same day?`,
+        confirmText: "Duplicate anyway",
+      });
+      if (!ok) return;
+      try {
+        const result = await duplicateEvent({ planId, allowSameDay: true });
+        openCopy(result.planId);
+      } catch (e2) {
+        notify("Couldn't duplicate", errMessage(e2));
+      }
     }
   }, [event, duplicateEvent, planId, router]);
 
