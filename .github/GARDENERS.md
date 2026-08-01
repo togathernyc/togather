@@ -65,11 +65,16 @@ billed.
 | Watchdog (repo) | No skip, for a stronger reason: `skip-if-match` would silence the watchdog precisely when its last sweep found something, which is when you need it most. One issue per day, rewritten in place by the day's later runs. |
 
 **Why `expires: 6d` and not 7d.** The maintenance sweep that closes expired
-issues runs daily at 00:37 UTC. With a 7-day expiry on a weekly gardener, the
-sweep closes last week's issue roughly *eleven hours after* the next run has
-already checked `skip-if-match` and skipped — so each gardener would quietly run
-every **other** week while the table above claimed weekly. Six days closes it the
-morning before. If you change the cadence, re-check this interaction.
+issues used to run only once a day, at 00:37 UTC. With a 7-day expiry on a weekly
+gardener, the sweep closed last week's issue roughly *eleven hours after* the next
+run had already checked `skip-if-match` and skipped — so each gardener would
+quietly run every **other** week while the table above claimed weekly. Six days
+closes it the morning before.
+
+That sweep now runs [every two hours](#githubworkflowsagentics-maintenanceyml),
+which shrinks the window this reasoning turns on to under two hours — but 6d is
+still correct and still the safer number, so it stays. If you change a cadence,
+re-check this interaction.
 
 ### Reading the schedule
 
@@ -379,31 +384,11 @@ credential in a URL path and `~/Library/LaunchAgents` is world-readable and gets
 backed up. If both are missing the page still lands in the report issue, and the
 log says so.
 
-### `max-turn-cache-misses` is not a usable guard on the Ollama path
-
-> [!WARNING]
-> **Measured on a live run.** Gardener run `30686121841` failed with
-> `403 Maximum consecutive cache misses exceeded (40/40)` — a perfectly healthy
-> run, killed at its 40th request.
-
-`maxCacheMisses` counts **consecutive** responses that had input tokens and no
-cache read, and **only a cache hit resets the streak**. Ollama does no prompt
-caching whatsoever, so on that path the streak is just the request count: the
-guard degrades into a hard request cap wearing a different name, and can never
-detect the runaway loop it exists to catch.
-
-The repo watchdog therefore sets `max-turn-cache-misses: 200`, which is a
-stand-in for "off" — `0` is rejected by the schema (*must be at least 1*). The
-real per-run bounds on the Ollama path are **`max-turns`, `timeout-minutes` and
-`max-ai-credits`**, which is what the [cost caps](#reading-the-cost-caps)
-section already says binds in practice.
-
-> [!IMPORTANT]
-> **The three Ollama gardeners still carry `max-turn-cache-misses: 40` and have
-> the same defect.** They are left alone here because this change's scope is the
-> watchdog, but the first long run any of them attempts after
-> `GARDENERS_ENABLED` is set will die the same way. Raise all three to 200 before
-> relying on them.
+The repo half carries `max-turn-cache-misses: 200` for the same reason the three
+Ollama gardeners do — on a provider with no prompt caching that setting is a hard
+request cap, not a cache guard. It is documented once, in
+[Move a gardener onto Ollama](#move-a-gardener-onto-ollama-open-model-flat-rate)
+and the incident table below it; do not re-derive it here.
 
 ### One-time setup
 
@@ -820,9 +805,18 @@ Committing the gardeners also brought in three files nobody wrote by hand:
 
 Auto-generated because the gardeners use `expires:` on their safe outputs. It is
 **deterministic housekeeping, not an agent** — no LLM, no API key, no model call.
-It runs daily at **00:37 UTC**.
+It runs every **2 hours at :37**.
 
-Its top-level `permissions:` is `{}`, but **four jobs run on that daily cron**,
+> [!NOTE]
+> **That cadence is repo-global and derived from the *minimum* `expires:`
+> anywhere in the repo** — do not hand-edit the cron, `gh aw compile` rewrites
+> it. It was daily at 00:37 UTC until the watchdog's report issue introduced
+> `expires: 1d`; a future workflow with `expires: 1h` would ratchet it again for
+> everything. The file is generated, so nobody will think to look here — which is
+> why it is written down. Costs nothing but Actions minutes: the jobs below are
+> `actions/github-script` only, on `ubuntu-slim`, in a public repo.
+
+Its top-level `permissions:` is `{}`, but **four jobs run on that cron**,
 each with its own scope:
 
 | Scheduled job | Permission | What it does |

@@ -35,19 +35,10 @@ tracker-id: togather-watchdog-repo
 max-ai-credits: 50         # ~$0.50 per run
 max-daily-ai-credits: 200  # ~$2.00 / 24h — this watchdog's slice of the $12/day repo budget
 max-turns: 25
-# Effectively disabled. `maxCacheMisses` counts CONSECUTIVE responses that had
-# input tokens and no cache read; a cache HIT is the only thing that resets the
-# streak. Ollama does no prompt caching at all, so on this path the streak is
-# simply the request count and the guard is a hard request cap wearing a
-# different name — it cannot ever detect what it was built to detect.
-#
-# MEASURED, not theorised: gardener run 30686121841 died on
-# `403 Maximum consecutive cache misses exceeded (40/40)` — a healthy run, killed
-# at its 40th request. `0` does not mean unlimited (the schema rejects it:
-# "must be at least 1"), so 200 is the practical stand-in.
-#
-# The real per-run bounds on this path are `max-turns`, `timeout-minutes` and
-# `max-ai-credits`, all set above. See .github/GARDENERS.md § Watchdog.
+# NOT a cache guard on this provider — Ollama does no prompt caching, so every
+# request counts as a "consecutive miss" and this is really a request counter.
+# A sibling gardener died at exactly 40/40 mid-run on 2026-08-01 (run 30686121841). Cannot be
+# disabled (schema minimum is 1), so parked far above the turn budget.
 max-turn-cache-misses: 200
 
 # Ollama Cloud via the OpenAI-compatible endpoint (see GARDENERS.md). `glm-5.2`
