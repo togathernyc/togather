@@ -311,3 +311,22 @@ describe("quickStartRostering", () => {
     ).rejects.toThrow(ConvexError);
   });
 });
+
+describe("quickStartRostering plan title", () => {
+  // The bootstrap used to hardcode "Untitled event plan", which shipped through
+  // to serving mode's plan headers and read like missing data rather than an
+  // unnamed plan.
+  it("names the bootstrap plan after the group instead of 'Untitled event plan'", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const { groupId, leaderId } = await buildBareGroup(t, world.communityId);
+    const leaderToken = (await generateTokens(leaderId)).accessToken;
+
+    const { planId } = await t.mutation(
+      api.functions.scheduling.quickStart.quickStartRostering,
+      { token: leaderToken, groupId },
+    );
+
+    const plan = await t.run(async (ctx) => ctx.db.get(planId!));
+    expect(plan!.title).toBe("Fresh Campus event");
+  });
+});

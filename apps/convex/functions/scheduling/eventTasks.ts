@@ -835,6 +835,19 @@ export const getPlanTaskReadiness = query({
   },
 });
 
+/**
+ * WHY a task is in the viewer's list: the (team, role) they hold that the task
+ * names. A task carries several `roleIds`, so a viewer holding two of them
+ * matches on both — hence an array, not a single pair. Order follows the task's
+ * own `roleIds`, so it is stable across reads.
+ */
+type ServingTaskProvenance = {
+  roleId: string;
+  roleName: string;
+  teamId: string;
+  teamName: string;
+};
+
 /** A serving-task item as returned to the current user, per segment. */
 type ServingTaskItem = {
   /** Unique per row — a "during" template task expands to one row per time. */
@@ -844,6 +857,11 @@ type ServingTaskItem = {
   title: string;
   segment: "before" | "during" | "after";
   isPersonal: boolean;
+  /**
+   * The viewer's own (team, role) pairs this task matched on. Empty for
+   * personal tasks — nobody rostered those, the viewer added them.
+   */
+  roles: ServingTaskProvenance[];
   howToType?: string;
   howToText?: string;
   howToUrl?: string;
@@ -868,6 +886,11 @@ type ServingTaskItem = {
  * "during" template tasks expand to one entry per service time (timeLabel set),
  * with `completed` resolved per (task, user, timeLabel). Personal "during"
  * tasks keep their own timeLabel.
+ *
+ * Every role task carries `roles` — the viewer's own (team, role) pairs it
+ * matched on — so a volunteer holding several roles can see which one rostered
+ * each task instead of one undifferentiated list. A task naming two of the
+ * viewer's roles reports BOTH.
  *
  * Auth: an active member of the plan's community.
  */
@@ -898,7 +921,29 @@ export const getMyServingTasks = query({
       .filter((q) => q.eq(q.field("userId"), userId))
       .collect();
     const myServing = myAssignments.filter((a) => a.status !== "declined");
-    const myRoleIds = new Set(myServing.map((a) => a.roleId as string));
+
+    // Role id → the (team, role) the viewer holds under it. Resolved once here
+    // so each matched task can say WHICH of the viewer's roles put it in their
+    // list — with two roles on the plan, "Set up chairs" alone doesn't say
+    // whether it came from Camera or Usher. A roleId belongs to exactly one
+    // team, so this map is 1:1; the team comes off the ASSIGNMENT (the same
+    // source `getCrewTasks` uses) rather than the role doc.
+    const myRoles = new Map<string, ServingTaskProvenance>();
+    for (const a of myServing) {
+      const roleId = a.roleId as string;
+      if (myRoles.has(roleId)) continue;
+      const [role, team] = await Promise.all([
+        ctx.db.get(a.roleId),
+        ctx.db.get(a.teamId),
+      ]);
+      myRoles.set(roleId, {
+        roleId,
+        roleName: role?.name ?? "Role",
+        teamId: a.teamId as string,
+        teamName: team?.name ?? "Team",
+      });
+    }
+    const myRoleIds = new Set(myRoles.keys());
 
     // (a) Assigned template tasks.
     const tasks = await ctx.db
@@ -927,12 +972,16 @@ export const getMyServingTasks = query({
       // their personal tasks).
       const roleIds = taskRoleIds(task);
       if (roleIds.length === 0) continue;
-      if (!roleIds.some((r) => myRoleIds.has(r as string))) continue;
+      const matchedRoles = roleIds
+        .filter((r) => myRoleIds.has(r as string))
+        .map((r) => myRoles.get(r as string)!);
+      if (matchedRoles.length === 0) continue;
 
       const base = {
         title: task.title,
         segment: task.segment,
         isPersonal: false as const,
+        roles: matchedRoles,
         howToType: task.howToType,
         howToText: task.howToText,
         howToUrl: task.howToUrl,
@@ -979,6 +1028,7 @@ export const getMyServingTasks = query({
         title: p.title,
         segment: p.segment,
         isPersonal: true,
+        roles: [],
         note: p.note,
         timeLabel: p.timeLabel,
         completed: p.completedAt !== undefined,

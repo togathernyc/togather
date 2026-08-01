@@ -161,14 +161,25 @@ async function servingChannelArrays(
   };
 }
 
-/** The client-facing shape of one plan the user can serve on. */
+/**
+ * The client-facing shape of one plan the user can serve on.
+ *
+ * `groupName` / `teamNames` exist purely so the serving surfaces can SAY which
+ * campus rostered the viewer. Two plans on the same morning otherwise render
+ * identical headers ("Untitled event plan · Sun, Aug 3 · 9:00 AM"), which is
+ * how a volunteer ends up believing their tasks vanished when they were really
+ * looking at the other plan's section. `teamNames` mirrors `teamIds` (the
+ * viewer's own teams on the plan), in the same order.
+ */
 type ServingPlan = {
   planId: string;
   groupId: string;
+  groupName: string;
   title: string;
   startsAt: number;
   endsAt: number;
   teamIds: string[];
+  teamNames: string[];
   teamChannelIds: string[];
   meetingChannelIds: string[];
 };
@@ -182,6 +193,7 @@ type ServingPlan = {
 type UpcomingServingPlan = {
   planId: string;
   groupId: string;
+  groupName: string;
   title: string;
   startsAt: number;
   endsAt: number;
@@ -252,6 +264,28 @@ export const getServingEligibility = query({
       return active;
     };
 
+    // Group / team display names, memoised for the same reason membership is:
+    // a volunteer's plans cluster into a handful of groups and teams, and this
+    // query is reactive.
+    const groupNames = new Map<string, string>();
+    const groupNameFor = async (groupId: Id<"groups">): Promise<string> => {
+      const key = groupId as string;
+      if (!groupNames.has(key)) {
+        const group = await ctx.db.get(groupId);
+        groupNames.set(key, group?.name ?? "");
+      }
+      return groupNames.get(key)!;
+    };
+    const teamNames = new Map<string, string>();
+    const teamNameFor = async (teamId: Id<"teams">): Promise<string> => {
+      const key = teamId as string;
+      if (!teamNames.has(key)) {
+        const team = await ctx.db.get(teamId);
+        teamNames.set(key, team?.name ?? "Team");
+      }
+      return teamNames.get(key)!;
+    };
+
     // Split first, membership-check second. The upcoming list is capped at
     // `UPCOMING_PLANS_LIMIT`, so checking membership in soonest-first order and
     // stopping at the cap bounds the work instead of only trimming the result.
@@ -288,6 +322,7 @@ export const getServingEligibility = query({
       upcoming.push({
         planId: plan._id as string,
         groupId: plan.groupId as string,
+        groupName: await groupNameFor(plan.groupId),
         title: plan.title,
         startsAt: planStartsAt(plan),
         endsAt: planEndsAt(plan),
@@ -332,10 +367,14 @@ export const getServingEligibility = query({
       entries.push({
         planId: plan._id as string,
         groupId: plan.groupId as string,
+        groupName: await groupNameFor(plan.groupId),
         title: plan.title,
         startsAt,
         endsAt,
         teamIds,
+        teamNames: await Promise.all(
+          teamIds.map((id) => teamNameFor(id as Id<"teams">)),
+        ),
         teamChannelIds,
         meetingChannelIds,
         autoEnter,
@@ -530,9 +569,14 @@ type ServingTeamColumn = {
   people: ServingTeamPerson[];
 };
 
-/** One plan section in the Team roster grid. */
+/**
+ * One plan section in the Team roster grid. `groupName` names the campus that
+ * rostered the viewer — without it two same-day plans stack as two identically
+ * headed sections. See `ServingPlan`.
+ */
 type ServingTeamPlan = {
   planId: string;
+  groupName: string;
   title: string;
   eventDate: number;
   teams: ServingTeamColumn[];
@@ -598,6 +642,12 @@ export const getServingTeamRoster = query({
     const teamCache = new Map<string, Doc<"teams"> | null>();
     const roleCache = new Map<string, Doc<"teamRoles"> | null>();
     const userCache = new Map<string, Doc<"users"> | null>();
+    const groupCache = new Map<string, Doc<"groups"> | null>();
+    const getGroupName = async (id: Id<"groups">): Promise<string> => {
+      const key = id as string;
+      if (!groupCache.has(key)) groupCache.set(key, await ctx.db.get(id));
+      return groupCache.get(key)?.name ?? "";
+    };
     const getTeam = async (id: string) => {
       if (!teamCache.has(id))
         teamCache.set(id, await ctx.db.get(id as Id<"teams">));
@@ -669,6 +719,7 @@ export const getServingTeamRoster = query({
 
       plans.push({
         planId: plan._id as string,
+        groupName: await getGroupName(plan.groupId),
         title: plan.title,
         eventDate: plan.eventDate,
         teams,

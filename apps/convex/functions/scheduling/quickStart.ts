@@ -30,7 +30,11 @@ import { mutation } from "../../_generated/server";
 import { requireAuth } from "../../lib/auth";
 import { requireGroupScheduler } from "./permissions";
 import { createServingTeamImpl } from "./teams";
-import { createEventDraftImpl, seedNeededRolesFromDefaultsImpl } from "./events";
+import {
+  createEventDraftImpl,
+  defaultPlanTitle,
+  seedNeededRolesFromDefaultsImpl,
+} from "./events";
 import { suggestStarterRolesForName } from "./starterRoles";
 
 /** Default starter team name — generic so any group fits; leader can rename. */
@@ -119,7 +123,7 @@ export const quickStartRostering = mutation({
     const planId = await createEventDraftImpl(ctx, {
       groupId: args.groupId,
       communityId: group.communityId,
-      title: "Untitled event plan",
+      title: defaultPlanTitle(group.name),
       eventDate,
       times: [{ label: "9:00 AM", startsAt: eventDate }],
       createdById: userId,

@@ -257,6 +257,70 @@ roleAssignments: defineTable({
   keeps `eventPlans` naming explicit, and user-facing copy always says
   "event plan", to avoid the collision.
 
+- **One plan per group per local calendar day, unless the leader says
+  otherwise.** Nothing used to prevent duplicates: Convex has no unique
+  indexes, `createEventDraftImpl` validated only a non-empty title, and both
+  roster-grid entry points default to a *deterministic* "next Sunday 9 AM" —
+  so a second tap wrote a byte-identical second plan. In production this
+  produced three indistinguishable plans on one date, with a leader authoring
+  tasks on one while rostered on another.
+
+  `assertPlanDateFree` (`functions/scheduling/events.ts`) guards
+  `createEventDraftImpl` (so `createEvent` and `quickStartRostering`),
+  `duplicateEvent`, and `updateEvent`'s date moves. It throws a typed
+  `DUPLICATE_PLAN_DATE` `ConvexError` carrying the existing plan's
+  id/title/date, **not** an idempotent return of that plan: two services on
+  one Sunday is normal church practice, so the deliberate case has to stay
+  reachable. The client turns the error into a choice ("open the one you
+  have" / "add another"), and "add another" re-calls with
+  `allowSameDay: true`. Demo-seeded plans (`isDemoSeed`) are excluded so a
+  demo Sunday never blocks a real one.
+
+  "Same day" is the **community-local** day (`lib/localDay.ts`, keyed
+  `YYYY-MM-DD` via `Intl` in `communities.timezone`), not the
+  floor-by-86_400_000 UTC bucket the per-person double-booking check uses.
+  The UTC bucket is wrong in both directions outside UTC: for an ET church a
+  Sat 11 PM and a Sun 1 AM plan share a UTC day but are two local days, and a
+  Sun 9 AM and a Sun 9 PM plan straddle UTC midnight but are one.
+
+  Prevention alone is insufficient — duplicates created before the guard are
+  still in the data — so `rosterMatrix` returns `sameDatePlanCount` per
+  column (computed over *every* plan of the group, so a duplicate hidden by
+  the column cap still flags the one on screen) and the grid marks those
+  columns with the same ⚠ "double-booked" language it already uses for a
+  person staffed twice in a day.
+
+  Three constraints on the guard, each learned the hard way:
+
+  - **A plan that stays on its own local day is not rescheduling.** Excluding
+    the plan from itself by id is not enough — the web date picker rebuilds a
+    picked value at local *midnight*, dropping the time of day, so re-picking
+    the same date sends a different millisecond. On a Sunday that legitimately
+    holds a 9 AM and an 11 AM plan the *sibling* then matched and the edit
+    threw. `updateEvent` passes `currentEventDate`, and the guard returns early
+    when the local day is unchanged.
+  - **A corrupt `eventDate` must never be contagious.** It is a Convex
+    `v.number()` (float64), so `NaN`/`Infinity`/out-of-range pass validation
+    and make `Intl.DateTimeFormat.format` throw `RangeError`. Because the guard
+    maps the formatter over every sibling and `rosterMatrix` over every plan,
+    one bad row would take down creation *and* the roster grid for the whole
+    group. `localDayKey` yields an `INVALID_DAY_KEY` sentinel that matches
+    nothing in either direction, and callers skip those rows.
+  - **Bound the read.** The sibling lookup is a ±36 h range scan on
+    `eventPlans.by_group_date`, not a `.collect()` of the group's whole plan
+    history. Two instants on one local day are at most ~26 h apart (a
+    DST-extended day), so the scan is provably complete — and it keeps
+    concurrent edits to unrelated dates from OCC-conflicting. The `Intl`
+    formatters are memoized per timezone for the same reason: constructing one
+    costs ~100× using one.
+
+  On the client, every date editor goes through `savePlanDate`
+  (`features/scheduling/utils/duplicatePlanDate.ts`) rather than hand-rolling
+  the catch. The three editors (roster column header, desktop panel,
+  full-screen editor) had already drifted once — the full-screen editor is
+  where both "＋ Add date" and "Duplicate" *send* the leader to set a date, and
+  it was the one that dead-ended on the raw error.
+
 ## Availability collection (follow-up)
 
 Phase 1 shipped without any way to gather "who can serve which date". This
