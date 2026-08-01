@@ -7,6 +7,11 @@
 # Playwright MCP screenshots
 .playwright-mcp/
 
+# Overnight orchestrator run evidence (logs, screenshots, usage snapshots).
+# Deliberately not committed: binary evidence is only interesting for a day but
+# stays in the history forever. See .claude/commands/overnight.md Phase 3.
+.claude/logs/overnight/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
