@@ -16,6 +16,27 @@ Or run a single task cycle manually:
 
 ---
 
+## FIRST: Set the Goal
+
+**Before Phase 0, run the `/goal` command.** The loop needs a definition of done
+it can check against the transcript, otherwise it keeps going on vibes.
+
+```
+/goal The current backlog task's PR is open, CI checks are green (show `gh pr checks` output), and the review agent's findings are addressed or explicitly deferred — or stop after 25 turns
+```
+
+State it in terms of evidence you can point at in the transcript — command
+output, a PR number, a screenshot path — not "the feature works". The turn cap
+is a ceiling, not a target: if the task is done in 5 turns, stop at 5.
+
+The cap counts **turns**, which is a different unit from the `--max-iterations`
+in the Usage block above (Ralph iterations) and from the review cycles in Phase
+6. One task normally fits in 25 turns; if you are hitting the cap, that is the
+signal to log where you got to and let the next Ralph iteration pick it up, not
+to raise the number.
+
+---
+
 ## CRITICAL: Orchestrator Pattern
 
 **YOU ARE AN ORCHESTRATOR, NOT A DOER.**

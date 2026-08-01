@@ -1,0 +1,49 @@
+"$schema" = "https://conductor.build/schemas/settings.repo.schema.json"
+
+# Conductor runs each agent in its own git worktree. Worktrees only carry
+# tracked files, so every .env.local silently disappears and the app comes up
+# pointed at no Convex deployment. These globs copy them into new workspaces.
+#
+# Deliberately NOT apps/*/.env.local: that would sweep in
+# apps/convex/.env.local, whose CONVEX_DEPLOYMENT would point every new
+# workspace at the SAME backend — the exact collision the convex run script
+# below warns about. Each workspace should get its own via dev:agentN.
+file_include_globs = """
+.env.local
+apps/mobile/.env.local
+"""
+
+[scripts]
+# Worktrees start with no node_modules. --frozen-lockfile because a bare
+# `pnpm install` re-resolves and can re-key the Expo native module graph onto a
+# second React instance (see CLAUDE.md) — and it would do it in a fresh
+# worktree before the agent has touched anything, so the dirty pnpm-lock.yaml
+# would land attributed to the agent's work.
+setup = "pnpm install --frozen-lockfile"
+run_mode = "concurrent"
+
+# Metro, on this workspace's own port.
+#
+# Deliberately NOT `pnpm dev --mobile`: that script hardcodes Metro to 8081 and
+# kills whatever process already holds it (see getMetroPort / killProcessOnPort
+# in scripts/dev.js), so the second Conductor workspace to start would shoot the
+# first one's Metro. $CONDUCTOR_PORT is unique per workspace, so parallel
+# workspaces coexist.
+#
+# `pnpm dev --mobile` is still the right command for a single, non-parallel
+# checkout.
+[scripts.run.mobile]
+command = "cd apps/mobile && pnpm exec expo start --port $CONDUCTOR_PORT"
+default = true
+icon = "play"
+
+# Convex dev server.
+#
+# NOTE: parallel workspaces must not share a Convex backend — they will fight
+# over the same data. Root package.json defines dev:agent1..dev:agent4, each
+# targeting a separate named backend (togather-agent-1..4). Give each concurrent
+# Conductor workspace a different one, e.g. override this command locally in
+# .conductor/settings.local.toml with `pnpm dev:agent2`.
+[scripts.run.convex]
+command = "pnpm dev --convex"
+icon = "server"

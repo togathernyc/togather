@@ -2,6 +2,24 @@
   "enabledPlugins": {
     "ralph-loop@claude-plugins-official": true
   },
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/ralph-logger.sh",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/completion-gate.sh",
+            "timeout": 140
+          }
+        ]
+      }
+    ]
+  },
   "permissions": {
     "allow": [
       "mcp__Claude_Code_Remote__send_later",
