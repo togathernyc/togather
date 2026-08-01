@@ -133,6 +133,13 @@ one issue and updates to it. Never open a pull request or edit a file.
 | `gardener-docs-drift.lock.yml` | Gardener: Docs Drift | codex → Ollama · `glm-5.2` | weekly, **Thu 09:15 ET** |
 | `gardener-ci-doctor.lock.yml` | Gardener: CI Doctor | claude · default | on CI failure (main) + weekly, **Mon 09:15 ET** |
 | `gardener-cost-report.lock.yml` | Gardener: Cost Report | codex → Ollama · `glm-5.2` | weekly, **Fri 09:15 ET** (this one) |
+| `watchdog-repo.lock.yml` | Watchdog: Repo | codex → Ollama · `glm-5.2` | **every 6h**, 00/06/12/18 ET |
+
+The last row is not a gardener — it is the repo half of the fleet watchdog (see
+`.github/GARDENERS.md` § Watchdog). It spends from the same budget on the same
+Ollama key, so it belongs in this report. It also runs **four times a day**
+against the others' once a week, so it will dominate the run counts while
+costing little; say so rather than letting the table imply something is wrong.
 
 These are explicit `15 9 * * N` crons with `timezone: America/New_York` — no
 scattering, and the times are Eastern, not UTC. If you need to be certain, read
@@ -248,6 +255,7 @@ parentheses)
 | Docs Drift | weekly · Thu ~09:15 | N (N) | N/N | Nm Ns | $0.00 ($0.00) |
 | CI Doctor | on CI failure + weekly · Mon | N (N) | N/N | Nm Ns | $0.00 ($0.00) |
 | Cost Report | weekly · Fri ~09:15 | N (N) | N/N | Nm Ns | $0.00 ($0.00) |
+| Watchdog (repo) | every 6h | N (N) | N/N | Nm Ns | $0.00 ($0.00) |
 | **Total** | | **N (N)** | | | **$0.00 ($0.00)** |
 
 <If any runs lacked usage data:>
@@ -261,7 +269,8 @@ parentheses)
 | Docs Drift | 300 AIC ($3.00) | 200 AIC ($2.00) |
 | CI Doctor | 200 AIC ($2.00) | 400 AIC ($4.00) |
 | Cost Report | 300 AIC ($3.00) | 200 AIC ($2.00) |
-| **Repo-wide daily ceiling** | | **1000 AIC ($10.00)** |
+| Watchdog (repo) | 50 AIC ($0.50) | 200 AIC ($2.00) |
+| **Repo-wide daily ceiling** | | **1200 AIC ($12.00)** |
 
 <Flag explicitly if any run got within 80% of its per-run cap, or if any daily
 guardrail actually tripped — a tripped guardrail means a gardener was skipped
@@ -274,6 +283,7 @@ and produced nothing that day.>
 | `[gardener:large-files]` | N | N |
 | `[gardener:docs-drift]` | N | N |
 | `[gardener:ci-doctor]` | N | N |
+| `[watchdog]` | N | N |
 
 ## Notes
 
