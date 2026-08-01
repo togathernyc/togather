@@ -1,6 +1,9 @@
 import {
   buildRoleCatalog,
   canAuthorPlanTasks,
+  isTeamLevelTask,
+  roleCoveredTaskCounts,
+  roleTaskCounts,
   tasksForRole,
   type AuthorableTask,
 } from "../taskAuthoring";
@@ -39,32 +42,46 @@ describe("canAuthorPlanTasks", () => {
 });
 
 describe("tasksForRole", () => {
+  const TEAM_1 = { roleId: "role-a", teamId: "team-1" };
+  const TEAM_1_B = { roleId: "role-b", teamId: "team-1" };
+
   const tasks: AuthorableTask[] = [
-    { roleIds: ["role-a"], segment: "before", sortOrder: 1 },
-    { roleIds: ["role-a"], segment: "before", sortOrder: 0 },
-    { roleIds: ["role-a", "role-b"], segment: "during", sortOrder: 0 },
-    { roleIds: ["role-b"], segment: "after", sortOrder: 0 },
-    { roleIds: [], segment: "before", sortOrder: 2 }, // team-level
+    { teamIds: ["team-1"], roleIds: ["role-a"], segment: "before", sortOrder: 1 },
+    { teamIds: ["team-1"], roleIds: ["role-a"], segment: "before", sortOrder: 0 },
+    {
+      teamIds: ["team-1"],
+      roleIds: ["role-a", "role-b"],
+      segment: "during",
+      sortOrder: 0,
+    },
+    { teamIds: ["team-1"], roleIds: ["role-b"], segment: "after", sortOrder: 0 },
+    { teamIds: ["team-1"], roleIds: [], segment: "before", sortOrder: 2 }, // team-level
   ];
 
-  it("returns only tasks that include the selected role, sorted by sortOrder", () => {
-    const result = tasksForRole(tasks, "role-a");
-    expect(result.before.map((t) => t.sortOrder)).toEqual([0, 1]);
+  it("returns the selected role's tasks (plus its team's team-level), sorted by sortOrder", () => {
+    const result = tasksForRole(tasks, TEAM_1);
+    expect(result.before.map((t) => t.sortOrder)).toEqual([0, 1, 2]);
     expect(result.during).toHaveLength(1);
     expect(result.after).toHaveLength(0);
   });
 
   it("includes a multi-role task under every role it lists", () => {
-    const a = tasksForRole(tasks, "role-a");
-    const b = tasksForRole(tasks, "role-b");
+    const a = tasksForRole(tasks, TEAM_1);
+    const b = tasksForRole(tasks, TEAM_1_B);
     expect(a.during).toHaveLength(1);
     expect(b.during).toHaveLength(1);
     expect(a.during[0]).toBe(b.during[0]);
   });
 
-  it("excludes team-level tasks (empty roleIds) from every bucket", () => {
-    const result = tasksForRole(tasks, "role-a");
-    expect(result.before.some((t) => t.roleIds.length === 0)).toBe(false);
+  // Team-level tasks used to be filtered out here, which made the Edit surface
+  // the one place a leader could neither see nor fix them (they're excluded
+  // from "Mine" by design and live only under the read-only Shared pill). The
+  // UI labels them as whole-team so the role context stays honest.
+  it("includes team-level tasks (empty roleIds) under every role on that team", () => {
+    const a = tasksForRole(tasks, TEAM_1);
+    const b = tasksForRole(tasks, TEAM_1_B);
+    expect(a.before.filter(isTeamLevelTask)).toHaveLength(1);
+    expect(b.before.filter(isTeamLevelTask)).toHaveLength(1);
   });
 
   it("returns all-empty buckets when no role is selected", () => {
@@ -72,9 +89,90 @@ describe("tasksForRole", () => {
     expect(result).toEqual({ before: [], during: [], after: [] });
   });
 
-  it("returns all-empty buckets for a role with no tasks", () => {
-    const result = tasksForRole(tasks, "role-nobody");
-    expect(result).toEqual({ before: [], during: [], after: [] });
+  it("still surfaces team-level tasks for a role with no tasks of its own", () => {
+    const result = tasksForRole(tasks, { roleId: "role-nobody", teamId: "team-1" });
+    expect(result.before).toHaveLength(1);
+    expect(result.before[0].roleIds).toEqual([]);
+    expect(result.during).toEqual([]);
+    expect(result.after).toEqual([]);
+  });
+
+  // REGRESSION: `listPlanTasks` is PLAN-wide (every team) and the role catalog
+  // spans every team in the group, so a team-level task used to leak into
+  // another team's Edit list — captioned "Whole team", one tap from Delete.
+  describe("across teams", () => {
+    const multiTeam: AuthorableTask[] = [
+      // Worship's whole-team task.
+      { teamIds: ["team-worship"], roleIds: [], segment: "before", sortOrder: 0 },
+      // Kids' whole-team task.
+      { teamIds: ["team-kids"], roleIds: [], segment: "before", sortOrder: 1 },
+      // A task shared by both teams.
+      {
+        teamIds: ["team-worship", "team-kids"],
+        roleIds: [],
+        segment: "during",
+        sortOrder: 0,
+      },
+    ];
+
+    it("never shows another team's team-level task", () => {
+      const kids = tasksForRole(multiTeam, {
+        roleId: "role-checkin",
+        teamId: "team-kids",
+      });
+      expect(kids.before).toHaveLength(1);
+      expect(kids.before[0].teamIds).toEqual(["team-kids"]);
+
+      const worship = tasksForRole(multiTeam, {
+        roleId: "role-sound",
+        teamId: "team-worship",
+      });
+      expect(worship.before).toHaveLength(1);
+      expect(worship.before[0].teamIds).toEqual(["team-worship"]);
+    });
+
+    it("shows a task spanning both teams to each of them", () => {
+      const kids = tasksForRole(multiTeam, {
+        roleId: "role-checkin",
+        teamId: "team-kids",
+      });
+      const worship = tasksForRole(multiTeam, {
+        roleId: "role-sound",
+        teamId: "team-worship",
+      });
+      expect(kids.during).toHaveLength(1);
+      expect(worship.during).toHaveLength(1);
+      expect(kids.during[0]).toBe(worship.during[0]);
+    });
+
+    it("shows nothing team-level to a team that owns none", () => {
+      const other = tasksForRole(multiTeam, {
+        roleId: "role-usher",
+        teamId: "team-hospitality",
+      });
+      expect(other).toEqual({ before: [], during: [], after: [] });
+    });
+  });
+});
+
+describe("isTeamLevelTask", () => {
+  it("is true only when the task names no role", () => {
+    expect(
+      isTeamLevelTask({
+        teamIds: ["team-1"],
+        roleIds: [],
+        segment: "before",
+        sortOrder: 0,
+      }),
+    ).toBe(true);
+    expect(
+      isTeamLevelTask({
+        teamIds: ["team-1"],
+        roleIds: ["role-a"],
+        segment: "before",
+        sortOrder: 0,
+      }),
+    ).toBe(false);
   });
 });
 
@@ -105,5 +203,156 @@ describe("buildRoleCatalog", () => {
 
   it("returns an empty catalog for no teams", () => {
     expect(buildRoleCatalog([], {})).toEqual([]);
+  });
+});
+
+describe("roleTaskCounts", () => {
+  const catalog = [
+    { roleId: "role-a" },
+    { roleId: "role-b" },
+    { roleId: "role-c" },
+  ];
+
+  it("counts each role's OWN tasks and gives an unauthored role 0", () => {
+    const tasks: AuthorableTask[] = [
+      { teamIds: ["team-1"], roleIds: ["role-a"], segment: "before", sortOrder: 0 },
+      { teamIds: ["team-1"], roleIds: ["role-a"], segment: "after", sortOrder: 1 },
+      { teamIds: ["team-1"], roleIds: ["role-b"], segment: "during", sortOrder: 0 },
+    ];
+    expect(roleTaskCounts(tasks, catalog)).toEqual({
+      "role-a": 2,
+      "role-b": 1,
+      "role-c": 0,
+    });
+  });
+
+  // The badge exists to make a gap visible. `tasksForRole` folds a team's
+  // team-level tasks into EVERY role on that team, so counting its output
+  // would put "1" on all four Worship roles and hide the very gap a manager is
+  // scanning for. Team-level tasks stay visible (captioned "Whole team") in
+  // the body — they just don't inflate the badge.
+  it("excludes team-level tasks, unlike tasksForRole", () => {
+    const tasks: AuthorableTask[] = [
+      { teamIds: ["team-1"], roleIds: [], segment: "before", sortOrder: 0 },
+      { teamIds: ["team-1"], roleIds: ["role-a"], segment: "before", sortOrder: 1 },
+    ];
+    expect(roleTaskCounts(tasks, catalog)).toEqual({
+      "role-a": 1,
+      "role-b": 0,
+      "role-c": 0,
+    });
+    // The body list for role-b is NOT empty — it shows the team-level task —
+    // which is exactly why the badge must not reuse this number.
+    expect(
+      tasksForRole(tasks, { roleId: "role-b", teamId: "team-1" }).before,
+    ).toHaveLength(1);
+  });
+
+  it("counts a multi-role task once for each role it names", () => {
+    const tasks: AuthorableTask[] = [
+      {
+        teamIds: ["team-1"],
+        roleIds: ["role-a", "role-b"],
+        segment: "during",
+        sortOrder: 0,
+      },
+    ];
+    expect(roleTaskCounts(tasks, catalog)).toEqual({
+      "role-a": 1,
+      "role-b": 1,
+      "role-c": 0,
+    });
+  });
+
+  it("ignores roles outside the catalog (another team's roles may not have loaded)", () => {
+    const tasks: AuthorableTask[] = [
+      { teamIds: ["team-2"], roleIds: ["role-z"], segment: "before", sortOrder: 0 },
+    ];
+    expect(roleTaskCounts(tasks, catalog)).toEqual({
+      "role-a": 0,
+      "role-b": 0,
+      "role-c": 0,
+    });
+  });
+
+  it("returns an entry per catalog role for an empty plan, and {} for an empty catalog", () => {
+    expect(roleTaskCounts([], catalog)).toEqual({
+      "role-a": 0,
+      "role-b": 0,
+      "role-c": 0,
+    });
+    expect(roleTaskCounts([], [])).toEqual({});
+  });
+});
+
+/**
+ * The count the WARNING tint is allowed to read. `roleTaskCounts` answers a
+ * different question and must never drive an alarm — a plan authored entirely
+ * as "Whole team" tasks is fully authored, but every role's own count is 0.
+ */
+describe("roleCoveredTaskCounts", () => {
+  const catalog = [
+    { roleId: "role-a", teamId: "team-1" },
+    { roleId: "role-b", teamId: "team-1" },
+    { roleId: "role-c", teamId: "team-2" },
+  ];
+
+  it("counts a team-level task for every role on ITS team, and no others", () => {
+    const tasks: AuthorableTask[] = [
+      { teamIds: ["team-1"], roleIds: [], segment: "before", sortOrder: 0 },
+    ];
+    // The badge number stays 0 for all three — that gap is real and worth
+    // showing — but nothing on team-1 is UNCOVERED, so nothing may alarm.
+    expect(roleTaskCounts(tasks, catalog)).toEqual({
+      "role-a": 0,
+      "role-b": 0,
+      "role-c": 0,
+    });
+    expect(roleCoveredTaskCounts(tasks, catalog)).toEqual({
+      "role-a": 1,
+      "role-b": 1,
+      "role-c": 0,
+    });
+  });
+
+  it("agrees with the length of the role's own body list", () => {
+    const tasks: AuthorableTask[] = [
+      { teamIds: ["team-1"], roleIds: [], segment: "before", sortOrder: 0 },
+      { teamIds: ["team-1"], roleIds: ["role-a"], segment: "during", sortOrder: 1 },
+      { teamIds: ["team-1"], roleIds: ["role-a"], segment: "after", sortOrder: 2 },
+    ];
+    const covered = roleCoveredTaskCounts(tasks, catalog);
+    for (const role of catalog) {
+      const buckets = tasksForRole(tasks, role);
+      const shown =
+        buckets.before.length + buckets.during.length + buckets.after.length;
+      expect(covered[role.roleId]).toBe(shown);
+    }
+    expect(covered["role-a"]).toBe(3);
+  });
+
+  it("counts a multi-team team-level task under every team it spans", () => {
+    const tasks: AuthorableTask[] = [
+      {
+        teamIds: ["team-1", "team-2"],
+        roleIds: [],
+        segment: "before",
+        sortOrder: 0,
+      },
+    ];
+    expect(roleCoveredTaskCounts(tasks, catalog)).toEqual({
+      "role-a": 1,
+      "role-b": 1,
+      "role-c": 1,
+    });
+  });
+
+  it("returns an entry per catalog role for an empty plan, and {} for an empty catalog", () => {
+    expect(roleCoveredTaskCounts([], catalog)).toEqual({
+      "role-a": 0,
+      "role-b": 0,
+      "role-c": 0,
+    });
+    expect(roleCoveredTaskCounts([], [])).toEqual({});
   });
 });

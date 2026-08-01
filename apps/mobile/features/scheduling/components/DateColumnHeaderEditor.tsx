@@ -56,7 +56,13 @@ import {
 import type { Id } from "@services/api/convex";
 import { useAuth } from "@providers/AuthProvider";
 import { confirmAsync, notify } from "@/utils/platformAlert";
+import { errorMessage } from "@utils/error-handling";
 import { NeededRolesModal } from "./NeededRolesModal";
+import { DuplicateDateFlag } from "./DuplicateDateFlag";
+import {
+  parseDuplicatePlanDate,
+  savePlanDate,
+} from "../utils/duplicatePlanDate";
 
 type Colors = ReturnType<typeof useTheme>["colors"];
 
@@ -67,6 +73,12 @@ export type HeaderEvent = {
   eventDate: number;
   times: Array<{ label: string; startsAt: number }>;
   status: "draft" | "published";
+  /**
+   * How many of the group's plans share this one's local day, itself included.
+   * >1 flags the column — otherwise two same-date headers are identical, which
+   * is how a leader edits one plan while rostered on the other.
+   */
+  sameDatePlanCount: number;
 };
 
 type EventRole = { roleId: Id<"teamRoles">; teamId: Id<"teams">; needed: number };
@@ -76,10 +88,16 @@ type EventDoc = {
   roles: EventRole[];
 };
 
-/** Best-effort human message from a thrown value (Convex error or Error). */
+/**
+ * Best-effort human message from a thrown value.
+ *
+ * Delegates to the shared extractor rather than reading `.message` directly: a
+ * real Convex client puts the payload on `.data` and leaves `.message` as a
+ * hybrid stacktrace with the serialized JSON embedded in it — which is what a
+ * leader was shown when a mutation failed.
+ */
 function errMessage(e: unknown): string {
-  const err = e as { data?: { message?: string }; message?: string };
-  return err?.data?.message ?? err?.message ?? "Please try again.";
+  return errorMessage(e, "Please try again.");
 }
 
 function formatTimeLabel(date: Date): string {
@@ -218,22 +236,12 @@ export function DateColumnHeaderEditor({
 
   const handleChangeDate = useCallback(
     async (date: Date | null) => {
-      if (!date) return;
-      const ms = date.getTime();
-      // Guard against intermediate/invalid values while typing into the native
-      // date input. Editing the year digit-by-digit briefly yields a complete
-      // but absurd date (e.g. year 0026); without this guard that gets saved as
-      // `eventDate`, shoving the plan into the far past so it drops out of the
-      // upcoming-only grid and looks like the plan was deleted. Only persist a
-      // valid, plausibly-dated value; ignore the keystrokes in between.
-      if (Number.isNaN(ms)) return;
-      const year = date.getFullYear();
-      if (year < 2000 || year > 3000) return;
-      try {
-        await updateEvent({ planId: event._id, eventDate: ms });
-      } catch (e) {
-        notify("Couldn't update date", errMessage(e));
-      }
+      await savePlanDate({
+        date,
+        save: (eventDate, allowSameDay) =>
+          updateEvent({ planId: event._id, eventDate, allowSameDay }),
+        onError: (m) => notify("Couldn't update date", m),
+      });
     },
     [updateEvent, event._id],
   );
@@ -285,13 +293,32 @@ export function DateColumnHeaderEditor({
     router.push(`/rostering/${groupId}/tasks/${event._id}` as never);
   }, [router, groupId, event._id]);
 
+  // A duplicate lands one week after the source, so duplicating twice — or
+  // duplicating a plan whose next week is already planned — collides. The
+  // backend refuses it; ask rather than dead-ending, since a second service on
+  // that day is legitimate.
   const handleDuplicate = useCallback(async () => {
     setMenuOpen(false);
     try {
       await duplicateEvent({ planId: event._id });
       // The reactive grid adds the copy's column on its own.
     } catch (e) {
-      notify("Couldn't duplicate", errMessage(e));
+      const duplicate = parseDuplicatePlanDate(e);
+      if (!duplicate) {
+        notify("Couldn't duplicate", errMessage(e));
+        return;
+      }
+      const ok = await confirmAsync({
+        title: `Already a plan on ${duplicate.dayLabel}`,
+        message: `"${duplicate.existingPlanTitle}" is already on that date. Add this copy as a second plan for the same day?`,
+        confirmText: "Duplicate anyway",
+      });
+      if (!ok) return;
+      try {
+        await duplicateEvent({ planId: event._id, allowSameDay: true });
+      } catch (e2) {
+        notify("Couldn't duplicate", errMessage(e2));
+      }
     }
   }, [duplicateEvent, event._id]);
 
@@ -410,6 +437,13 @@ export function DateColumnHeaderEditor({
         >
           {dateLabel(event.eventDate)}
         </Text>
+        {/* Another plan of this group is on this date — same ⚠ language the
+            grid uses for a person staffed twice in a day. */}
+        <DuplicateDateFlag
+          sameDatePlanCount={event.sameDatePlanCount}
+          colors={colors}
+          withLabel={!narrow}
+        />
       </TouchableOpacity>
 
       {/* Coverage / availability tally (rendered by the caller, view-aware). */}

@@ -266,7 +266,7 @@ Side effects:
 
 ## Testing Credentials
 
-Per CLAUDE.md:
+Per `.claude/skills/onboarding-new-dev/SKILL.md`:
 - **Phone**: 2025550123 (use code `000000`)
 - **Community**: Search for "Demo Community"
 - **Password**: `password` (for local backend)

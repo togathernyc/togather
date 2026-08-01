@@ -59,7 +59,8 @@ SESSION=$(printf '%s' "$INPUT" |
 STATE="/tmp/claude-completion-gate-${SESSION:-nosession}"
 
 LOG=$(mktemp)
-trap 'rm -f "$LOG"' EXIT
+LIST=$(mktemp)
+trap 'rm -f "$LOG" "$LIST"' EXIT
 DEADLINE=$(($(date +%s) + BUDGET))
 BLOCKER=""
 BLOCK_WS=""
@@ -82,12 +83,28 @@ for WS in $WORKSPACES; do
   done
   wait "$CHECK_PID" 2>/dev/null
 
-  # tsc reports paths relative to the workspace it ran in.
-  WS_FILES=$(printf '%s\n' "$CHANGED" | sed -n "s|^$WS/||p")
-  BLOCKER=$(awk -v list="$WS_FILES" '
-    BEGIN { n = split(list, a, "\n"); for (i = 1; i <= n; i++) if (a[i] != "") want[a[i]] = 1 }
-    /error TS/ { f = $0; sub(/\(.*/, "", f); if (f in want) { print; exit } }
-  ' "$LOG")
+  # tsc reports paths relative to the workspace it ran in. This list goes to a
+  # FILE, never into `awk -v`: any change touching two files embeds a newline,
+  # which awk rejects with "newline in string" — killing the filter silently and
+  # leaving the gate unable to block anything.
+  : >"$LIST"
+  while IFS= read -r f; do
+    # The existence test also drops deletions (tsc cannot report a file that is
+    # gone) and any fragment of a path that contained a literal newline.
+    [ -n "$f" ] && [ -f "$WS/$f" ] && printf '%s\n' "$f" >>"$LIST"
+  done <<EOF
+$(printf '%s\n' "$CHANGED" | sed -n "s|^$WS/||p")
+EOF
+  # Exact hash lookup, so filenames with regex metacharacters stay literal. The
+  # tightened pattern requires "(line,col): error TS", so parentheses inside a
+  # filename do not truncate it.
+  BLOCKER=$(awk '
+    NR == FNR { want[$0] = 1; next }
+    /error TS/ {
+      f = $0
+      if (sub(/\([0-9]+,[0-9]+\): error TS.*$/, "", f) && (f in want)) { print; exit }
+    }
+  ' "$LIST" "$LOG")
   if [ -n "$BLOCKER" ]; then
     BLOCK_WS="$WS"
     break

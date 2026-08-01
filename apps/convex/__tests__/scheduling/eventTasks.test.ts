@@ -1366,3 +1366,264 @@ describe("unconfirmed volunteers reach serving-mode tasks/crew", () => {
     ).rejects.toThrow();
   });
 });
+
+/**
+ * Per-task provenance: WHICH of the viewer's roles put this task in their list.
+ *
+ * `getMyServingTasks` already unioned every role the viewer holds and matched
+ * tasks against the union — then dropped which role matched, so a volunteer
+ * holding two roles got one flat, unattributed list.
+ */
+describe("getMyServingTasks role provenance", () => {
+  /** A second team on the same group, with its own role, for the viewer. */
+  async function addSecondTeamRole(
+    t: ReturnType<typeof convexTest>,
+    world: Awaited<ReturnType<typeof buildSchedulingWorld>>,
+    planId: Id<"eventPlans">,
+    userId: Id<"users">,
+    teamName: string,
+    roleName: string,
+  ) {
+    return t.run(async (ctx: any) => {
+      const teamId = await ctx.db.insert("teams", {
+        groupId: world.groupId,
+        communityId: world.communityId,
+        name: teamName,
+        createdAt: Date.now(),
+        createdById: world.groupLeaderId,
+        updatedAt: Date.now(),
+      });
+      const roleId = await ctx.db.insert("teamRoles", {
+        teamId,
+        communityId: world.communityId,
+        name: roleName,
+        sortOrder: 0,
+        createdAt: Date.now(),
+        createdById: world.groupLeaderId,
+      });
+      const plan = await ctx.db.get(planId);
+      await ctx.db.insert("roleAssignments", {
+        planId,
+        teamId,
+        roleId,
+        userId,
+        eventDate: plan.eventDate,
+        status: "confirmed",
+        assignedById: world.groupLeaderId,
+        assignedAt: Date.now(),
+      });
+      return { teamId, roleId };
+    });
+  }
+
+  it("names the role and team that rostered each task", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const memberToken = (await generateTokens(world.channelMemberId)).accessToken;
+    const { planId } = await createEvent(t, world, leaderToken);
+    await assignAndConfirm(t, world, leaderToken, planId, world.channelMemberId);
+
+    await t.mutation(api.functions.scheduling.eventTasks.createTask, {
+      token: leaderToken,
+      planId,
+      teamIds: [world.teamId],
+      roleIds: [world.roleId],
+      segment: "before",
+      title: "Set up drums",
+      howToType: "none",
+    });
+
+    const mine = await t.query(
+      api.functions.scheduling.eventTasks.getMyServingTasks,
+      { token: memberToken, planId },
+    );
+    expect(mine.before[0].roles).toEqual([
+      {
+        roleId: world.roleId,
+        roleName: "Drums",
+        teamId: world.teamId,
+        teamName: "Worship Team",
+      },
+    ]);
+  });
+
+  it("attributes each task to the role it actually matched", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const memberToken = (await generateTokens(world.channelMemberId)).accessToken;
+    const { planId } = await createEvent(t, world, leaderToken);
+    await assignAndConfirm(t, world, leaderToken, planId, world.channelMemberId);
+    const second = await addSecondTeamRole(
+      t,
+      world,
+      planId,
+      world.channelMemberId,
+      "Production",
+      "Camera",
+    );
+
+    await t.mutation(api.functions.scheduling.eventTasks.createTask, {
+      token: leaderToken,
+      planId,
+      teamIds: [world.teamId],
+      roleIds: [world.roleId],
+      segment: "before",
+      title: "Set up drums",
+      howToType: "none",
+    });
+    await t.mutation(api.functions.scheduling.eventTasks.createTask, {
+      token: leaderToken,
+      planId,
+      teamIds: [second.teamId],
+      roleIds: [second.roleId],
+      segment: "before",
+      title: "Frame the stage",
+      howToType: "none",
+    });
+
+    const mine = await t.query(
+      api.functions.scheduling.eventTasks.getMyServingTasks,
+      { token: memberToken, planId },
+    );
+    const byTitle = Object.fromEntries(mine.before.map((x) => [x.title, x]));
+    expect(byTitle["Set up drums"].roles).toEqual([
+      {
+        roleId: world.roleId,
+        roleName: "Drums",
+        teamId: world.teamId,
+        teamName: "Worship Team",
+      },
+    ]);
+    expect(byTitle["Frame the stage"].roles).toEqual([
+      {
+        roleId: second.roleId,
+        roleName: "Camera",
+        teamId: second.teamId,
+        teamName: "Production",
+      },
+    ]);
+  });
+
+  it("reports EVERY held role a task matched, not just the first", async () => {
+    // `roleIds` is an array, so one task can be the viewer's twice over.
+    // Reporting one match would understate what they hold — the exact doubt
+    // this exists to settle.
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const memberToken = (await generateTokens(world.channelMemberId)).accessToken;
+    const { planId } = await createEvent(t, world, leaderToken);
+    await assignAndConfirm(t, world, leaderToken, planId, world.channelMemberId);
+    const second = await addSecondTeamRole(
+      t,
+      world,
+      planId,
+      world.channelMemberId,
+      "Production",
+      "Camera",
+    );
+
+    await t.mutation(api.functions.scheduling.eventTasks.createTask, {
+      token: leaderToken,
+      planId,
+      teamIds: [world.teamId, second.teamId],
+      roleIds: [world.roleId, second.roleId],
+      segment: "before",
+      title: "Sound check",
+      howToType: "none",
+    });
+
+    const mine = await t.query(
+      api.functions.scheduling.eventTasks.getMyServingTasks,
+      { token: memberToken, planId },
+    );
+    expect(mine.before[0].roles.map((r) => r.roleName)).toEqual([
+      "Drums",
+      "Camera",
+    ]);
+  });
+
+  it("omits the roles the viewer does NOT hold from a multi-role task", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const memberToken = (await generateTokens(world.channelMemberId)).accessToken;
+    const { planId } = await createEvent(t, world, leaderToken);
+    await assignAndConfirm(t, world, leaderToken, planId, world.channelMemberId);
+
+    // A second role on the plan that the viewer is NOT assigned to.
+    const otherRoleId = await t.run(async (ctx: any) =>
+      ctx.db.insert("teamRoles", {
+        teamId: world.teamId,
+        communityId: world.communityId,
+        name: "Bass",
+        sortOrder: 1,
+        createdAt: Date.now(),
+        createdById: world.groupLeaderId,
+      }),
+    );
+
+    await t.mutation(api.functions.scheduling.eventTasks.createTask, {
+      token: leaderToken,
+      planId,
+      teamIds: [world.teamId],
+      roleIds: [world.roleId, otherRoleId],
+      segment: "before",
+      title: "Tune up",
+      howToType: "none",
+    });
+
+    const mine = await t.query(
+      api.functions.scheduling.eventTasks.getMyServingTasks,
+      { token: memberToken, planId },
+    );
+    expect(mine.before[0].roles.map((r) => r.roleName)).toEqual(["Drums"]);
+  });
+
+  it("gives personal tasks no provenance — nobody rostered them", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const memberToken = (await generateTokens(world.channelMemberId)).accessToken;
+    const { planId } = await createEvent(t, world, leaderToken);
+    await assignAndConfirm(t, world, leaderToken, planId, world.channelMemberId);
+
+    await t.mutation(api.functions.scheduling.eventTasks.addPersonalTask, {
+      token: memberToken,
+      planId,
+      segment: "after",
+      title: "Pack up my sticks",
+    });
+
+    const mine = await t.query(
+      api.functions.scheduling.eventTasks.getMyServingTasks,
+      { token: memberToken, planId },
+    );
+    expect(mine.after[0].isPersonal).toBe(true);
+    expect(mine.after[0].roles).toEqual([]);
+  });
+
+  it("keeps the provenance on every expanded 'during' service time", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const memberToken = (await generateTokens(world.channelMemberId)).accessToken;
+    const { planId } = await createEvent(t, world, leaderToken);
+    await assignAndConfirm(t, world, leaderToken, planId, world.channelMemberId);
+
+    await t.mutation(api.functions.scheduling.eventTasks.createTask, {
+      token: leaderToken,
+      planId,
+      teamIds: [world.teamId],
+      roleIds: [world.roleId],
+      segment: "during",
+      title: "Play",
+      howToType: "none",
+    });
+
+    const mine = await t.query(
+      api.functions.scheduling.eventTasks.getMyServingTasks,
+      { token: memberToken, planId },
+    );
+    expect(mine.during).toHaveLength(2);
+    for (const row of mine.during) {
+      expect(row.roles.map((r) => r.roleName)).toEqual(["Drums"]);
+    }
+  });
+});

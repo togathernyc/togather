@@ -21,6 +21,7 @@ import { query } from "../../_generated/server";
 import type { Doc, Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
 import { isLeaderRole } from "../../lib/helpers";
+import { isValidDayKey, localDayKey, resolveTimeZone } from "../../lib/localDay";
 import {
   isGroupScheduler,
   managedTeamIdsInGroup,
@@ -121,6 +122,36 @@ export const rosterMatrix = query({
       ...upcoming,
     ].slice(0, cap);
 
+    // Which plans share a local calendar day with another plan of this group.
+    // `createEvent` now blocks accidental same-day plans, but duplicates
+    // created before that guard existed are still in the data — a leader has to
+    // be able to SEE that two of their columns are the same date, since the
+    // headers are otherwise indistinguishable. Computed over EVERY plan (not
+    // just the visible columns) so a duplicate hidden by the column cap still
+    // flags the one on screen. Demo-seeded plans are excluded, matching the
+    // creation guard. The day key is the community's LOCAL day: a 9 AM and an
+    // 11 AM service are one day, a Sat 11 PM and a Sun 1 AM plan are two.
+    const group = await ctx.db.get(args.groupId);
+    const community = group ? await ctx.db.get(group.communityId) : null;
+    const timeZone = resolveTimeZone(community?.timezone);
+    const plansPerLocalDay = new Map<string, number>();
+    // A plan whose `eventDate` isn't a real instant has no local day, so it
+    // can neither be double-booked nor double-book anything else. Excluded
+    // rather than bucketed, so one corrupt row can't flag every other one.
+    for (const p of allPlans) {
+      if (p.isDemoSeed) continue;
+      const key = localDayKey(p.eventDate, timeZone);
+      if (!isValidDayKey(key)) continue;
+      plansPerLocalDay.set(key, (plansPerLocalDay.get(key) ?? 0) + 1);
+    }
+    /** Total plans (this one included) sharing its local day. 1 = unique. */
+    const sameDatePlanCount = (plan: Doc<"eventPlans">): number => {
+      if (plan.isDemoSeed) return 1;
+      const key = localDayKey(plan.eventDate, timeZone);
+      if (!isValidDayKey(key)) return 1;
+      return plansPerLocalDay.get(key) ?? 1;
+    };
+
     // --- Fan out the three per-plan reads. ---
     const perPlan = await Promise.all(
       plans.map(async (plan) => {
@@ -158,6 +189,10 @@ export const rosterMatrix = query({
       // label each checkbox and total only the teams actually selected without
       // a second round-trip.
       pendingByTeam: countPendingByTeam(assignments),
+      // How many of the group's plans sit on this plan's local day (itself
+      // included). >1 means the column header is ambiguous — the grid flags it
+      // with the same ⚠ "double-booked" language it uses for people.
+      sameDatePlanCount: sameDatePlanCount(plan),
     }));
 
     // --- Resolve display names for every role and user referenced. ---

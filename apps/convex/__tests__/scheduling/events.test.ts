@@ -627,3 +627,78 @@ describe("deleteEvent cascade", () => {
     expect(await activeSynced()).toHaveLength(0);
   });
 });
+
+/**
+ * The default plan title.
+ *
+ * Both no-title entry points ("Add date" on the roster grid, and quick-start)
+ * hardcoded the literal string "Untitled event plan", which shipped straight
+ * into serving mode's plan headers and read like missing data. The title now
+ * falls back to a GROUP-derived default — not a date-derived one, because both
+ * callers create the plan at a placeholder date the leader changes afterwards.
+ */
+describe("createEvent default title", () => {
+  it("derives a title from the group when none is given", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const eventDate = Date.now() + 7 * DAY;
+
+    const { planId } = await t.mutation(
+      api.functions.scheduling.events.createEvent,
+      {
+        token: leaderToken,
+        groupId: world.groupId,
+        eventDate,
+        times: [{ label: "9 AM", startsAt: eventDate }],
+      },
+    );
+
+    const plan = await t.run(async (ctx: any) => ctx.db.get(planId));
+    expect(plan.title).toBe("Brooklyn Campus event");
+  });
+
+  // Omitting the title and submitting an empty one are different intents: the
+  // first is "Add date" (name it later), the second is a form the leader left
+  // blank. Only the first may be defaulted — defaulting the second would drop
+  // their input with no error for the client to surface, and `updateEvent`
+  // rejects a blank rename, so accepting one here would be incoherent.
+  it.each([["   "], [""]])(
+    "rejects an explicitly blank title (%j) rather than defaulting it",
+    async (title) => {
+      const { t, world } = await setupSchedulingWorld();
+      const leaderToken = (await generateTokens(world.groupLeaderId))
+        .accessToken;
+      const eventDate = Date.now() + 7 * DAY;
+
+      await expect(
+        t.mutation(api.functions.scheduling.events.createEvent, {
+          token: leaderToken,
+          groupId: world.groupId,
+          title,
+          eventDate,
+          times: [{ label: "9 AM", startsAt: eventDate }],
+        }),
+      ).rejects.toThrow("Event title cannot be empty");
+    },
+  );
+
+  it("still honours an explicit title", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const eventDate = Date.now() + 7 * DAY;
+
+    const { planId } = await t.mutation(
+      api.functions.scheduling.events.createEvent,
+      {
+        token: leaderToken,
+        groupId: world.groupId,
+        title: "Christmas Eve",
+        eventDate,
+        times: [{ label: "9 AM", startsAt: eventDate }],
+      },
+    );
+
+    const plan = await t.run(async (ctx: any) => ctx.db.get(planId));
+    expect(plan.title).toBe("Christmas Eve");
+  });
+});

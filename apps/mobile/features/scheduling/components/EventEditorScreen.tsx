@@ -39,6 +39,7 @@ import {
 import type { Id } from "@services/api/convex";
 import { confirmAsync, notify } from "@/utils/platformAlert";
 import { DEFAULT_ROLE_COLOR } from "../utils/format";
+import { savePlanDate } from "../utils/duplicatePlanDate";
 import { NeededRolesModal } from "./NeededRolesModal";
 import { AssignSheet } from "./AssignSheet";
 import { TimesEditor } from "./TimesEditor";
@@ -204,14 +205,17 @@ export function EventEditorScreen() {
   flushTitleRef.current = flushTitle;
   useEffect(() => () => void flushTitleRef.current(), []);
 
+  // This screen is where BOTH "＋ Add date" and "Duplicate" push the leader to
+  // set the new plan's date, so it has to resolve a collision rather than
+  // dead-end on one. See `savePlanDate`.
   const handleChangeDate = useCallback(
     async (date: Date | null) => {
-      if (!date) return;
-      try {
-        await updateEvent({ planId, eventDate: date.getTime() });
-      } catch (e: any) {
-        notify("Couldn't update date", e?.message ?? "Please try again.");
-      }
+      await savePlanDate({
+        date,
+        save: (eventDate, allowSameDay) =>
+          updateEvent({ planId, eventDate, allowSameDay }),
+        onError: (m) => notify("Couldn't update date", m),
+      });
     },
     [updateEvent, planId],
   );
