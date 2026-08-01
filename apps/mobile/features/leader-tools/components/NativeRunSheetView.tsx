@@ -25,6 +25,22 @@ import { useRouter } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useTheme } from "@hooks/useTheme";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { useWhatsappShell } from "@hooks/useWhatsappShell";
+import {
+  WA_CELL_MIN_HEIGHT,
+  WA_CELL_PADDING,
+  WA_GROUP_MARGIN,
+  WA_GROUP_RADIUS,
+  WA_GROUP_SPACING,
+  WA_SECTION_HEADER_GAP,
+  WA_SECTION_LABEL_SIZE,
+  WA_TYPE_FOOTNOTE,
+  WA_TYPE_ROW_TITLE,
+  WA_TYPE_SECTION_HEADER,
+  WA_TYPE_SUBTITLE,
+  WA_WEIGHT_REGULAR,
+  WA_WEIGHT_SEMIBOLD,
+} from "@components/wa";
 import { useAuth } from "@providers/AuthProvider";
 import { useAuthenticatedQuery, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
@@ -106,6 +122,8 @@ export function NativeRunSheetView({
 }) {
   const { colors } = useTheme();
   const { primaryColor } = useCommunityTheme();
+  // Flag-on restyle only — see the `waStyles` block at the bottom of this file.
+  const wa = useWhatsappShell();
   const router = useRouter();
   const { isNetworkAvailable } = useConnectionStatus();
   // Subscribe to the cache store (not `.getState()`) so the async AsyncStorage
@@ -161,7 +179,13 @@ export function NativeRunSheetView({
     return (
       <View style={[styles.centered, { backgroundColor: colors.background }]}>
         <Ionicons name="list-outline" size={28} color={colors.textTertiary} />
-        <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+        <Text
+          style={[
+            styles.emptyText,
+            wa && waStyles.emptyText,
+            { color: colors.textSecondary },
+          ]}
+        >
           No upcoming event plans. Create one in Rostering to build its run
           sheet.
         </Text>
@@ -189,17 +213,30 @@ export function NativeRunSheetView({
                 <View
                   style={[
                     styles.tab,
-                    {
-                      backgroundColor: selected
-                        ? primaryColor
-                        : colors.surfaceSecondary,
-                    },
+                    wa && waStyles.tab,
+                    // §7 pill vocabulary: selected = accent fill; unselected =
+                    // card fill + a 1px separator border, never a gray blob.
+                    wa
+                      ? selected
+                        ? { backgroundColor: primaryColor, borderColor: primaryColor }
+                        : {
+                            backgroundColor: colors.surface,
+                            borderColor: colors.separator,
+                          }
+                      : {
+                          backgroundColor: selected
+                            ? primaryColor
+                            : colors.surfaceSecondary,
+                        },
                   ]}
                 >
                   <Text
                     style={[
                       styles.tabText,
-                      { color: selected ? "#fff" : colors.textSecondary },
+                      wa && waStyles.tabText,
+                      wa
+                        ? { color: selected ? colors.onAccent : colors.text }
+                        : { color: selected ? "#fff" : colors.textSecondary },
                     ]}
                     numberOfLines={1}
                   >
@@ -254,6 +291,8 @@ export function PlanRunSheet({
 }) {
   const { colors } = useTheme();
   const { primaryColor } = useCommunityTheme();
+  // Flag-on restyle only — see the `waStyles` block at the bottom of this file.
+  const wa = useWhatsappShell();
   const { isNetworkAvailable } = useConnectionStatus();
   const { user } = useAuth();
   // Subscribe so AsyncStorage rehydration re-renders us (see NativeRunSheetView).
@@ -509,7 +548,13 @@ export function PlanRunSheet({
   if (!effEvent || !effItems) {
     return (
       <View style={styles.centered}>
-        <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+        <Text
+          style={[
+            styles.emptyText,
+            wa && waStyles.emptyText,
+            { color: colors.textSecondary },
+          ]}
+        >
           This run sheet is unavailable.
         </Text>
       </View>
@@ -517,18 +562,27 @@ export function PlanRunSheet({
   }
 
   const Root = embedded ? View : ScrollView;
+  const sheetStyle = [styles.sheet, wa && waStyles.sheet];
   const rootProps = embedded
-    ? { style: styles.sheet }
-    : { contentContainerStyle: styles.sheet };
+    ? { style: sheetStyle }
+    : { contentContainerStyle: sheetStyle };
   return (
     <Root {...(rootProps as object)}>
       <View style={styles.sheetHeader}>
         <View style={styles.sheetHeaderText}>
-          <Text style={[styles.planTitle, { color: colors.text }]}>
+          <Text
+            style={[styles.planTitle, wa && waStyles.planTitle, { color: colors.text }]}
+          >
             {effEvent.title}
           </Text>
           {times.length > 0 ? (
-            <Text style={[styles.ranges, { color: colors.textSecondary }]}>
+            <Text
+              style={[
+                styles.ranges,
+                wa && waStyles.ranges,
+                { color: colors.textSecondary },
+              ]}
+            >
               {formatServiceRanges(times, duringTotalSec)}
             </Text>
           ) : null}
@@ -547,7 +601,13 @@ export function PlanRunSheet({
                   size={16}
                   color={primaryColor}
                 />
-                <Text style={[styles.editText, { color: primaryColor }]}>
+                <Text
+                  style={[
+                    styles.editText,
+                    wa && waStyles.editText,
+                    { color: primaryColor },
+                  ]}
+                >
                   Rehearse
                 </Text>
               </View>
@@ -557,7 +617,13 @@ export function PlanRunSheet({
             <Pressable onPress={onEdit} hitSlop={8} accessibilityRole="button">
               <View style={styles.editRow}>
                 <Ionicons name="create-outline" size={16} color={primaryColor} />
-                <Text style={[styles.editText, { color: primaryColor }]}>
+                <Text
+                  style={[
+                    styles.editText,
+                    wa && waStyles.editText,
+                    { color: primaryColor },
+                  ]}
+                >
                   Edit
                 </Text>
               </View>
@@ -575,7 +641,13 @@ export function PlanRunSheet({
       />
 
       {effItems.length === 0 ? (
-        <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+        <Text
+          style={[
+            styles.emptyText,
+            wa && waStyles.emptyText,
+            { color: colors.textSecondary },
+          ]}
+        >
           This event plan's run sheet is empty.
         </Text>
       ) : (
@@ -594,17 +666,34 @@ export function PlanRunSheet({
                   <View
                     style={[
                       styles.viewModePill,
-                      {
-                        backgroundColor: selected
-                          ? primaryColor
-                          : colors.surfaceSecondary,
-                      },
+                      wa && waStyles.viewModePill,
+                      // §7 pill vocabulary: selected = accent fill; unselected =
+                      // card fill + a 1px separator border, never a gray blob.
+                      wa
+                        ? selected
+                          ? { backgroundColor: primaryColor, borderColor: primaryColor }
+                          : {
+                              backgroundColor: colors.surface,
+                              borderColor: colors.separator,
+                            }
+                        : {
+                            backgroundColor: selected
+                              ? primaryColor
+                              : colors.surfaceSecondary,
+                          },
                     ]}
                   >
                     <Text
                       style={[
                         styles.viewModeText,
-                        { color: selected ? colors.textInverse : colors.textSecondary },
+                        wa && waStyles.viewModeText,
+                        wa
+                          ? { color: selected ? colors.onAccent : colors.text }
+                          : {
+                              color: selected
+                                ? colors.textInverse
+                                : colors.textSecondary,
+                            },
                       ]}
                     >
                       {opt.label}
@@ -618,7 +707,13 @@ export function PlanRunSheet({
           {viewMode === "mine" && !mineHasContent ? (
             <View style={styles.mineEmptyState}>
               <Ionicons name="person-outline" size={22} color={colors.textTertiary} />
-              <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+              <Text
+                style={[
+                  styles.emptyText,
+                  wa && waStyles.emptyText,
+                  { color: colors.textSecondary },
+                ]}
+              >
                 {hasAnyViewerRole
                   ? "None of the run sheet items are tagged with your roles yet."
                   : "You're not assigned a role on this plan yet."}
@@ -646,8 +741,16 @@ export function PlanRunSheet({
               const visibleItems = filterVisible(modeItems, collapsedHeaders);
               return (
                 <View key={seg.key}>
-                  <Text style={[styles.segmentLabel, { color: colors.textSecondary }]}>
-                    {seg.label.toUpperCase()}
+                  <Text
+                    style={[
+                      styles.segmentLabel,
+                      wa && waStyles.segmentLabel,
+                      { color: colors.textSecondary },
+                    ]}
+                  >
+                    {/* §3.2/S3.5: the ALL-CAPS letter-spaced section label is
+                        dead — sentence-case gray, verbatim, flag-on. */}
+                    {wa ? seg.label : seg.label.toUpperCase()}
                   </Text>
                   {visibleItems.map((item) => (
                     <ReadOnlyRow
@@ -656,6 +759,7 @@ export function PlanRunSheet({
                       clockMs={clockTimes[item._id]}
                       peopleByRole={peopleByRole}
                       colors={colors}
+                      wa={wa}
                       isCurrent={item._id === currentItemId}
                       isExpanded={expandedItemIds.has(item._id)}
                       onToggleExpand={() => toggleItemExpanded(item._id)}
@@ -700,6 +804,7 @@ function ReadOnlyRow({
   clockMs,
   peopleByRole,
   colors,
+  wa,
   isCurrent,
   isExpanded,
   onToggleExpand,
@@ -710,6 +815,8 @@ function ReadOnlyRow({
   clockMs: number | null;
   peopleByRole: Record<string, string[]>;
   colors: ReturnType<typeof useTheme>["colors"];
+  /** `whatsapp-shell` flag — restyle only, never a behavior branch. */
+  wa: boolean;
   isCurrent: boolean;
   isExpanded: boolean;
   onToggleExpand: () => void;
@@ -724,7 +831,7 @@ function ReadOnlyRow({
     return (
       <Pressable
         onPress={onToggleCollapse}
-        style={styles.headerRow}
+        style={[styles.headerRow, wa && waStyles.headerRow]}
         accessibilityRole="button"
         accessibilityState={{ expanded: !isCollapsed }}
       >
@@ -734,13 +841,24 @@ function ReadOnlyRow({
           color={colors.textSecondary}
         />
         <Text
-          style={[styles.headerText, { color: colors.textSecondary }]}
+          style={[
+            styles.headerText,
+            wa && waStyles.headerText,
+            { color: colors.textSecondary },
+          ]}
           numberOfLines={1}
         >
-          {item.title.toUpperCase()}
+          {/* §3.2/S3.5: sentence-case section labels, never ALL-CAPS. */}
+          {wa ? item.title : item.title.toUpperCase()}
         </Text>
         {clockMs != null ? (
-          <Text style={[styles.headerTime, { color: colors.textTertiary }]}>
+          <Text
+            style={[
+              styles.headerTime,
+              wa && waStyles.headerTime,
+              { color: colors.textTertiary },
+            ]}
+          >
             {formatClockTime(clockMs)}
           </Text>
         ) : null}
@@ -756,6 +874,7 @@ function ReadOnlyRow({
     <View
       style={[
         styles.row,
+        wa && waStyles.row,
         { backgroundColor: colors.surfaceSecondary },
         // Live "happening now" highlight, mirroring the PCO run sheet
         // (RunSheetScreen). Theme-sourced so light/dark comes from the palette
@@ -768,11 +887,19 @@ function ReadOnlyRow({
       ]}
     >
       <View style={styles.timeCol}>
-        <Text style={[styles.timeText, { color: colors.text }]}>
+        <Text
+          style={[styles.timeText, wa && waStyles.timeText, { color: colors.text }]}
+        >
           {clockMs != null ? formatClockTime(clockMs) : "—"}
         </Text>
         {duration ? (
-          <Text style={[styles.durationText, { color: colors.textTertiary }]}>
+          <Text
+            style={[
+              styles.durationText,
+              wa && waStyles.durationText,
+              { color: colors.textTertiary },
+            ]}
+          >
             {duration}
           </Text>
         ) : null}
@@ -787,7 +914,9 @@ function ReadOnlyRow({
             hasExpandableContent ? { expanded: isExpanded } : undefined
           }
         >
-          <Text style={[styles.itemTitle, { color: colors.text }]}>
+          <Text
+            style={[styles.itemTitle, wa && waStyles.itemTitle, { color: colors.text }]}
+          >
             {item.title}
           </Text>
           {hasExpandableContent ? (
@@ -799,27 +928,56 @@ function ReadOnlyRow({
           ) : null}
         </Pressable>
         {item.type === "song" && item.songDetails?.key ? (
-          <Text style={[styles.meta, { color: colors.textSecondary }]}>
+          <Text
+            style={[
+              styles.meta,
+              wa && waStyles.meta,
+              { color: colors.textSecondary },
+            ]}
+          >
             Key {item.songDetails.key}
             {item.songDetails.bpm ? ` · ${item.songDetails.bpm} BPM` : ""}
           </Text>
         ) : null}
         {item.assignments.length > 0 ? (
-          <View style={styles.assignWrap}>
+          <View style={[styles.assignWrap, wa && waStyles.assignWrap]}>
             {item.assignments.map((a) => {
               const names = peopleByRole[a.roleId as string] ?? [];
+              const roleColor = a.roleColor ?? DEFAULT_ROLE_COLOR;
+              const people = names.length > 0 ? `: ${names.join(", ")}` : "";
+              // §7 bans a colored pill as a taxonomy device ("never a colored
+              // pill sitting where WhatsApp puts a timestamp/badge"), which is
+              // exactly what the flag-off chip is — a translucent `roleColor`
+              // fill plus a swatch. Flag-on it becomes what §7 does sanction:
+              // "plain descriptive text in the subtitle line". The role's own
+              // hue survives as TEXT INK, which is how WhatsApp itself carries
+              // a per-entity identity (§5/§1.3 group-chat sender names:
+              // colored semibold text, no container, never the brand accent) —
+              // so a volunteer still finds their role by color, and it's the
+              // same hue their leader picked in Rostering.
+              if (wa) {
+                return (
+                  <Text
+                    key={a.roleId}
+                    style={[waStyles.assignText, { color: colors.textSecondary }]}
+                    numberOfLines={1}
+                  >
+                    <Text style={[waStyles.assignRole, { color: roleColor }]}>
+                      {a.roleName}
+                    </Text>
+                    {people}
+                  </Text>
+                );
+              }
               return (
                 <View
                   key={a.roleId}
-                  style={[
-                    styles.assignChip,
-                    { backgroundColor: (a.roleColor ?? DEFAULT_ROLE_COLOR) + "22" },
-                  ]}
+                  style={[styles.assignChip, { backgroundColor: roleColor + "22" }]}
                 >
-                  <View style={[styles.assignSwatch, { backgroundColor: a.roleColor ?? DEFAULT_ROLE_COLOR }]} />
+                  <View style={[styles.assignSwatch, { backgroundColor: roleColor }]} />
                   <Text style={[styles.assignText, { color: colors.text }]} numberOfLines={1}>
                     {a.roleName}
-                    {names.length > 0 ? `: ${names.join(", ")}` : ""}
+                    {people}
                   </Text>
                 </View>
               );
@@ -832,7 +990,7 @@ function ReadOnlyRow({
             once expanded. */}
         {!isExpanded && hasDescription ? (
           <Text
-            style={[styles.desc, { color: colors.textSecondary }]}
+            style={[styles.desc, wa && waStyles.desc, { color: colors.textSecondary }]}
             numberOfLines={2}
           >
             {item.description}
@@ -840,7 +998,11 @@ function ReadOnlyRow({
         ) : null}
         {!isExpanded && hasNotes ? (
           <Text
-            style={[styles.notePreview, { color: colors.textTertiary }]}
+            style={[
+              styles.notePreview,
+              wa && waStyles.notePreview,
+              { color: colors.textTertiary },
+            ]}
             numberOfLines={2}
           >
             {item.notes[0].category ? `${item.notes[0].category}: ` : ""}
@@ -854,20 +1016,26 @@ function ReadOnlyRow({
             {hasDescription
               ? renderTextWithLinks(
                   item.description!,
-                  [styles.desc, { color: colors.textSecondary }],
+                  [styles.desc, wa && waStyles.desc, { color: colors.textSecondary }],
                   colors.link,
                 )
               : null}
             {item.notes.map((n, i) => (
               <View key={i} style={styles.noteBlock}>
                 {n.category ? (
-                  <Text style={[styles.noteCategory, { color: colors.textTertiary }]}>
+                  <Text
+                    style={[
+                      styles.noteCategory,
+                      wa && waStyles.noteCategory,
+                      { color: colors.textTertiary },
+                    ]}
+                  >
                     {n.category}
                   </Text>
                 ) : null}
                 {renderTextWithLinks(
                   n.content,
-                  [styles.note, { color: colors.textSecondary }],
+                  [styles.note, wa && waStyles.note, { color: colors.textSecondary }],
                   colors.link,
                 )}
               </View>
@@ -958,4 +1126,117 @@ const styles = StyleSheet.create({
   },
   headerText: { fontSize: 12, fontWeight: "800", letterSpacing: 0.5, flex: 1 },
   headerTime: { fontSize: 11, fontWeight: "600" },
+});
+
+/**
+ * `whatsapp-shell` (flag-on) style overrides — applied as
+ * `style={[styles.x, wa && waStyles.x]}` so flag-off renders `styles`
+ * byte-for-byte and only flag-on picks these up.
+ *
+ * This is a SKIN, not a restructure (README §9.5: serving mode is "shared
+ * between shells, not forked"). Every affordance, handler, offline fallback
+ * and the `canEdit` Edit/Rehearse shortcuts are untouched — this view is
+ * shared by the leader-tools Run Sheet tool (`RunSheetToolScreen`, `canEdit`
+ * true for leaders/admins) and serving mode's Runsheet tab
+ * (`ServingRunsheetScreen`, `canEdit={false}`, embedded), and both get the
+ * same treatment. What changes is the vocabulary
+ * (WHATSAPP-DESIGN-SYSTEM.md §7's four primitives — rows, inset-grouped
+ * cells, bubbles, pills):
+ *
+ *  - **Role chips are gone.** The flag-off `assignChip` is a translucent
+ *    `roleColor` fill + swatch behind the role name — the colored taxonomy
+ *    chip §7 bans outright. Flag-on the container disappears and each
+ *    assignment becomes one plain subtitle line (§7's sanctioned "plain
+ *    descriptive text"), with the role's own hue kept as text ink the way
+ *    WhatsApp colors group-chat sender names (§5/§1.3): colored semibold
+ *    text, no fill. The people stay in `text.secondary`.
+ *  - ALL-CAPS labels are dead (§3.2/S3.5). Segment labels and item header
+ *    rows become sentence-case 15pt gray; note categories lose
+ *    `textTransform` and letter-spacing. The `toUpperCase()` calls are
+ *    dropped at their call sites, not here.
+ *  - The All/Mine filter and the plan tabs move onto §7's pill vocabulary:
+ *    selected = accent fill with `onAccent` ink; unselected = card fill with
+ *    a 1px `separator` border, not a gray `surfaceSecondary` blob.
+ *  - Rows take §3.2 cell anatomy — 24pt radius, 16pt padding, 54pt minimum
+ *    height. They keep `surfaceSecondary` as their fill rather than
+ *    `surfaceGrouped`/`bg.card`: this component doesn't own its canvas (both
+ *    consumers render it over `colors.background`, which is white in light
+ *    mode), so a `bg.card` fill would make every row invisible. Painting the
+ *    canvas `bg.grouped` is a consumer-level change, not a skin.
+ *  - Type moves onto the S7 scale (20 / 17 / 15 / 13) — the pre-pass sizes
+ *    ran "1–2pt small and one weight light throughout".
+ *  - Italics (`notePreview`) aren't in the system at all.
+ *
+ * The now-playing highlight keeps its amber: it's a transient state marker,
+ * not a category color, so §7's chip ban doesn't reach it, and §1.3 reserves
+ * the accent for selection/positive states.
+ */
+const waStyles = StyleSheet.create({
+  emptyText: { fontSize: WA_TYPE_SUBTITLE, lineHeight: 21 },
+
+  // Plan tabs + All/Mine — §7 pill vocabulary (fills set at the call sites).
+  tab: { paddingHorizontal: 16, paddingVertical: 9, borderWidth: 1 },
+  tabText: { fontSize: WA_TYPE_SUBTITLE, fontWeight: WA_WEIGHT_SEMIBOLD },
+  viewModePill: { paddingHorizontal: 16, paddingVertical: 9, borderWidth: 1 },
+  viewModeText: { fontSize: WA_TYPE_SUBTITLE, fontWeight: WA_WEIGHT_SEMIBOLD },
+
+  // Sheet + header block
+  sheet: { padding: WA_GROUP_MARGIN, gap: WA_SECTION_HEADER_GAP },
+  planTitle: {
+    fontSize: WA_TYPE_SECTION_HEADER,
+    fontWeight: WA_WEIGHT_SEMIBOLD,
+  },
+  ranges: { fontSize: WA_TYPE_SUBTITLE, fontWeight: WA_WEIGHT_REGULAR },
+  editText: { fontSize: WA_TYPE_SUBTITLE, fontWeight: WA_WEIGHT_SEMIBOLD },
+
+  // Sentence-case section labels above each segment's rows (§3.2).
+  segmentLabel: {
+    fontSize: WA_SECTION_LABEL_SIZE,
+    fontWeight: WA_WEIGHT_REGULAR,
+    letterSpacing: 0,
+    marginTop: WA_GROUP_SPACING,
+    marginBottom: WA_SECTION_HEADER_GAP,
+  },
+
+  // Item rows (§3.2 cell anatomy)
+  row: {
+    borderRadius: WA_GROUP_RADIUS,
+    padding: WA_CELL_PADDING,
+    minHeight: WA_CELL_MIN_HEIGHT,
+    gap: 12,
+    marginTop: WA_SECTION_HEADER_GAP,
+  },
+  timeText: { fontSize: WA_TYPE_SUBTITLE, fontWeight: WA_WEIGHT_REGULAR },
+  durationText: { fontSize: WA_TYPE_FOOTNOTE, marginTop: 2 },
+  itemTitle: {
+    fontSize: WA_TYPE_ROW_TITLE,
+    lineHeight: 22,
+    fontWeight: WA_WEIGHT_REGULAR,
+  },
+  meta: { fontSize: WA_TYPE_FOOTNOTE },
+  desc: { fontSize: WA_TYPE_SUBTITLE, lineHeight: 20 },
+  notePreview: { fontSize: WA_TYPE_FOOTNOTE, lineHeight: 18, fontStyle: "normal" },
+  note: { fontSize: WA_TYPE_FOOTNOTE, lineHeight: 18 },
+  noteCategory: {
+    fontSize: WA_TYPE_FOOTNOTE,
+    fontWeight: WA_WEIGHT_SEMIBOLD,
+    textTransform: "none",
+    letterSpacing: 0,
+  },
+
+  // Role assignments — stacked subtitle lines, one per role (see the block
+  // comment above). No container, so there's no `assignChip`/`assignSwatch`
+  // counterpart here at all.
+  assignWrap: { flexDirection: "column", flexWrap: "nowrap", gap: 2, marginTop: 4 },
+  assignText: { fontSize: WA_TYPE_SUBTITLE, fontWeight: WA_WEIGHT_REGULAR },
+  assignRole: { fontWeight: WA_WEIGHT_SEMIBOLD },
+
+  // In-segment collapsible header rows — another sentence-case section label.
+  headerRow: { marginTop: 16, marginBottom: 4, gap: 8 },
+  headerText: {
+    fontSize: WA_SECTION_LABEL_SIZE,
+    fontWeight: WA_WEIGHT_REGULAR,
+    letterSpacing: 0,
+  },
+  headerTime: { fontSize: WA_TYPE_FOOTNOTE, fontWeight: WA_WEIGHT_REGULAR },
 });
