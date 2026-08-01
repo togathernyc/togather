@@ -212,12 +212,19 @@ export function mineEmptyCopy(
       // where Worship authored all 20 and Kids authored none, that points at a
       // non-problem. Say "across all teams" out loud instead, and restore the
       // one actionable instruction the old single-message copy had.
+      //
+      // The subject is spelled out as "This event's". It used to be "Its",
+      // whose nearest antecedent is the ROLE named in the sentence before it —
+      // so "You're serving as Camera. Its 2 tasks … are for other roles." read
+      // as Camera's own tasks being for other roles, which contradicts itself.
       const planWide =
         facts.planTaskCount === null
           ? null
-          : `Its ${pluralTasks(facts.planTaskCount)} — across all teams — ${
-              facts.planTaskCount === 1 ? "is" : "are"
-            } for other roles.`;
+          : `This event's ${pluralTasks(facts.planTaskCount)} — across all teams — ${
+              facts.planTaskCount === 1
+                ? "is for another role"
+                : "are for other roles"
+            }.`;
       return {
         title: `None of this event's tasks are assigned to your ${roleWord}.`,
         hint: [

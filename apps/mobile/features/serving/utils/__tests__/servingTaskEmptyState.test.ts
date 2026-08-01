@@ -168,7 +168,9 @@ describe("mineEmptyCopy", () => {
       "None of this event's tasks are assigned to your roles.",
     );
     expect(copy.hint).toContain("You're serving as Greeter and Usher.");
-    expect(copy.hint).toContain("Its 5 tasks — across all teams — are for other roles.");
+    expect(copy.hint).toContain(
+      "This event's 5 tasks — across all teams — are for other roles.",
+    );
     expect(copy.hint).toContain("Ask your team lead to add tasks for your roles.");
   });
 
@@ -181,8 +183,32 @@ describe("mineEmptyCopy", () => {
       "None of this event's tasks are assigned to your role.",
     );
     expect(copy.hint).toContain("You're serving as Greeter.");
-    expect(copy.hint).toContain("Its 1 task — across all teams — is for other roles.");
+    expect(copy.hint).toContain(
+      "This event's 1 task — across all teams — is for another role.",
+    );
     expect(copy.hint).toContain("Ask your team lead to add tasks for your role.");
+  });
+
+  // Shipped in #702 and seen live: "You're serving as Camera. Its 2 tasks —
+  // across all teams — are for other roles." "Its" attaches to the role named
+  // immediately before it, so it read as "Camera's 2 tasks are for other
+  // roles" — self-contradictory. The subject is the EVENT, and it must be
+  // spelled out; there is no arity of the role list at which "Its" is safe.
+  it("never lets the plan-wide count read as the viewer's role's own tasks", () => {
+    for (const myRoleNames of [
+      ["Camera"],
+      ["Camera", "Usher"],
+      ["Camera", "Usher", "Greeter"],
+    ]) {
+      const copy = mineEmptyCopy(
+        "role-mismatch",
+        facts({ planTaskCount: 2, myRoleNames }),
+      )!;
+      expect(copy.hint).toContain(
+        "This event's 2 tasks — across all teams — are for other roles.",
+      );
+      expect(copy.hint).not.toContain("Its ");
+    }
   });
 
   it("role-mismatch points at Shared when the team has shared tasks", () => {
@@ -204,6 +230,30 @@ describe("mineEmptyCopy", () => {
       facts({ myRoleNames: ["Camera 1", "Greeter", "Usher"] }),
     )!;
     expect(copy.hint).toContain("You're serving as Camera 1, Greeter and Usher.");
+  });
+
+  // `myRoleNamesFromCrew` returns EVERY role the viewer holds, so the copy has
+  // to name all of them — someone rostered for three things who is told
+  // "You're serving as Camera" reasonably doubts the whole message.
+  it.each([
+    [["Camera 1"], "Camera 1", "role"],
+    [["Camera 1", "Usher"], "Camera 1 and Usher", "roles"],
+    [["Camera 1", "Usher", "Greeter"], "Camera 1, Usher and Greeter", "roles"],
+    [
+      ["Camera 1", "Usher", "Greeter", "Drums"],
+      "Camera 1, Usher, Greeter and Drums",
+      "roles",
+    ],
+  ])("names all %# roles the viewer holds", (myRoleNames, joined, roleWord) => {
+    const copy = mineEmptyCopy("role-mismatch", facts({ myRoleNames }))!;
+    expect(copy.hint).toContain(`You're serving as ${joined}.`);
+    expect(copy.title).toBe(
+      `None of this event's tasks are assigned to your ${roleWord}.`,
+    );
+    expect(copy.hint).toContain(
+      `Ask your team lead to add tasks for your ${roleWord}.`,
+    );
+    for (const name of myRoleNames) expect(copy.hint).toContain(name);
   });
 
   it("says nothing at all about Shared while its count is unresolved", () => {
