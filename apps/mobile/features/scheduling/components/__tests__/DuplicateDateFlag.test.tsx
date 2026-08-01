@@ -40,6 +40,21 @@ describe("DuplicateDateFlag", () => {
         <DuplicateDateFlag sameDatePlanCount={0} colors={COLORS} />,
       ).toJSON(),
     ).toBeNull();
+
+    // The one that actually happens: the production deploy runs the Convex
+    // deploy and the mobile OTA in parallel, so a client can pull a bundle
+    // that reads `sameDatePlanCount` before the field exists. `undefined <= 1`
+    // is false, so failing open flagged EVERY column with "NaN other plans".
+    for (const missing of [undefined, null, NaN]) {
+      expect(
+        render(
+          <DuplicateDateFlag
+            sameDatePlanCount={missing as unknown as number}
+            colors={COLORS}
+          />,
+        ).toJSON(),
+      ).toBeNull();
+    }
   });
 
   it("flags a shared date with an accessible explanation", () => {

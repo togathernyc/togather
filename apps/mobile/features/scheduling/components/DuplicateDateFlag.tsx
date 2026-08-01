@@ -48,7 +48,12 @@ export function DuplicateDateFlag({
   colors: Colors;
   withLabel?: boolean;
 }) {
-  if (sameDatePlanCount <= 1) return null;
+  // Fail CLOSED, not open. `sameDatePlanCount` comes from `rosterMatrix`, and
+  // the production deploy ships the mobile OTA and the Convex functions in
+  // parallel — a client that pulls the bundle first sees `undefined` on every
+  // event. `undefined <= 1` is false, so a `<= 1` test rendered the warning on
+  // every column with `undefined - 1` in it: "NaN other plans on this date."
+  if (!(sameDatePlanCount > 1)) return null;
   const label = duplicateDateLabel(sameDatePlanCount);
   return (
     <View
