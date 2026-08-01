@@ -145,7 +145,31 @@ python3 -c "import re,sys; s=open(sys.argv[1]).read(); \
 - `max-daily-ai-credits` — rolling 24-hour guardrail, checked *before* the agent
   starts. When exceeded the activation job skips the run entirely and nothing is
   billed. Omitting this key leaves the guardrail *off*.
-- `max-turns: 30` and `timeout-minutes: 15` are the two non-financial bounds.
+- `max-turns: 30` is the other non-financial bound. `timeout-minutes: 15` is
+  **only real on CI Doctor** — see the warning below.
+
+> [!CAUTION]
+> **`timeout-minutes` is silently dropped for `engine: codex` in gh-aw v0.83.4.**
+> The compiler emits it as a step-level timeout on the agent execution step for
+> `engine: claude`, but the codex step builder never emits it at all. Verified:
+> `grep -c 'timeout-minutes: 15'` returns **1** in
+> `gardener-ci-doctor.lock.yml` and **0** in all three codex lock files. There is
+> no frontmatter key that fixes this — the engine schema has no timeout field,
+> and `engine.command` / `engine.harness` replace the executable rather than
+> bound it.
+>
+> **So the three Ollama gardeners' agent jobs have no wall-clock limit of their
+> own** and fall back to GitHub Actions' default job ceiling of **360 minutes**.
+> Their real bounds are the AI-credit cap and `max-turns`, both enforced inside
+> the AWF proxy — and both demonstrably do terminate a run, since the
+> analogous cache-miss guard is exactly what stopped
+> [run 30686121841](https://github.com/togathernyc/togather/actions/runs/30686121841)
+> mid-flight.
+>
+> The `timeout-minutes: 15` line is deliberately left in those three workflows:
+> it is inert today but costs nothing and will start working if gh-aw closes the
+> gap. Do not treat it as a live control until `grep` says otherwise. This looks
+> like an upstream bug and is worth reporting to github/gh-aw.
 
 The four daily caps sum to 1000 AIC = **$10/day repo-wide**. The guardrail is
 enforced per workflow per triggering user, not globally — that $10 is an
@@ -164,13 +188,16 @@ arithmetic budget across the four, not one number GitHub enforces.
 >
 > (Input-only, for scale; output costs 2–3× more, so real runs land lower.)
 >
-> The practical consequence: on the three Ollama gardeners the AIC cap is so
-> loose it will almost never be what stops a run. **`max-turns: 30` and
-> `timeout-minutes: 15` are the real per-run bounds there** — the cap is a
-> backstop against a pathological loop, not a working budget. On CI Doctor the
-> cap is genuinely close enough to bind. Tune the turns and the timeout if you
-> want to change how much work an Ollama gardener does; tuning its AIC will
-> mostly do nothing.
+> The practical consequence: on the three Ollama gardeners the AIC cap is loose
+> enough that it will rarely be the first thing to stop a run — **`max-turns` is
+> the binding bound there**, since `timeout-minutes` is inert for `engine: codex`
+> (see the caution above). The cap is a backstop against a pathological loop
+> rather than a working budget, and with no wall-clock limit it is also the only
+> thing standing between a wedged run and GitHub's 360-minute job ceiling. On CI
+> Doctor both the cap and the timeout are real and close enough to bind.
+>
+> To change how much work an Ollama gardener does, tune `max-turns`. Tuning its
+> AIC or its `timeout-minutes` will mostly do nothing.
 
 #### The dollar figures mean two different things
 
@@ -193,9 +220,10 @@ only knows *list* prices:
 
   **Your real exposure on the Ollama path is the Ollama Cloud subscription
   itself** ($20/mo Pro, with session limits resetting every 5 hours and weekly
-  limits every 7 days) — not anything in the table above. The 15-minute
-  `timeout-minutes` is the other hard bound and is deliberately tight for that
-  reason.
+  limits every 7 days) — not anything in the table above. Note there is **no
+  wall-clock backstop** on these three: `timeout-minutes` does not compile for
+  `engine: codex`, so a wedged run is bounded by the credit cap, `max-turns`, and
+  GitHub's 360-minute job ceiling rather than by 15 minutes.
 
 Metering works on the Ollama path at all only because gh-aw routes **every**
 engine through the AWF API proxy sidecar; the proxy is retargeted at `ollama.com`
@@ -434,8 +462,16 @@ network:
     - playwright
     - containers
 
-max-turn-cache-misses: 40       # Ollama has no prompt caching; default 5 is too low
+max-turn-cache-misses: 200      # see the trap below — 5 and 40 both kill runs
 ```
+
+> [!CAUTION]
+> **`max-turn-cache-misses` is not a cache guard on Ollama — it is a hard request
+> cap, and it will kill healthy runs.** Ollama does no prompt caching, so *every*
+> request is a "consecutive miss" and the counter only ever goes up. Set it far
+> above your turn budget. It **cannot be disabled** — the schema enforces
+> `minimum: 1`, and `-1` fails to compile with `must be at least 1 (got -1)`.
+> Live-verified below.
 
 gh-aw reads `OPENAI_BASE_URL` at compile time, extracts the hostname, and points
 the AWF proxy at it (`"targets":{"openai":{"host":"ollama.com"}}` in the lock
@@ -666,16 +702,19 @@ Before granting any gardener write scope (`create-pull-request` instead of
 - [ ] Any daily guardrail trip? That means a gardener was skipped silently.
 - [ ] Did the CI Doctor's failure signatures group sensibly, or did it file
       near-duplicates?
-- [ ] **Did the Ollama-backed gardeners complete their tool calls cleanly?** The
-      endpoint and model IDs are confirmed; sustained tool-calling over a full run
-      is the one thing left that only a live run can answer — see below.
+- [ ] **Did the Ollama-backed gardeners complete their runs?** Tool calling is
+      proven (2026-08-01, `deepseek-v4-flash`, ~40 clean tool-executing turns).
+      What is unproven is whether Docs Drift and Cost Report fit inside their
+      turn budgets — neither has run live. A run that dies partway is a
+      `max-turns` problem, not a model problem; see below.
 
 Grant write scope to **one** gardener first, not all four.
 
-### The Ollama path has never executed end-to-end
+### The Ollama path: what is proven and what is not
 
-It compiles, and the wiring is verified in the lock files (proxy retarget,
-firewall allowlist, AIC caps, and model pricing all resolve).
+The wiring is verified in the lock files (proxy retarget, firewall allowlist, AIC
+caps, model pricing), the endpoint and model IDs are confirmed against the live
+API, and **one gardener has now run for real** — see the 2026-08-01 run below.
 
 **The endpoint and the model IDs are now confirmed against the live API**
 (probed 2026-07-31, unauthenticated):
@@ -702,12 +741,46 @@ curl -s https://ollama.com/v1/models | python3 -c \
   "import json,sys; print([m['id'] for m in json.load(sys.stdin)['data']])"
 ```
 
-**One unknown remains: tool-calling quality on a live run.** Every model in the
-catalogue advertises tool support, and `tool_choice` — which Ollama does *not*
-support — is about *forcing* a specific tool, not calling one. But these
-gardeners drive a lot of tool calls per run, and how reliably an open model
-sustains that over 30 turns is exactly the sort of thing that only shows up in
-practice. Treat the first run of each as the real test.
+### Live run, 2026-08-01: tool calling works — the request cap was the problem
+
+The last open question was tool-calling quality. It has now been tested for real
+(`gardener-large-files`, dispatched manually with secrets wired and
+`GARDENERS_ENABLED=true`,
+[run 30686121841](https://github.com/togathernyc/togather/actions/runs/30686121841)):
+
+| | |
+|---|---|
+| **Tool calling on `deepseek-v4-flash`** | **Worked.** ~40 consecutive healthy tool-executing turns, mid-scan of a 3,000-line file. |
+| **Outcome** | **Failed** — `403 Maximum consecutive cache misses exceeded (40/40)` from the gh-aw api-proxy |
+| **Cause** | `max-turn-cache-misses`, not the model |
+| **maxRuns / AI credits / timeout** | all held correctly |
+
+So the open-model bet is sound and the guard was wrong. **`max-turn-cache-misses`
+is meaningless on Ollama**: with no prompt caching, every request is a
+"consecutive miss", so the setting stops being a cache-health signal and becomes
+a hard cap on total requests. At 40 it killed a run that was doing exactly what
+it was asked to do.
+
+It is now **200** on all three Ollama gardeners — comfortably above any realistic
+turn budget. It cannot simply be switched off: the schema enforces `minimum: 1`,
+and `max-turn-cache-misses: -1` fails to compile with
+`must be at least 1 (got -1)`. Verified, not assumed.
+
+Two follow-on changes from the same run:
+
+- **`gardener-large-files` now has `max-turns: 60`** (was 30). It was still
+  mid-scan when it died, and cost is nowhere near binding on this model — 200 AIC
+  buys roughly 14M input tokens — so `max-turns` is what actually bounds it
+  (`timeout-minutes` is inert on codex). It needed the room.
+- **Its prompt now insists on reading a file in one call, not in pages.** The run
+  was paging a 3,000-line file in ~250-line slices against a **million-token**
+  context window, spending its request budget on pagination. Fewer, larger reads
+  is both cheaper and far less likely to hit any cap.
+
+**Docs Drift and Cost Report have not been probed live.** They got the same
+`max-turn-cache-misses: 200`, but their turn budgets are untested — Docs Drift in
+particular makes a lot of git calls. If either dies partway through, this is the
+first thing to look at, and `max-turns` is the knob.
 
 **If an Ollama gardener does fail at runtime, the rollback is four lines** — swap
 its `engine:` block for `engine: claude`, drop `model:` / `models:` /
