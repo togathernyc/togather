@@ -286,7 +286,9 @@ describe("Send Message", () => {
     const t = convexTest(schema, modules);
     const { channelId, accessToken } = await seedTestData(t);
 
-    const longMessage = "A".repeat(150);
+    // Inbox rows render 2 lines of this preview (#661), so the stored cap is
+    // 200 — a 150-char message now survives whole.
+    const longMessage = "A".repeat(300);
 
     await t.mutation(api.functions.messaging.messages.sendMessage, {
       token: accessToken,
@@ -302,7 +304,58 @@ describe("Send Message", () => {
       return await ctx.db.get(channelId);
     });
 
-    expect(channel?.lastMessagePreview?.length).toBeLessThanOrEqual(100);
+    expect(channel?.lastMessagePreview).toBe("A".repeat(200));
+  });
+
+  test("stores a 2-line-worth preview without splitting an emoji (#661)", async () => {
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const { channelId, accessToken } = await seedTestData(t);
+
+    // 🙏 straddles the 200-char cut: a naive slice keeps half of it.
+    await t.mutation(api.functions.messaging.messages.sendMessage, {
+      token: accessToken,
+      channelId,
+      content: `${"A".repeat(199)}🙏${"B".repeat(50)}`,
+    });
+
+    vi.runAllTimers();
+    await t.finishInProgressScheduledFunctions();
+
+    const channel = await t.run(async (ctx) => {
+      return await ctx.db.get(channelId);
+    });
+
+    expect(channel?.lastMessagePreview).toBe("A".repeat(199));
+    expect(
+      /[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(
+        String(channel?.lastMessagePreview),
+      ),
+    ).toBe(false);
+  });
+
+  test("keeps canned previews for non-text messages (#661)", async () => {
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const { channelId, accessToken } = await seedTestData(t);
+
+    await t.mutation(api.functions.messaging.messages.sendMessage, {
+      token: accessToken,
+      channelId,
+      content: "",
+      attachments: [
+        { type: "image", url: "https://example.com/a.jpg", name: "a.jpg" },
+      ],
+    });
+
+    vi.runAllTimers();
+    await t.finishInProgressScheduledFunctions();
+
+    const channel = await t.run(async (ctx) => {
+      return await ctx.db.get(channelId);
+    });
+
+    expect(channel?.lastMessagePreview).toBe("Sent a photo");
   });
 
   test("should extract mentions from message", async () => {

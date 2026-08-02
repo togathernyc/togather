@@ -41,7 +41,13 @@ interface MessageData {
   senderName: string;
   senderAvatarUrl?: string;
   groupName: string;
+  /** Email-grade body: effectively the whole message (1000-char safety cap). */
   messagePreview: string;
+  /**
+   * Push-grade body: shortened + always ellipsized. Optional so older/other
+   * callers keep working — the push falls back to `messagePreview`.
+   */
+  messagePushPreview?: string;
   groupId: string;
   channelId: string;
   channelName?: string;
@@ -332,7 +338,10 @@ function getChannelLabel(data: MessageData): string {
 }
 
 function formatChatPushBody(data: MessageData): string {
-  return `${data.groupName}: ${getChannelLabel(data)}\n${data.messagePreview}`;
+  // The push gets the shortened, ellipsized excerpt; the mention email below
+  // gets the full `messagePreview`.
+  const body = data.messagePushPreview ?? data.messagePreview;
+  return `${data.groupName}: ${getChannelLabel(data)}\n${body}`;
 }
 
 /**
