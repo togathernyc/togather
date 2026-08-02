@@ -25,6 +25,7 @@ import type { Id } from "../_generated/dataModel";
 import { generateTokens } from "../lib/auth";
 import { buildDonationReceiptEmail } from "../lib/finance/receipts";
 import { buildGiveReturnUrls } from "../functions/finance/giving";
+import { computeCoverFeesCents } from "../lib/finance/fees";
 import { DOMAIN_CONFIG } from "@togather/shared/config";
 
 process.env.JWT_SECRET = "test-jwt-secret-for-unit-tests-minimum-32-chars";
@@ -599,6 +600,175 @@ describe("prepareDonationIntent", () => {
     ).rejects.toThrow("Invalid fee-cover amount");
   });
 
+  // The card is charged amountCents + coverFeesCents, so a fee field that only
+  // had to be non-negative made MAX_DONATION_CENTS bypassable — see
+  // validateDonationAmount.
+  describe("coverFeesCents bounds", () => {
+    test("accepts the server-computed gross-up fee, and 0 for the toggle being off", async () => {
+      const t = convexTest(schema, modules);
+      const s = await seedGivingFixture(t);
+      const token = await tokenFor(s.donorUserId);
+
+      const expectedFee = computeCoverFeesCents(5000);
+      const covered = await t.query(internal.functions.finance.giving.prepareDonationIntent, {
+        token,
+        fundId: s.fundId,
+        amountCents: 5000,
+        coverFeesCents: expectedFee,
+      });
+      expect(covered.feeCoverCents).toBe(expectedFee);
+
+      const uncovered = await t.query(internal.functions.finance.giving.prepareDonationIntent, {
+        token,
+        fundId: s.fundId,
+        amountCents: 5000,
+        coverFeesCents: 0,
+      });
+      expect(uncovered.feeCoverCents).toBe(0);
+    });
+
+    test("tolerates a couple of cents of client rounding drift", async () => {
+      const t = convexTest(schema, modules);
+      const s = await seedGivingFixture(t);
+      const token = await tokenFor(s.donorUserId);
+
+      for (const drift of [-2, -1, 1, 2]) {
+        const result = await t.query(internal.functions.finance.giving.prepareDonationIntent, {
+          token,
+          fundId: s.fundId,
+          amountCents: 5000,
+          coverFeesCents: computeCoverFeesCents(5000) + drift,
+        });
+        expect(result.feeCoverCents).toBe(computeCoverFeesCents(5000) + drift);
+      }
+    });
+
+    // The bound is a ceiling, not a match: a fee UNDER the quote can't inflate
+    // the charge past MAX_DONATION_CENTS, it just under-covers the fund — which
+    // is exactly what a donor still on the pre-gross-up JS bundle sends. A
+    // symmetric check would have refused those gifts outright for the length of
+    // the OTA rollout.
+    test("accepts a fee below the quote, including the pre-gross-up estimate an old client still sends", async () => {
+      const t = convexTest(schema, modules);
+      const s = await seedGivingFixture(t);
+      const token = await tokenFor(s.donorUserId);
+
+      /** The estimate shipped before this PR: the fee on the base amount only. */
+      const preGrossUpFee = (amountCents: number) => Math.round(amountCents * 0.029 + 30);
+
+      // $12.93 is where the old estimate first falls more than 2c short of the
+      // new one, so every amount at or above it is a gift an old client could
+      // no longer make under a symmetric check.
+      for (const amountCents of [1293, 2000, 5000, 30000, 2_000_000]) {
+        expect(computeCoverFeesCents(amountCents) - preGrossUpFee(amountCents)).toBeGreaterThan(2);
+
+        const result = await t.query(internal.functions.finance.giving.prepareDonationIntent, {
+          token,
+          fundId: s.fundId,
+          amountCents,
+          coverFeesCents: preGrossUpFee(amountCents),
+        });
+        expect(result.feeCoverCents).toBe(preGrossUpFee(amountCents));
+      }
+
+      // …and a 1c fee on a large gift is fine too — it's the donor's own money,
+      // and it lowers the charge rather than raising it.
+      const barelyCovered = await t.query(
+        internal.functions.finance.giving.prepareDonationIntent,
+        { token, fundId: s.fundId, amountCents: 100_000, coverFeesCents: 1 },
+      );
+      expect(barelyCovered.feeCoverCents).toBe(1);
+    });
+
+    test("rejects a fee padded past the tolerance, however small the padding", async () => {
+      const t = convexTest(schema, modules);
+      const s = await seedGivingFixture(t);
+      const token = await tokenFor(s.donorUserId);
+
+      await expect(
+        t.query(internal.functions.finance.giving.prepareDonationIntent, {
+          token,
+          fundId: s.fundId,
+          amountCents: 5000,
+          coverFeesCents: computeCoverFeesCents(5000) + 3,
+        }),
+      ).rejects.toThrow("couldn't confirm the processing fee");
+
+      await expect(
+        t.query(internal.functions.finance.giving.prepareDonationIntent, {
+          token,
+          fundId: s.fundId,
+          amountCents: 5000,
+          coverFeesCents: computeCoverFeesCents(5000) + 1000,
+        }),
+      ).rejects.toThrow("couldn't confirm the processing fee");
+    });
+
+    test("rejects an enormous fee on a tiny gift — the cap is not smugglable through the fee field", async () => {
+      const t = convexTest(schema, modules);
+      const s = await seedGivingFixture(t);
+      const token = await tokenFor(s.donorUserId);
+
+      await expect(
+        t.query(internal.functions.finance.giving.prepareDonationIntent, {
+          token,
+          fundId: s.fundId,
+          amountCents: 100,
+          coverFeesCents: 99_000_000,
+        }),
+      ).rejects.toThrow("couldn't confirm the processing fee");
+    });
+
+    test("caps the total charge at the donation cap plus the fee on the cap", async () => {
+      const t = convexTest(schema, modules);
+      const s = await seedGivingFixture(t);
+      const token = await tokenFor(s.donorUserId);
+
+      const capCents = 2_000_000; // MAX_DONATION_CENTS
+      const maxTotal = capCents + computeCoverFeesCents(capCents);
+
+      // The largest request that gets through: the cap, fully fee-covered,
+      // with the tolerance leaned on.
+      const atCap = await t.query(internal.functions.finance.giving.prepareDonationIntent, {
+        token,
+        fundId: s.fundId,
+        amountCents: capCents,
+        coverFeesCents: computeCoverFeesCents(capCents) + 2,
+      });
+      expect(capCents + atCap.feeCoverCents).toBe(maxTotal + 2);
+
+      // …and that is the ceiling: one cent more is refused, so the largest
+      // charge this endpoint can ever authorise is exactly maxTotal + 2c.
+      await expect(
+        t.query(internal.functions.finance.giving.prepareDonationIntent, {
+          token,
+          fundId: s.fundId,
+          amountCents: capCents,
+          coverFeesCents: computeCoverFeesCents(capCents) + 3,
+        }),
+      ).rejects.toThrow("couldn't confirm the processing fee");
+
+      // Anything bigger fails on one bound or the other.
+      await expect(
+        t.query(internal.functions.finance.giving.prepareDonationIntent, {
+          token,
+          fundId: s.fundId,
+          amountCents: capCents + 1,
+          coverFeesCents: 0,
+        }),
+      ).rejects.toThrow("Donation amount must be between");
+
+      await expect(
+        t.query(internal.functions.finance.giving.prepareDonationIntent, {
+          token,
+          fundId: s.fundId,
+          amountCents: capCents,
+          coverFeesCents: maxTotal,
+        }),
+      ).rejects.toThrow("couldn't confirm the processing fee");
+    });
+  });
+
   test("returns the connected-account context, fund/community names, and groupId for a valid request", async () => {
     const t = convexTest(schema, modules);
     const s = await seedGivingFixture(t);
@@ -614,6 +784,9 @@ describe("prepareDonationIntent", () => {
       userId: s.donorUserId,
       communityId: s.communityId,
       groupId: s.groupId,
+      // Both halves of the validated pair come back, because the actions build
+      // the Stripe charge from these and never from their own args.
+      amountCents: 1000,
       // The legal name the receipt is issued under wins over the community's
       // display name ("Test Church"), matching getGivingContext.
       communityName: "Test Church Inc.",
@@ -1625,5 +1798,43 @@ describe("buildDonationReceiptEmail", () => {
     expect(email.html).toContain("$1.50");
     // Headline total is amountCents + feeCoverCents ($25.00 + $1.50 = $26.50).
     expect(email.text).toContain("$26.50");
+  });
+});
+
+// ============================================================================
+// computeCoverFeesCents — lib/finance/fees.ts
+// ============================================================================
+
+describe("computeCoverFeesCents", () => {
+  /** What Stripe actually takes off a charge of `totalCents` (2.9% + 30c). */
+  const stripeTakesCents = (totalCents: number) => Math.round(totalCents * 0.029 + 30);
+
+  test.each([1000, 5000, 10000, 30000, 2_000_000])(
+    "grosses up so a %i-cent gift nets the fund the full amount",
+    (amountCents) => {
+      const total = amountCents + computeCoverFeesCents(amountCents);
+      const net = total - stripeTakesCents(total);
+      expect(net).toBeGreaterThanOrEqual(amountCents);
+      expect(net).toBeLessThanOrEqual(amountCents + 1);
+    },
+  );
+
+  test("charges more than a fee on the base amount alone — that's the bug it fixes", () => {
+    // Naive: round(5000 * 0.029 + 30) = 175, which nets the fund only $49.95.
+    expect(computeCoverFeesCents(5000)).toBe(180);
+  });
+
+  test("never decreases as the gift grows", () => {
+    let previous = 0;
+    for (let amountCents = 100; amountCents <= 2_000_000; amountCents += 997) {
+      const fee = computeCoverFeesCents(amountCents);
+      expect(fee).toBeGreaterThanOrEqual(previous);
+      previous = fee;
+    }
+  });
+
+  test("is 0 for a non-positive amount", () => {
+    expect(computeCoverFeesCents(0)).toBe(0);
+    expect(computeCoverFeesCents(-100)).toBe(0);
   });
 });
