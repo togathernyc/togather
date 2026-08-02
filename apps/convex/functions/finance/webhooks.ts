@@ -629,9 +629,17 @@ interface StripeInvoiceObject {
   amount_paid?: number;
   /** Pre-2025-03-31 API versions put the subscription here. */
   subscription?: string | { id: string } | null;
-  /** 2025-03-31+ moved it under `parent.subscription_details`. */
+  /**
+   * Pre-2025-03-31 sibling of `subscription`, carrying an immutable snapshot
+   * of the subscription's metadata taken when the invoice was finalized.
+   */
+  subscription_details?: { metadata?: Record<string, string> | null } | null;
+  /** 2025-03-31+ moved both under `parent.subscription_details`. */
   parent?: {
-    subscription_details?: { subscription?: string | { id: string } | null } | null;
+    subscription_details?: {
+      subscription?: string | { id: string } | null;
+      metadata?: Record<string, string> | null;
+    } | null;
   } | null;
   /** Pre-2025-03-31 API versions put the PaymentIntent here. */
   payment_intent?: string | { id: string } | null;
@@ -677,6 +685,27 @@ export function resolveInvoiceSubscriptionId(
 }
 
 /**
+ * The `recurringDonations` row id we stamped on the subscription, as echoed
+ * back on the invoice, across API versions.
+ *
+ * A LOCATOR ONLY — never an amount, a fund, or a donor. Stripe does not
+ * guarantee webhook ORDER, so `invoice.paid` for the very first month can
+ * arrive before `checkout.session.completed` has bound the subscription id to
+ * the row, and a subscription-id lookup would then find nothing and silently
+ * drop a real payment. This is the second way to find the same row; what that
+ * row SAYS is still the only thing trusted about the gift, and the caller
+ * re-checks `event.account` against it exactly as it does on the normal path.
+ */
+export function resolveInvoiceRecurringDonationId(
+  invoice: StripeInvoiceObject,
+): string | null {
+  const id =
+    invoice.subscription_details?.metadata?.recurringDonationId ??
+    invoice.parent?.subscription_details?.metadata?.recurringDonationId;
+  return typeof id === "string" && id.length > 0 ? id : null;
+}
+
+/**
  * The PaymentIntent that paid an invoice, across API versions. This is the
  * idempotency key a recurring donation is recorded under — the same key a
  * one-off gift uses — so a redelivered `invoice.paid` can't double-credit.
@@ -691,6 +720,46 @@ export function resolveInvoicePaymentIntentId(
     if (id) return id;
   }
   return null;
+}
+
+/**
+ * Last resort for an invoice's PaymentIntent: ask Stripe for the invoice
+ * again, with `payments` expanded.
+ *
+ * `Invoice.payments` is typed OPTIONAL by the SDK — unlike `lines`,
+ * `amount_paid` and `parent`, which are not — the convention for a field that
+ * may only arrive when expanded, and webhook payloads are never expanded. When
+ * the delivered payload does carry it, `resolveInvoicePaymentIntentId` already
+ * answered and this never runs. When it doesn't, the alternative is dropping a
+ * monthly gift Stripe really did collect, which is far worse than one extra
+ * API call on a path that fires once a month per donor.
+ *
+ * Returns null on any failure — the caller then logs loudly and declines to
+ * record, rather than inventing an idempotency key.
+ */
+async function fetchInvoicePaymentIntentId(
+  invoiceId: string | undefined,
+  eventAccount: string | undefined,
+): Promise<string | null> {
+  if (!invoiceId || !eventAccount) return null;
+  try {
+    const Stripe = (await import("stripe")).default;
+    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
+      apiVersion: "2026-02-25.clover",
+    });
+    const fresh = (await stripe.invoices.retrieve(
+      invoiceId,
+      { expand: ["payments"] },
+      { stripeAccount: eventAccount },
+    )) as StripeInvoiceObject;
+    return resolveInvoicePaymentIntentId(fresh);
+  } catch (error) {
+    console.error(
+      `[finance] invoice.paid: could not re-read invoice ${invoiceId} for its PaymentIntent`,
+      error,
+    );
+    return null;
+  }
 }
 
 /** When the paid-for period ends, in ms — the donor-facing "next bill" date. */
@@ -896,7 +965,9 @@ export async function handleFinanceStripeEvent(
       if (!subscriptionId) {
         return; // A one-off invoice — not a monthly gift.
       }
-      const paymentIntentId = resolveInvoicePaymentIntentId(invoice);
+      const paymentIntentId =
+        resolveInvoicePaymentIntentId(invoice) ??
+        (await fetchInvoicePaymentIntentId(invoice.id, event.account));
       if (!paymentIntentId) {
         // Without it there is no idempotency key, and recording anyway would
         // risk double-crediting on redelivery. Loud, because a real monthly
@@ -914,6 +985,10 @@ export async function handleFinanceStripeEvent(
           amountPaidCents: invoice.amount_paid,
           currentPeriodEnd: resolveInvoicePeriodEndMs(invoice),
           eventAccount: event.account,
+          // Only used if the subscription id hasn't been bound to a row yet —
+          // see resolveInvoiceRecurringDonationId.
+          recurringDonationIdHint:
+            resolveInvoiceRecurringDonationId(invoice) ?? undefined,
         },
       );
       return;

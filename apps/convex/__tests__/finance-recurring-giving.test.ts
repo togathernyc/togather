@@ -38,6 +38,7 @@ import {
   mapStripeSubscriptionStatus,
   resolveInvoicePaymentIntentId,
   resolveInvoicePeriodEndMs,
+  resolveInvoiceRecurringDonationId,
   resolveInvoiceSubscriptionId,
   resolveSubscriptionAmounts,
   resolveSubscriptionPeriodEndMs,
@@ -69,6 +70,13 @@ const stripeStub = vi.hoisted(() => ({
   portalConfigs: [] as Array<{ id: string }>,
   sessionCreateError: null as Error | null,
   subscriptionCancelError: null as Error | null,
+  subscriptionRetrieveError: null as (Error & { code?: string }) | null,
+  // What `checkout.sessions.retrieve` reports for a stale session. The create
+  // path only supersedes a row once Stripe CONFIRMS the session can never
+  // complete, so this drives every abandoned-Checkout branch.
+  sessionStatus: "expired" as string,
+  sessionRetrieveError: null as Error | null,
+  sessionExpireError: null as Error | null,
   // Returned by subscriptions.retrieve — one item, whose price carries the
   // product id updateRecurringAmount must reuse.
   subscription: {
@@ -94,7 +102,15 @@ vi.mock("stripe", () => {
         },
         expire: async (id: string, options: unknown) => {
           record("checkout.sessions.expire", id, options);
+          if (stripeStub.sessionExpireError) throw stripeStub.sessionExpireError;
           return { id };
+        },
+        retrieve: async (id: string, options: unknown) => {
+          record("checkout.sessions.retrieve", id, options);
+          if (stripeStub.sessionRetrieveError) {
+            throw stripeStub.sessionRetrieveError;
+          }
+          return { id, status: stripeStub.sessionStatus };
         },
       },
     };
@@ -107,6 +123,9 @@ vi.mock("stripe", () => {
     subscriptions = {
       retrieve: async (id: string, params: unknown, options: unknown) => {
         record("subscriptions.retrieve", { id, params }, options);
+        if (stripeStub.subscriptionRetrieveError) {
+          throw stripeStub.subscriptionRetrieveError;
+        }
         return stripeStub.subscription;
       },
       update: async (id: string, params: unknown, options: unknown) => {
@@ -154,6 +173,10 @@ beforeEach(() => {
   stripeStub.portalConfigs.length = 0;
   stripeStub.sessionCreateError = null;
   stripeStub.subscriptionCancelError = null;
+  stripeStub.subscriptionRetrieveError = null;
+  stripeStub.sessionRetrieveError = null;
+  stripeStub.sessionExpireError = null;
+  stripeStub.sessionStatus = "expired";
   stripeStub.subscription = {
     id: "sub_test_1",
     items: {
@@ -621,6 +644,9 @@ describe("createRecurringDonationCheckoutSession", () => {
       ctx.db.patch(stale._id, { createdAt: Date.now() - 60 * 60 * 1000 }),
     );
 
+    // Still OPEN at Stripe — the tab is sitting there. This is the branch that
+    // has to expire it before superseding, or it could still complete later.
+    stripeStub.sessionStatus = "open";
     await createRecurring(t, s, { sessionId: "cs_fresh" });
 
     expect(callsTo("checkout.sessions.expire").map((c) => c.params)).toEqual([
@@ -1244,6 +1270,12 @@ describe("cancelRecurringDonation", () => {
     await completeCheckout(t, "cs_c2", "sub_c2");
     const [row] = await rowsFor(t, s.donorUserId);
     stripeStub.subscriptionCancelError = new Error("No such subscription");
+    // …and Stripe CONFIRMS it's gone when we go back to check. That
+    // confirmation is what makes swallowing the error safe.
+    stripeStub.subscriptionRetrieveError = Object.assign(
+      new Error("No such subscription"),
+      { code: "resource_missing" },
+    );
 
     await t.action(api.functions.finance.giving.cancelRecurringDonation, {
       token: await tokenFor(s.donorUserId),
@@ -1482,5 +1514,451 @@ describe("getGivingContext.existingRecurring", () => {
         })
       )?.existingRecurring,
     ).toEqual({ amountCents: GIFT_CENTS, feeCoverCents: FEE_CENTS });
+  });
+});
+
+// ============================================================================
+// Adversarial money-flow invariants.
+//
+// Everything below is a way real money goes wrong that a happy-path test can't
+// see: Stripe delivering events out of order, two tabs racing, a cancel that
+// didn't take, an event from the wrong connected account. Each one is here
+// because it charges a real card if it regresses.
+// ============================================================================
+
+/** `invoice.paid` carrying the subscription-metadata snapshot Stripe puts on
+ * every invoice — the locator that survives out-of-order delivery. */
+function paidInvoiceWithMetadata(params: {
+  invoiceId: string;
+  subscriptionId: string;
+  paymentIntentId: string;
+  amountPaid: number;
+  recurringDonationId: string;
+}) {
+  return {
+    id: params.invoiceId,
+    amount_paid: params.amountPaid,
+    parent: {
+      subscription_details: {
+        subscription: params.subscriptionId,
+        metadata: { recurringDonationId: params.recurringDonationId },
+      },
+    },
+    payments: {
+      data: [{ payment: { payment_intent: params.paymentIntentId } }],
+    },
+    lines: { data: [{ period: { end: 1_800_000 } }] },
+  };
+}
+
+describe("invoice.paid is not allowed to depend on webhook ORDER", () => {
+  test("reads the recurring row id out of the invoice's subscription metadata", () => {
+    expect(
+      resolveInvoiceRecurringDonationId({
+        subscription_details: { metadata: { recurringDonationId: "rec_legacy" } },
+      }),
+    ).toBe("rec_legacy");
+    expect(
+      resolveInvoiceRecurringDonationId({
+        parent: {
+          subscription_details: { metadata: { recurringDonationId: "rec_new" } },
+        },
+      }),
+    ).toBe("rec_new");
+    expect(resolveInvoiceRecurringDonationId({ parent: null })).toBeNull();
+    expect(
+      resolveInvoiceRecurringDonationId({
+        parent: { subscription_details: { metadata: {} } },
+      }),
+    ).toBeNull();
+  });
+
+  test("credits the first month even when invoice.paid beats checkout.session.completed", async () => {
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const s = await seedRecurringFixture(t);
+    await createRecurring(t, s, { sessionId: "cs_race" });
+    const [pending] = await rowsFor(t, s.donorUserId);
+    // The row exists but nothing has bound a subscription to it yet — exactly
+    // the window Stripe's unordered delivery can land invoice.paid in.
+    expect(pending.stripeSubscriptionId).toBeUndefined();
+
+    await handleFinanceStripeEvent(webhookCtx(t), {
+      type: "invoice.paid",
+      account: CONNECTED_ACCOUNT,
+      data: {
+        object: paidInvoiceWithMetadata({
+          invoiceId: "in_race",
+          subscriptionId: "sub_race",
+          paymentIntentId: "pi_race",
+          amountPaid: TOTAL_CENTS,
+          recurringDonationId: pending._id,
+        }),
+      },
+    });
+
+    const donations = await donationsFor(t, s.fundId);
+    expect(donations).toHaveLength(1);
+    expect(donations[0].stripePaymentIntentId).toBe("pi_race");
+    // The subscription is stamped on now, so every later event resolves the
+    // ordinary way.
+    const [bound] = await rowsFor(t, s.donorUserId);
+    expect(bound.stripeSubscriptionId).toBe("sub_race");
+    expect(bound.status).toBe("active");
+
+    // The late checkout.session.completed must not credit anything a second
+    // time, and must not knock the row back to pending.
+    await completeCheckout(t, "cs_race", "sub_race");
+    expect(await donationsFor(t, s.fundId)).toHaveLength(1);
+    expect((await rowsFor(t, s.donorUserId))[0].status).toBe("active");
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+  });
+
+  test("never re-points a row that already belongs to a different subscription", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seedRecurringFixture(t);
+    await createRecurring(t, s, { sessionId: "cs_bound" });
+    await completeCheckout(t, "cs_bound", "sub_real");
+    const [row] = await rowsFor(t, s.donorUserId);
+
+    // A metadata hint pointing at an already-bound row: honouring it would let
+    // one subscription's invoices credit against another's gift.
+    await handleFinanceStripeEvent(webhookCtx(t), {
+      type: "invoice.paid",
+      account: CONNECTED_ACCOUNT,
+      data: {
+        object: paidInvoiceWithMetadata({
+          invoiceId: "in_other",
+          subscriptionId: "sub_impostor",
+          paymentIntentId: "pi_impostor",
+          amountPaid: TOTAL_CENTS,
+          recurringDonationId: row._id,
+        }),
+      },
+    });
+
+    expect(await donationsFor(t, s.fundId)).toHaveLength(0);
+    expect((await rowsFor(t, s.donorUserId))[0].stripeSubscriptionId).toBe(
+      "sub_real",
+    );
+  });
+
+  test("a $0 invoice credits nothing instead of failing the webhook forever", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seedRecurringFixture(t);
+    await createRecurring(t, s, { sessionId: "cs_zero" });
+    await completeCheckout(t, "cs_zero", "sub_zero");
+
+    // Must not throw: a throw here 500s the webhook and Stripe redelivers the
+    // same $0 invoice forever.
+    await handleFinanceStripeEvent(webhookCtx(t), {
+      type: "invoice.paid",
+      account: CONNECTED_ACCOUNT,
+      data: {
+        object: paidInvoice({
+          invoiceId: "in_zero",
+          subscriptionId: "sub_zero",
+          paymentIntentId: "pi_zero",
+          amountPaid: 0,
+        }),
+      },
+    });
+
+    expect(await donationsFor(t, s.fundId)).toHaveLength(0);
+    expect((await t.run((ctx) => ctx.db.get(s.fundId)))?.balanceCents).toBe(
+      10_000,
+    );
+  });
+
+  test("settles a final invoice on a canceled row without reviving the gift", async () => {
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const s = await seedRecurringFixture(t);
+    await createRecurring(t, s, { sessionId: "cs_final" });
+    await completeCheckout(t, "cs_final", "sub_final");
+    await t.action(api.functions.finance.giving.cancelRecurringDonation, {
+      token: await tokenFor(s.donorUserId),
+      recurringDonationId: (await rowsFor(t, s.donorUserId))[0]._id,
+    });
+
+    await handleFinanceStripeEvent(webhookCtx(t), {
+      type: "invoice.paid",
+      account: CONNECTED_ACCOUNT,
+      data: {
+        object: paidInvoice({
+          invoiceId: "in_final",
+          subscriptionId: "sub_final",
+          paymentIntentId: "pi_final",
+          amountPaid: TOTAL_CENTS,
+        }),
+      },
+    });
+
+    // The money was really collected, so it is really credited…
+    expect(await donationsFor(t, s.fundId)).toHaveLength(1);
+    // …but "canceled" is terminal.
+    expect((await rowsFor(t, s.donorUserId))[0].status).toBe("canceled");
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+  });
+});
+
+describe("one monthly gift per donor per fund, under a race", () => {
+  test("the INSERT itself refuses a second pending row, not just the read-only check", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seedRecurringFixture(t);
+    await createRecurring(t, s, { sessionId: "cs_first" });
+
+    // Two tabs both clear `prepareRecurringDonation` and reach the mutation.
+    // The mutation is the only thing that can serialize them, so it — not the
+    // query — has to be what says no.
+    await expect(
+      t.mutation(internal.functions.finance.giving.beginRecurringDonation, {
+        token: await tokenFor(s.donorUserId),
+        fundId: s.fundId,
+        amountCents: GIFT_CENTS,
+        feeCoverCents: FEE_CENTS,
+        stripeConnectedAccountId: CONNECTED_ACCOUNT,
+        stripeCustomerId: "cus_donor_1",
+      }),
+    ).rejects.toThrow(/just started setting up/i);
+
+    expect(await rowsFor(t, s.donorUserId)).toHaveLength(1);
+  });
+
+  test("a pending row that already has a subscription blocks a second gift forever, not for 30 minutes", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seedRecurringFixture(t);
+    await createRecurring(t, s, { sessionId: "cs_slow" });
+    await completeCheckout(t, "cs_slow", "sub_slow");
+    const [row] = await rowsFor(t, s.donorUserId);
+    // Bound but still `pending` — invoice.paid hasn't landed. Age it well past
+    // the grace window: the donor IS being billed, so the window is irrelevant.
+    expect(row.status).toBe("pending");
+    await t.run((ctx) =>
+      ctx.db.patch(row._id, { createdAt: Date.now() - 60 * 60 * 1000 }),
+    );
+
+    await expect(createRecurring(t, s, { sessionId: "cs_second" })).rejects.toThrow(
+      /already have a monthly gift|just started setting up/i,
+    );
+    expect(await rowsFor(t, s.donorUserId)).toHaveLength(1);
+    expect(callsTo("checkout.sessions.expire")).toHaveLength(0);
+  });
+});
+
+describe("superseding a stale Checkout never orphans a live subscription", () => {
+  async function agedStaleGift() {
+    const t = convexTest(schema, modules);
+    const s = await seedRecurringFixture(t);
+    await createRecurring(t, s, { sessionId: "cs_aged" });
+    const [stale] = await rowsFor(t, s.donorUserId);
+    await t.run((ctx) =>
+      ctx.db.patch(stale._id, { createdAt: Date.now() - 60 * 60 * 1000 }),
+    );
+    return { t, s };
+  }
+
+  test("refuses the new attempt when the stale session actually COMPLETED", async () => {
+    const { t, s } = await agedStaleGift();
+    // The donor finished that Checkout; a subscription exists at Stripe and
+    // checkout.session.completed simply hasn't arrived. Superseding here would
+    // cancel the row and leave that subscription billing forever with nothing
+    // in the app able to stop it.
+    stripeStub.sessionStatus = "complete";
+
+    await expect(createRecurring(t, s, { sessionId: "cs_new" })).rejects.toThrow(
+      /already have a monthly gift/i,
+    );
+    expect(callsTo("checkout.sessions.expire")).toHaveLength(0);
+    const rows = await rowsFor(t, s.donorUserId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].status).toBe("pending"); // still bindable
+  });
+
+  test("refuses the new attempt when Stripe cannot tell us the session's state", async () => {
+    const { t, s } = await agedStaleGift();
+    stripeStub.sessionRetrieveError = new Error("connection reset");
+
+    await expect(createRecurring(t, s, { sessionId: "cs_new" })).rejects.toThrow(
+      /just started setting up/i,
+    );
+    expect((await rowsFor(t, s.donorUserId))[0].status).toBe("pending");
+  });
+
+  test("refuses the new attempt when the still-open session could not be expired", async () => {
+    const { t, s } = await agedStaleGift();
+    stripeStub.sessionStatus = "open";
+    stripeStub.sessionExpireError = new Error("rate limited");
+
+    await expect(createRecurring(t, s, { sessionId: "cs_new" })).rejects.toThrow(
+      /just started setting up/i,
+    );
+    expect((await rowsFor(t, s.donorUserId))[0].status).toBe("pending");
+  });
+});
+
+describe("cancel only reports success when the card really stops being charged", () => {
+  test("a transient Stripe failure surfaces instead of falsely marking the gift stopped", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seedRecurringFixture(t);
+    await createRecurring(t, s, { sessionId: "cs_flaky" });
+    await completeCheckout(t, "cs_flaky", "sub_flaky");
+    const [row] = await rowsFor(t, s.donorUserId);
+
+    stripeStub.subscriptionCancelError = new Error("Stripe is down");
+    // …and the follow-up read shows the subscription very much alive.
+    stripeStub.subscription = { id: "sub_flaky", status: "active", items: { data: [] } };
+
+    await expect(
+      t.action(api.functions.finance.giving.cancelRecurringDonation, {
+        token: await tokenFor(s.donorUserId),
+        recurringDonationId: row._id,
+      }),
+    ).rejects.toThrow(/Stripe is down/);
+
+    // The row must NOT be canceled: it is terminal, so a false cancel would
+    // also stop any later Stripe event from ever putting it back.
+    const [after] = await rowsFor(t, s.donorUserId);
+    expect(after.status).not.toBe("canceled");
+    expect(after.canceledAt).toBeUndefined();
+  });
+});
+
+describe("an event from the wrong connected account never mutates a row", () => {
+  async function liveGift() {
+    const t = convexTest(schema, modules);
+    const s = await seedRecurringFixture(t);
+    await createRecurring(t, s, { sessionId: "cs_acct" });
+    await completeCheckout(t, "cs_acct", "sub_acct");
+    return { t, s };
+  }
+
+  async function mismatchAudits(
+    t: ReturnType<typeof convexTest>,
+    fundId: Id<"funds">,
+  ) {
+    const audits = await t.run((ctx) =>
+      ctx.db
+        .query("financeAuditEvents")
+        .withIndex("by_fund", (q) => q.eq("fundId", fundId))
+        .collect(),
+    );
+    return audits.filter((e) => e.action === "webhook.rejected_account_mismatch");
+  }
+
+  test("customer.subscription.updated from another account changes nothing", async () => {
+    const { t, s } = await liveGift();
+    await handleFinanceStripeEvent(webhookCtx(t), {
+      type: "customer.subscription.updated",
+      account: "acct_attacker",
+      data: { object: { id: "sub_acct", status: "canceled" } },
+    });
+    expect((await rowsFor(t, s.donorUserId))[0].status).toBe("pending");
+    expect(await mismatchAudits(t, s.fundId)).toHaveLength(1);
+  });
+
+  test("customer.subscription.deleted from another account cannot cancel the gift", async () => {
+    const { t, s } = await liveGift();
+    await handleFinanceStripeEvent(webhookCtx(t), {
+      type: "customer.subscription.deleted",
+      account: "acct_attacker",
+      data: { object: { id: "sub_acct" } },
+    });
+    const [row] = await rowsFor(t, s.donorUserId);
+    expect(row.status).not.toBe("canceled");
+    expect(await mismatchAudits(t, s.fundId)).toHaveLength(1);
+  });
+
+  test("invoice.payment_failed from another account cannot mark the gift past due", async () => {
+    const { t, s } = await liveGift();
+    await handleFinanceStripeEvent(webhookCtx(t), {
+      type: "invoice.payment_failed",
+      account: "acct_attacker",
+      data: {
+        object: {
+          id: "in_spoof",
+          parent: { subscription_details: { subscription: "sub_acct" } },
+        },
+      },
+    });
+    expect((await rowsFor(t, s.donorUserId))[0].status).toBe("pending");
+    expect(await mismatchAudits(t, s.fundId)).toHaveLength(1);
+  });
+
+  test("an event with NO account at all is rejected too", async () => {
+    const { t, s } = await liveGift();
+    await handleFinanceStripeEvent(webhookCtx(t), {
+      type: "customer.subscription.deleted",
+      account: undefined,
+      data: { object: { id: "sub_acct" } },
+    });
+    expect((await rowsFor(t, s.donorUserId))[0].status).not.toBe("canceled");
+    expect(await mismatchAudits(t, s.fundId)).toHaveLength(1);
+  });
+});
+
+describe("subscription metadata is never the authority on money", () => {
+  test("an amount split that disagrees with the billed price leaves the row alone", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seedRecurringFixture(t);
+    await createRecurring(t, s, { sessionId: "cs_meta" });
+    await completeCheckout(t, "cs_meta", "sub_meta");
+
+    await handleFinanceStripeEvent(webhookCtx(t), {
+      type: "customer.subscription.updated",
+      account: CONNECTED_ACCOUNT,
+      data: {
+        object: {
+          id: "sub_meta",
+          status: "active",
+          // Metadata claims $99 + $3 while the price actually bills $50.
+          metadata: { amountCents: "9900", feeCoverCents: "300" },
+          items: { data: [{ price: { unit_amount: 5000 } }] },
+        },
+      },
+    });
+
+    const [row] = await rowsFor(t, s.donorUserId);
+    expect(row.amountCents).toBe(GIFT_CENTS);
+    expect(row.feeCoverCents).toBe(FEE_CENTS);
+  });
+
+  test("credits what Stripe collected, not what the metadata claims", async () => {
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const s = await seedRecurringFixture(t);
+    await createRecurring(t, s, { sessionId: "cs_auth" });
+    await completeCheckout(t, "cs_auth", "sub_auth");
+
+    await handleFinanceStripeEvent(webhookCtx(t), {
+      type: "invoice.paid",
+      account: CONNECTED_ACCOUNT,
+      data: {
+        object: {
+          ...paidInvoiceWithMetadata({
+            invoiceId: "in_auth",
+            subscriptionId: "sub_auth",
+            paymentIntentId: "pi_auth",
+            amountPaid: 100, // Stripe collected $1…
+            recurringDonationId: (await rowsFor(t, s.donorUserId))[0]._id,
+          }),
+          // …while the snapshot metadata brags about $999.
+          parent: {
+            subscription_details: {
+              subscription: "sub_auth",
+              metadata: { amountCents: "99900", feeCoverCents: "0" },
+            },
+          },
+        },
+      },
+    });
+
+    const donations = await donationsFor(t, s.fundId);
+    expect(donations).toHaveLength(1);
+    expect(donations[0].amountCents + donations[0].feeCoverCents).toBe(100);
+    expect((await t.run((ctx) => ctx.db.get(s.fundId)))?.balanceCents).toBe(
+      10_000 + 100,
+    );
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
   });
 });
