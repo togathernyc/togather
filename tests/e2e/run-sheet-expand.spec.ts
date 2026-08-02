@@ -14,11 +14,36 @@ import { expect, test } from "@playwright/test";
  * `RunSheetItemList` over fixtures (no Convex backend needed). The fixture's
  * `before-5` row carries an eight-line note.
  */
+/**
+ * The one runtime error this spec tolerates: every `ui-test` route mounts the
+ * app root, whose Convex client is pointed at the stub `EXPO_PUBLIC_CONVEX_URL`
+ * that `playwright.config.ts` sets, so the connection to it can fail. Anything
+ * else is a real bug and must fail the run.
+ */
+const EXPECTED_RUNTIME_ERROR = /convex/i;
+
 test.describe("Run sheet expandable rows (web)", () => {
   test("expanding a row reveals the whole note, not a clipped textarea", async ({
     page,
   }) => {
+    const unexpectedErrors: string[] = [];
+    page.on("pageerror", (err) => {
+      if (!EXPECTED_RUNTIME_ERROR.test(err.message)) {
+        unexpectedErrors.push(err.message);
+      }
+    });
+
     await page.goto("/ui-test/run-sheet-expand");
+    // Expo's dev error overlay is an absolutely-positioned `#error-overlay`
+    // that swallows pointer events for the whole page, which makes the chevron
+    // unclickable when the stub-backend connection above fails. Take it out of
+    // hit-testing so the interaction can proceed — but the run still fails on
+    // any error that isn't the expected one, both via the `pageerror` listener
+    // above and the overlay check at the end. Without those, hiding it here
+    // would let an exception thrown after the harness DOM rendered sail past.
+    await page.addStyleTag({
+      content: "#error-overlay { display: none !important; }",
+    });
     await page
       .getByTestId("run-sheet-expand-harness")
       .waitFor({ state: "visible", timeout: 30000 });
@@ -61,5 +86,14 @@ test.describe("Run sheet expandable rows (web)", () => {
     await expect
       .poll(() => row.evaluate((el) => el.clientHeight))
       .toBeLessThan(expandedHeight);
+
+    // Nothing above can see the hidden overlay, so check it explicitly: it may
+    // only ever be the tolerated stub-backend failure. Read `textContent`, not
+    // `innerText` — the latter is empty for a `display: none` element.
+    const overlay = page.locator("#error-overlay");
+    if (await overlay.count()) {
+      expect(await overlay.textContent()).toMatch(EXPECTED_RUNTIME_ERROR);
+    }
+    expect(unexpectedErrors).toEqual([]);
   });
 });
