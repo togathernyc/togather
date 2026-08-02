@@ -83,8 +83,11 @@ export function GiveScreen() {
 
   // Only subscribes while the donor is actually waiting AND Stripe handed back
   // a PaymentIntent to watch. When it didn't (`paymentIntentId === null`, which
-  // that action logs), this skips and the wait degrades to manual — Reopen and
-  // Cancel still work, the gift itself is unaffected.
+  // that action logs), this skips and the wait degrades to manual: the gift
+  // still lands via the webhook, and the waiting step swaps its pulse for a
+  // "Go to the fund" exit (`canAutoAdvance`), because with nothing watching,
+  // "Cancel this gift" would otherwise be the only way off a screen the donor
+  // may have already paid on.
   const watchedPaymentIntentId =
     step === "confirmation" ? (checkoutSession?.paymentIntentId ?? null) : null;
   const checkoutStatus = useAuthenticatedQuery(
@@ -211,6 +214,18 @@ export function GiveScreen() {
     }
   };
 
+  // Leaves for the fund without resetting anything: used only when nothing is
+  // watching this gift (no PaymentIntent), where the alternative on screen is
+  // "Cancel this gift" — which clears the form and invites a second donation
+  // after a charge that may well have succeeded.
+  const handleFinishManually = () => {
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
+    router.replace(`/groups/${groupId}/fund` as any);
+  };
+
   const handleReopenCheckout = async () => {
     if (!checkoutSession) return;
     await openCheckoutUrl(checkoutSession.url);
@@ -226,12 +241,14 @@ export function GiveScreen() {
       submitting={submitting}
       error={error}
       checkoutSession={checkoutSession}
+      canAutoAdvance={checkoutSession?.paymentIntentId != null}
       onBack={handleBack}
       onSelectPreset={handleSelectPreset}
       onCustomAmountChange={handleCustomAmountChange}
       onToggleCoverFees={setCoverFees}
       onContinue={handleContinue}
       onReopenCheckout={handleReopenCheckout}
+      onFinishManually={handleFinishManually}
     />
   );
 }

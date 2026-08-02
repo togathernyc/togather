@@ -51,9 +51,10 @@ jest.mock("expo-web-browser", () => ({
 jest.mock("../GiveScreenView", () => {
   const { Text, Pressable } = require("react-native");
   return {
-    GiveScreenView: ({ step, onContinue, onBack, onSelectPreset }: any) => (
+    GiveScreenView: ({ step, onContinue, onBack, onSelectPreset, canAutoAdvance }: any) => (
       <>
         <Text testID="give-step">{step}</Text>
+        <Text testID="give-can-auto-advance">{String(canAutoAdvance)}</Text>
         <Pressable testID="give-preset" onPress={() => onSelectPreset(5000)}>
           <Text>$50</Text>
         </Pressable>
@@ -167,6 +168,8 @@ describe("GiveScreen", () => {
 
     expect(getByTestId("give-step").props.children).toBe("confirmation");
     expect(lastStatusArgs()).toBe("skip");
+    // ...and the view is told, so it can offer an exit that isn't "Cancel".
+    expect(getByTestId("give-can-auto-advance").props.children).toBe("false");
   });
 
   it("routes to the thank-you screen with the recorded amount once the gift lands", async () => {

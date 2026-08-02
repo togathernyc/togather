@@ -12,7 +12,10 @@
  * the moment the money lands, so the waiting step's own buttons (Reopen /
  * Cancel) are the manual fallback, not the happy path. There is deliberately
  * no "Done": a donor tapping it mid-payment would leave with no idea whether
- * their gift went through.
+ * their gift went through. The one exception is `canAutoAdvance === false`
+ * (Stripe returned no PaymentIntent, so nothing is watching) — there the
+ * screen can never resolve itself, and an exit that doesn't cancel the gift
+ * is the only thing standing between the donor and a duplicate donation.
  */
 import React, { useEffect, useRef, useState } from "react";
 import {
@@ -63,12 +66,20 @@ export interface GiveScreenViewProps {
   submitting: boolean;
   error: string | null;
   checkoutSession: CheckoutSession | null;
+  /**
+   * Whether the waiting step is actually watching for this gift to land.
+   * `false` when Stripe returned no PaymentIntent — nothing will ever advance
+   * the screen, so it has to offer a way out that isn't "Cancel this gift".
+   */
+  canAutoAdvance: boolean;
   onBack: () => void;
   onSelectPreset: (cents: number) => void;
   onCustomAmountChange: (text: string) => void;
   onToggleCoverFees: (value: boolean) => void;
   onContinue: () => void;
   onReopenCheckout: () => void;
+  /** Leaves the give flow for the fund without touching the gift in flight. */
+  onFinishManually: () => void;
 }
 
 export function GiveScreenView({
@@ -80,12 +91,14 @@ export function GiveScreenView({
   submitting,
   error,
   checkoutSession,
+  canAutoAdvance,
   onBack,
   onSelectPreset,
   onCustomAmountChange,
   onToggleCoverFees,
   onContinue,
   onReopenCheckout,
+  onFinishManually,
 }: GiveScreenViewProps) {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
@@ -134,8 +147,10 @@ export function GiveScreenView({
           fundName={context.fundName}
           totalCents={totalCents}
           canReopen={!!checkoutSession}
+          canAutoAdvance={canAutoAdvance}
           onReopenCheckout={onReopenCheckout}
           onCancelGift={onBack}
+          onFinishManually={onFinishManually}
           bottomInset={insets.bottom}
         />
       ) : (
@@ -272,15 +287,19 @@ function WaitingStep({
   fundName,
   totalCents,
   canReopen,
+  canAutoAdvance,
   onReopenCheckout,
   onCancelGift,
+  onFinishManually,
   bottomInset,
 }: {
   fundName: string;
   totalCents: number;
   canReopen: boolean;
+  canAutoAdvance: boolean;
   onReopenCheckout: () => void;
   onCancelGift: () => void;
+  onFinishManually: () => void;
   bottomInset: number;
 }) {
   const { colors } = useTheme();
@@ -299,9 +318,14 @@ function WaitingStep({
             Finish in the browser
           </Text>
           <Text style={[styles.waitingCopy, { color: colors.textSecondary }]}>
-            We&rsquo;ll bring you back here as soon as it goes through.
+            {canAutoAdvance
+              ? "We\u2019ll bring you back here as soon as it goes through."
+              : "We can\u2019t confirm this one automatically \u2014 finish paying, then head back to the fund and your gift will be there."}
           </Text>
-          <PulseDots color={colors.textTertiary} />
+          {/* Dots pulse for something that is actually being watched. With no
+              PaymentIntent to subscribe to, nothing will ever advance this
+              screen, and an animation that implies otherwise is a lie. */}
+          {canAutoAdvance && <PulseDots color={colors.textTertiary} />}
         </View>
       </WaInsetGroup>
 
@@ -313,6 +337,29 @@ function WaitingStep({
       </View>
 
       <View style={styles.waitingActions}>
+        {/* The escape hatch exists ONLY when nothing is watching. With the
+            subscription live, a "Done" would compete with an auto-advance that
+            actually knows the answer; without it, its absence would leave
+            "Cancel this gift" as the only way out of a screen the donor may
+            have already paid on — which resets the form and invites a second
+            gift. This goes to the fund and touches nothing. */}
+        {!canAutoAdvance && (
+          <Pressable
+            onPress={onFinishManually}
+            accessibilityRole="button"
+            accessibilityLabel="Go to the fund"
+            style={({ pressed }) => [
+              styles.secondaryPill,
+              { backgroundColor: colors.buttonPrimary },
+              pressed && styles.pressed,
+            ]}
+          >
+            <Text style={[styles.secondaryLabel, { color: colors.buttonPrimaryText }]}>
+              Go to the fund
+            </Text>
+          </Pressable>
+        )}
+
         <Pressable
           onPress={onReopenCheckout}
           disabled={!canReopen}
@@ -365,7 +412,11 @@ function KeyValueRow({ label, value }: { label: string; value: string }) {
  * screen must never be the thing that triggers someone's vestibular symptoms.
  */
 function PulseDots({ color }: { color: string }) {
-  const [reduceMotion, setReduceMotion] = useState(false);
+  // Starts `true`: the dots must not animate while detection is pending, and
+  // if `isReduceMotionEnabled()` rejects (RN-Web does) there is no answer
+  // coming, so a still dot row stays the resting state rather than a moment of
+  // motion someone asked not to be shown.
+  const [reduceMotion, setReduceMotion] = useState(true);
   // One shared clock, three dots reading different windows of it — cheaper
   // than three loops and guarantees they can never drift apart.
   const progress = useRef(new Animated.Value(0)).current;

@@ -103,6 +103,8 @@ const baseProps = {
   onToggleCoverFees: noop,
   onContinue: noop,
   onReopenCheckout: noop,
+  onFinishManually: noop,
+  canAutoAdvance: true,
 };
 
 describe("GiveScreenView", () => {
@@ -224,11 +226,41 @@ describe("GiveScreenView", () => {
     });
 
     // A donor tapping "Done" mid-payment would leave with no idea whether the
-    // gift went through — the screen advances itself, or not at all.
-    it("offers no 'Done' escape hatch", () => {
+    // gift went through — while something IS watching, the screen advances
+    // itself or not at all.
+    it("offers no 'Done' escape hatch while the gift is being watched", () => {
       render(<GiveScreenView {...waitingProps} />);
       expect(screen.queryByLabelText("Done")).toBeNull();
       expect(screen.queryByText("Done")).toBeNull();
+      expect(screen.queryByLabelText("Go to the fund")).toBeNull();
+    });
+
+    // Stripe can hand back no PaymentIntent, and then nothing will ever advance
+    // this screen. Leaving "Cancel this gift" as the only way out of a screen
+    // the donor may have already paid on is how you get a second donation.
+    describe("when nothing is watching the gift", () => {
+      const unwatched = { ...waitingProps, canAutoAdvance: false };
+
+      it("offers a way to the fund that doesn't cancel anything", () => {
+        const onFinishManually = jest.fn();
+        const onBack = jest.fn();
+        render(
+          <GiveScreenView
+            {...unwatched}
+            onFinishManually={onFinishManually}
+            onBack={onBack}
+          />,
+        );
+        fireEvent.press(screen.getByLabelText("Go to the fund"));
+        expect(onFinishManually).toHaveBeenCalledTimes(1);
+        expect(onBack).not.toHaveBeenCalled();
+      });
+
+      it("says plainly that it can't confirm, instead of promising a return", () => {
+        render(<GiveScreenView {...unwatched} />);
+        expect(screen.getByText(/can’t confirm this one automatically/)).toBeTruthy();
+        expect(screen.queryByText(/as soon as it goes through/)).toBeNull();
+      });
     });
   });
 });
