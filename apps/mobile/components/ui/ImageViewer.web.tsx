@@ -48,6 +48,11 @@ const BUTTON_ZOOM_STEP = 1.25;
 const WHEEL_SENSITIVITY = 0.0015;
 // A press that moves less than this is a click (close), not a pan.
 const DRAG_SLOP_PX = 4;
+// `mouseup` fires before `dblclick`, so closing on the first click of a
+// double-click would tear the viewer down before it could zoom. Defer the
+// backdrop close by this window and cancel it when a second press arrives.
+// Matches the native viewer's `Gesture.Tap().maxDelay(250)`.
+const DOUBLE_CLICK_WINDOW_MS = 250;
 
 interface Transform {
   scale: number;
@@ -132,6 +137,14 @@ export function ImageViewer({
   const transformRef = useRef<Transform>(FIT);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
+  const pendingCloseRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const cancelPendingClose = useCallback(() => {
+    if (pendingCloseRef.current !== null) {
+      clearTimeout(pendingCloseRef.current);
+      pendingCloseRef.current = null;
+    }
+  }, []);
 
   const applyTransform = useCallback((next: Transform) => {
     transformRef.current = next;
@@ -221,10 +234,16 @@ export function ImageViewer({
   useEffect(() => {
     if (!stageNode) return;
 
+    // Set while a drag is in flight so an unmount mid-drag still detaches the
+    // window listeners.
+    let detachDrag: (() => void) | null = null;
+
     const handleMouseDown = (event: MouseEvent) => {
       if (event.button !== 0) return;
       // Suppress the browser's native image-drag ghost and text selection.
       event.preventDefault();
+      // Second press of a double-click: drop the close the first one queued.
+      cancelPendingClose();
 
       const rect = stageNode.getBoundingClientRect();
       const start = transformRef.current;
@@ -247,18 +266,27 @@ export function ImageViewer({
       };
 
       const handleMouseUp = () => {
-        window.removeEventListener('mousemove', handleMouseMove);
-        window.removeEventListener('mouseup', handleMouseUp);
+        detachDrag?.();
         if (!moved && transformRef.current.scale <= MIN_SCALE) {
-          onCloseRef.current();
+          // Deferred, not immediate — see DOUBLE_CLICK_WINDOW_MS.
+          pendingCloseRef.current = setTimeout(() => {
+            pendingCloseRef.current = null;
+            onCloseRef.current();
+          }, DOUBLE_CLICK_WINDOW_MS);
         }
       };
 
+      detachDrag = () => {
+        window.removeEventListener('mousemove', handleMouseMove);
+        window.removeEventListener('mouseup', handleMouseUp);
+        detachDrag = null;
+      };
       window.addEventListener('mousemove', handleMouseMove);
       window.addEventListener('mouseup', handleMouseUp);
     };
 
     const handleDoubleClick = (event: MouseEvent) => {
+      cancelPendingClose();
       const rect = stageNode.getBoundingClientRect();
       if (transformRef.current.scale > MIN_SCALE) {
         applyTransform(FIT);
@@ -281,8 +309,10 @@ export function ImageViewer({
     return () => {
       stageNode.removeEventListener('mousedown', handleMouseDown);
       stageNode.removeEventListener('dblclick', handleDoubleClick);
+      detachDrag?.();
+      cancelPendingClose();
     };
-  }, [stageNode, applyTransform]);
+  }, [stageNode, applyTransform, cancelPendingClose]);
 
   // Affordance: grab cursor only when there is something to pan.
   useEffect(() => {
@@ -487,7 +517,7 @@ export function ImageViewer({
           )}
 
           <Text style={styles.hintText} pointerEvents="none">
-            Scroll to zoom · drag to pan · double-click to reset
+            Scroll to zoom · drag to pan · double-click to toggle
           </Text>
 
           {/* Footer */}
