@@ -91,19 +91,18 @@ body:
     attributes:
       label: Auto-merge
       description: >
-        Leave this **unticked** unless you are genuinely happy for the change to
-        land in `main` without you seeing it. Ticked, the agent merges as soon
-        as CI is green and the review agent is clean — with no human in the
-        loop. Unticked (the default), it opens the PR and leaves it for you,
-        which is the normal outcome.
+        **Merge-on-green is the default.** When CI is green and the review agent
+        is clean, the agent merges the PR itself — no human in the loop. Tick
+        the box below (and add the `agent:no-automerge` label after filing) only
+        if you want this one held open for your review instead.
 
-        Ticking it is a request, not a guarantee. The agent will still refuse to
+        The default is a policy, not a guarantee. The agent still refuses to
         merge if CI is not green, or if the diff touches a CODEOWNERS-protected
         path — dependencies and native config, auth, billing/finance, migrations,
         CI workflows, or `packages/`. Those always wait for a person, whatever
         this box says.
       options:
-        - label: I have read the above and want this merged automatically on green — add the `agent:automerge` label after filing
+        - label: Hold this one — open the PR but leave the merge to me (add the `agent:no-automerge` label after filing)
           required: false
 
   - type: markdown
@@ -114,7 +113,7 @@ body:
         set them conditionally):
 
         - `priority:high` — jump the queue ahead of older issues
-        - `agent:automerge` — if you ticked the box above
+        - `agent:no-automerge` — if you ticked the hold box above
         - `init:<name>` — if you named an initiative
 
         The agent manages `agent:in-progress` and `agent:blocked` itself and will
