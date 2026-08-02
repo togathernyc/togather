@@ -100,11 +100,11 @@ tools:
   github:
     toolsets: [default, actions]
   bash:
-    - "gh run list *"
-    - "gh run view *"
-    - "gh run download *"
-    - "gh api *"
-    - "gh aw logs *"
+    # `gh` is NOT authenticated inside the agent container — see the prompt.
+    # Every `gh run list` / `gh api` here was dead on arrival; the watchdog
+    # proved it the hard way in run 30697357668. GitHub reads go through the
+    # `github` CLI shim gh-aw mounts on PATH.
+    - "github *"
     - "cat *"
     - "head -n * *"
     - "tail -n * *"
@@ -145,22 +145,44 @@ These are explicit `15 9 * * N` crons with `timezone: America/New_York` — no
 scattering, and the times are Eastern, not UTC. If you need to be certain, read
 the `schedule:` block in each `.lock.yml`; that is the authority, not this table.
 
+## How to read GitHub here — read this before anything else
+
+> [!IMPORTANT]
+> **`gh` is NOT authenticated in this container, and `mcp__github__*` tool calls
+> do not work.** The watchdog proved this the expensive way in run 30697357668:
+> it burned its entire credit budget rediscovering that `gh api` fails and
+> `mcp__github__list_issues` returns `unsupported call`. Do not repeat it.
+>
+> **What works** is the `github` CLI shim gh-aw mounts on `PATH`, which proxies
+> to the same read-only GitHub MCP server:
+>
+> ```bash
+> github --help                       # 28 read commands
+> github actions_list --owner togathernyc --repo togather \
+>   --method list_workflow_runs --resource_id gardener-docs-drift.lock.yml
+> ```
+>
+> If a command errors, try a JSON object on stdin with `.` as the argument
+> (`printf '%s' '{"owner":…}' | github actions_list .`) — that form is verified
+> working. If both fail, say so in the report and move on. **You have a budget;
+> spend it on the report, not on rediscovering the tooling.**
+
 ## Phase 1 — Collect the runs
 
 For each gardener workflow, list the last 30 days of runs:
 
 ```bash
-gh run list --workflow=<file>.lock.yml --limit=100 \
-  --json databaseId,conclusion,createdAt,updatedAt,event,displayTitle
+github actions_list --owner togathernyc --repo togather \
+  --method list_workflow_runs --resource_id <file>.lock.yml --per_page 100
 ```
 
 From this you get, per gardener: **run count**, **success / failure split**, and
-**duration** (`updatedAt` − `createdAt`). Report both the last 7 days and the
+**duration** (`updated_at` − `created_at`). Report both the last 7 days and the
 last 30 days so a trend is visible.
 
 > [!IMPORTANT]
 > **Exclude your own in-flight run.** This workflow appears in its own
-> `gh run list` output, but its usage artifact is not uploaded until after the
+> run listing, but its usage artifact is not uploaded until after the
 > agent step finishes — which is after you. If you count it, it looks like a
 > run with no conclusion, no duration, and no cost, and every report
 > understates the current cycle forever.
@@ -172,50 +194,44 @@ last 30 days so a trend is visible.
 ## Phase 2 — Get the actual spend
 
 gh-aw meters agent spend in **AI Credits (AIC)**, where **1 AIC = $0.01 USD**.
-Each run uploads a usage artifact. Try these in order and use the first that
-works — the artifact layout has changed between gh-aw versions, so do not assume:
+Each run uploads a usage artifact.
 
-1. **The gh-aw CLI, if available on the runner:**
+> [!WARNING]
+> **`gh aw logs` and `gh run download` are both unavailable here** — the first
+> needs the gh-aw extension, the second needs an authenticated `gh`, and this
+> container has neither. Earlier revisions of this prompt told you to prefer
+> them; they never worked. Do not spend turns on them.
 
-   ```bash
-   gh aw logs <workflow-name> --json 2>/dev/null
-   ```
+The reachable path is the artifact, through the shim, in two steps:
 
-   `gh aw logs` parses each run's artifacts and reports tokens, cost, and turns.
-   This is the least brittle source; prefer it.
+```bash
+github actions_list --owner togathernyc --repo togather \
+  --method list_workflow_run_artifacts --resource_id <run-id>
 
-2. **The usage artifact directly:**
+github actions_get --owner togathernyc --repo togather \
+  --method download_workflow_run_artifact --resource_id <artifact-id>
+```
 
-   ```bash
-   gh run download <run-id> --dir /tmp/gh-aw/agent/usage/<run-id> 2>&1
-   ls -R /tmp/gh-aw/agent/usage/<run-id>
-   ```
+If you get an artifact, look for, in rough order of likelihood:
 
-   (Write everything under `/tmp/gh-aw/agent/` — that directory is uploaded as a
-   run artifact, so your working files stay inspectable after the run.)
+- `**/usage/agent_usage.json` — gh-aw's own per-run usage summary (contains AIC)
+- `**/run_summary.json` — may carry a precomputed `aic` value
+- `**/firewall/logs/api-proxy-logs/token-usage.jsonl` — one JSON object per API
+  call, with `model`, `input_tokens`, `output_tokens`
 
-   Then look for, in rough order of likelihood:
-   - `**/usage/agent_usage.json` — gh-aw's own per-run usage summary (contains AIC)
-   - `**/run_summary.json` — may carry a precomputed `aic` value
-   - `**/firewall/logs/api-proxy-logs/token-usage.jsonl` — one JSON object per
-     API call, with `model`, `input_tokens`, `output_tokens`,
-     `cache_read_input_tokens`, `cache_creation_input_tokens`
+> [!IMPORTANT]
+> **This path is unverified — no run of this gardener has ever completed.** If it
+> does not work, that is an expected outcome, not a failure to push through.
+> Report **every** run's AIC as *unavailable*, say plainly that spend could not
+> be read and why, and file the report anyway: the run counts, durations and
+> success rates from Phase 1 are still worth having, and an honest gap is worth
+> more than a fabricated total. Then say in **Notes** that the cost column needs
+> the artifact path fixed. Do **not** substitute estimates for measurements.
 
-3. **If a run has no usage artifact at all**, record its AIC as *unknown* rather
-   than zero, and say how many runs were unknown. A silent zero is worse than an
-   honest gap — it would understate the bill.
-
-If you only have raw token counts (source 2c), convert with the Anthropic
-pricing for the model named in the file (USD per 1M tokens):
-
-| Model | Input | Output | Cache write | Cache read |
-|---|---|---|---|---|
-| claude-opus-4-5 | $15.00 | $75.00 | $18.75 | $1.50 |
-| claude-sonnet-4-5 | $3.00 | $15.00 | $3.75 | $0.30 |
-| claude-haiku-4-5 | $0.80 | $4.00 | $1.00 | $0.08 |
-
-For a model not listed, use $3.00 / $15.00 as a conservative fallback and mark
-the number as estimated.
+If you do have raw token counts, convert with the pricing each workflow declares
+in its own `models.default-ai-credits-pricing` block (`$/1M tokens`) — read it
+from the `.lock.yml`, do not assume. Anything derived this way is **estimated**
+and must be labelled so.
 
 ## Phase 3 — Write the standing issue
 
@@ -269,12 +285,13 @@ parentheses)
 | Docs Drift | 200 AIC ($2.00) | 200 AIC ($2.00) |
 | CI Doctor | 200 AIC ($2.00) | 400 AIC ($4.00) |
 | Cost Report | 200 AIC ($2.00) | 200 AIC ($2.00) |
-| Watchdog (repo) | 50 AIC ($0.50) | 200 AIC ($2.00) |
-| **Repo-wide daily ceiling** | | **1200 AIC ($12.00)** |
+| Watchdog (repo) | 200 AIC ($2.00) | 400 AIC ($4.00) |
+| **Repo-wide daily ceiling** | | **1400 AIC ($14.00)** |
 
-Note for the watchdog row: 4 runs/day × 50 AIC is exactly its 200 AIC daily cap,
-so a day on which every sweep bills its full per-run ceiling blocks the fourth.
-Worth flagging if you see it happen; it has not yet.
+Note for the watchdog row: its per-run cap was raised 50 -> 200 on 2026-08-01
+after run 30697357668 hit `403 Maximum AI credits exceeded (50.469 / 50)`. Two
+full-price sweeps now exhaust the 400 daily cap, so flag it if you ever see a
+third sweep skipped in a day — that means something is making them expensive.
 
 <Flag explicitly if any run got within 80% of its per-run cap, or if any daily
 guardrail actually tripped — a tripped guardrail means a gardener was skipped

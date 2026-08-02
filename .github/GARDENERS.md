@@ -44,7 +44,7 @@ in `gh aw list`.
 | **Docs Drift** | `gardener-docs-drift.md` | Diffs the last week of merged changes against `docs/` and the `apps/web` onboarding guides | `codex` → **Ollama** · `glm-5.2` | Weekly · **Thu 09:15 ET** | 200 AIC | 200 AIC | 1 issue, `[gardener:docs-drift]` |
 | **CI Doctor** | `gardener-ci-doctor.md` | Diagnoses `CI` failures on `main`, grouped by failure signature; plus a weekly roll-up | **`claude`** · default | On CI failure (main) **+** weekly · **Mon 09:15 ET** | 200 AIC ($2.00) | 400 AIC ($4.00) | ≤2 issues, `[gardener:ci-doctor]` |
 | **Cost Report** | `gardener-cost-report.md` | The visibility surface — keeps one standing issue with a per-gardener cost & activity table | `codex` → **Ollama** · `glm-5.2` | Weekly · **Fri 09:15 ET** | 200 AIC | 200 AIC | 1 standing issue, `[gardeners]` |
-| **Watchdog (repo)** | `watchdog-repo.md` | Sweeps for stuck claims, failing gardeners, and green agent PRs nobody has reviewed — see [Watchdog](#watchdog) | `codex` → **Ollama** · `glm-5.2` | **Every 6h** (00/06/12/18 ET) | 50 AIC | 200 AIC | 1 issue/day, `[watchdog]` |
+| **Watchdog (repo)** | `watchdog-repo.md` | Sweeps for stuck claims, failing gardeners, and green agent PRs nobody has reviewed — see [Watchdog](#watchdog) | `codex` → **Ollama** · `glm-5.2` | **Every 6h** (00/06/12/18 ET) | 200 AIC | 400 AIC | 1 issue/day, `[watchdog]` |
 
 Three gardeners run on an open model through the owner's Ollama Cloud
 subscription; **CI Doctor deliberately does not.** It reads noisy CI logs and
@@ -181,8 +181,8 @@ python3 -c "import re,sys; s=open(sys.argv[1]).read(); \
 > gap. Do not treat it as a live control until `grep` says otherwise. This looks
 > like an upstream bug and is worth reporting to github/gh-aw.
 
-The five daily caps sum to 1200 AIC = **$12/day repo-wide** (the repo watchdog
-added the fifth 200). The guardrail is enforced per workflow per triggering
+The five daily caps sum to 1400 AIC = **$14/day repo-wide** (the repo watchdog
+added the fifth, raised to 400 after it exhausted 200 in a single day). The guardrail is enforced per workflow per triggering
 user, not globally — that $12 is an arithmetic budget across the five, not one
 number GitHub enforces.
 
@@ -971,6 +971,73 @@ first thing to look at, and `max-turns` is the knob.
 its `engine:` block for `engine: claude`, drop `model:` / `models:` /
 `max-turn-cache-misses:` and the `ollama.com` network line, recompile, commit.
 See [Move a gardener back onto Claude](#move-a-gardener-back-onto-claude).
+
+### Live run, 2026-08-01: `gh` does not work inside the agent, and neither do `mcp__github__*` calls
+
+The repo watchdog's first production runs
+([run 30697357668](https://github.com/togathernyc/togather/actions/runs/30697357668),
+issue #715) died on `403 Maximum AI credits exceeded (50.469 / 50)`. The credit
+cap was the symptom. The cause was that **the agent could not read GitHub at
+all**, and spent its whole budget working out why.
+
+> [!CAUTION]
+> **Inside the agent container: `gh` is NOT authenticated, and MCP servers are
+> NOT callable as `mcp__github__*` functions under the `codex` engine.**
+> Measured, in this order, by an agent with no other option:
+>
+> | Attempt | Result |
+> |---|---|
+> | `mcp__github__list_issues` | `ERROR … unsupported call: mcp__github__list_issues` |
+> | `gh auth status` | prints nothing — unauthenticated |
+> | `safeoutputs --help` | works, but it is **write-only** (8 tools, no reads) |
+> | `github list_issues .` | **works** — `MCP tools/call: status=200` |
+>
+> gh-aw mounts each MCP server as a **CLI shim** on `PATH`
+> (`$RUNNER_TEMP/gh-aw/mcp-cli/bin/{github,safeoutputs}`). The generated prompt
+> advertises the `safeoutputs` shim but **not** the `github` one, while
+> simultaneously instructing the agent to "use GitHub MCP tools for all GitHub
+> reads" — so an agent that needs a read has to discover the shim by
+> experiment. That is ~10 turns of uncached context on a provider that re-bills
+> the whole conversation every turn.
+
+**Any gardener whose prompt calls `gh` for data is broken and does not know it.**
+The shim gives 28 read commands — `list_issues`, `list_pull_requests`,
+`issue_read`, `pull_request_read`, `actions_list`, `actions_get`, `search_*`:
+
+```bash
+github --help
+github list_issues --owner togathernyc --repo togather --state open
+printf '%s' '{"owner":"togathernyc","repo":"togather"}' | github list_issues .   # verified form
+```
+
+Fixed in Watchdog and Cost Report. **Large Files and Docs Drift were never
+affected** — they read the checked-out working tree with `git`, `grep` and `cat`
+and never touch the GitHub API, which is exactly why Large Files was able to run
+to the request cap in the first place.
+
+> [!WARNING]
+> **`tools.bash` is inert on `engine: codex` — it is documentation, not a
+> sandbox.** The entries never reach the lock file (`grep -c 'cat \*'` on any
+> codex `.lock.yml` returns **0**) and the agent is launched with
+> `--dangerously-bypass-approvals-and-sandbox`. The failing run freely executed
+> `gh`, `ls`, `cat` and `./bin/github`, none of which were in its allowlist.
+>
+> So **fixing a gardener by editing its `bash:` list changes nothing.** Keep the
+> list honest as a statement of intent, but the prompt is the only thing that
+> actually steers these agents. Do not rely on it as a security boundary —
+> the real boundaries are the egress firewall, the read-only `permissions:`, and
+> safe-outputs.
+
+> [!NOTE]
+> **The "Invalid or Unsupported Model" banner on issue #715 is a
+> misclassification — ignore it.** codex emits
+> `{"type":"error","message":"Model metadata for 'glm-5.2' not found. Defaulting
+> to fallback metadata"}` for any model outside its built-in table, and gh-aw's
+> failure reporter pattern-matches that into a model error. **`deepseek-v4-flash`
+> emits the byte-identical item** in run 30686121841 — which succeeded. It is a
+> warning about metadata, not a rejection; `glm-5.2` ran fine for eight minutes
+> and made real tool calls. Do not go changing model IDs on the strength of that
+> banner.
 
 ---
 
