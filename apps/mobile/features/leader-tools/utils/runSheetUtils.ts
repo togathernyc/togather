@@ -95,3 +95,24 @@ export function sanitizeNoteContent(content: string): string {
     .replace(/<[^>]+>/g, "")         // Strip other HTML tags
     .trim();
 }
+
+/**
+ * The names shown on a run-sheet item's role chip.
+ *
+ * Non-declined assignments count — the same `status !== "declined"` predicate
+ * serving mode, team-chat membership, and the leader fill counts already use —
+ * and the people who haven't accepted yet are marked inline, otherwise the run
+ * sheet reads as if everyone has confirmed. The chip is a single truncating line
+ * of comma-joined names with no room for a pill, so this uses the TEXT form of
+ * the "Unconfirmed" signifier (the same fallback `ServingTasksScreen` renders
+ * when it can't show its colored chip).
+ */
+export function assigneeLabels(
+  assignments: Array<{ userName: string; status: string }>,
+): string[] {
+  return assignments
+    .filter((a) => a.status !== "declined")
+    .map((a) =>
+      a.status === "confirmed" ? a.userName : `${a.userName} (unconfirmed)`,
+    );
+}

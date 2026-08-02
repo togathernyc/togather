@@ -45,6 +45,7 @@ import {
 } from "@features/scheduling/utils/runSheetViewerFilter";
 import { ServiceTimeSelector } from "@features/scheduling/components/ServiceTimeSelector";
 import { renderTextWithLinks } from "../utils/runSheetLinks";
+import { assigneeLabels } from "../utils/runSheetUtils";
 
 /** "All" / "Mine" run sheet filter (stakeholder request — see runSheetViewerFilter.ts). */
 type ViewMode = "all" | "mine";
@@ -389,9 +390,7 @@ export function PlanRunSheet({
   const peopleByRole = useMemo(() => {
     const map: Record<string, string[]> = {};
     for (const r of effEvent?.roles ?? []) {
-      map[r.roleId as string] = r.assignments
-        .filter((a) => a.status !== "declined")
-        .map((a) => a.userName);
+      map[r.roleId as string] = assigneeLabels(r.assignments);
     }
     return map;
   }, [effEvent?.roles]);
