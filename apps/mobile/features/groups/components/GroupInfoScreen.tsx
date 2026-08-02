@@ -788,32 +788,37 @@ export function GroupInfoScreen() {
           </View>
         )}
 
-        {/* 5. CHANNELS — rendered exactly as-is; not modified (out of
-            scope for this restyle pass — see file-header deferral note). */}
-        {group._id && <ChannelsSection groupId={group._id} userRole={group.user_role} />}
-
-        {/* 5b. GIVING — every member's door into the fund: give, and see the
+        {/* 5. GIVING — every member's door into the fund: give, and see the
             transparency summary (ADR-032 §4 grants both at Member level).
-            Sits here, in the member band between Channels and Leader tools,
-            because that's where this screen keeps everything a member can
-            actually use — below the leader block it would be buried under a
-            card most members never render, and in Details it would read as
-            metadata rather than a place to go. Mirrors the flag-off
-            GroupDetailScreen, where the same tile sits above leader-only
-            Rostering. The Leader tools "Giving" row stays as-is: it opens the
-            management hub, this opens the member surface. */}
+            Sits directly under MEMBERS, above Channels, because giving is now
+            a headline member action rather than an afterthought: the member
+            band reads people → money → conversations, and a donor who opened
+            this screen to give shouldn't have to scroll past a channel list to
+            find the door. (It previously sat below Channels; the owner's
+            giving-flow redesign moved it up.) Still above the leader block,
+            which most members never render. The Leader tools "Giving" row
+            stays as-is: it opens the management hub, this opens the member
+            surface. */}
         {group._id && groupGivingFlag === true && hasGivingFund && (
           <View style={styles.waSection}>
             <WaInsetGroup header="Giving">
               <WaCell
                 icon="cash-outline"
                 title="Group fund"
+                // No balance in the whisper: `getGivingContext` (what this
+                // screen already subscribes to) doesn't carry one, and the
+                // only query that does is `getFundOverview`, which pulls the
+                // whole ledger for a one-line subtitle.
                 description="Give, and see where the money goes."
                 onPress={() => router.push(`/groups/${group._id}/fund` as any)}
               />
             </WaInsetGroup>
           </View>
         )}
+
+        {/* 5b. CHANNELS — rendered exactly as-is; not modified (out of
+            scope for this restyle pass — see file-header deferral note). */}
+        {group._id && <ChannelsSection groupId={group._id} userRole={group.user_role} />}
 
         {/* 6. LEADER TOOLS — leader/admin only, WaInsetGroup of navigational
             WaCells (plain monochrome glyphs per §3.2), reusing today's

@@ -349,6 +349,84 @@ already flagged in `functions/finance/ARCHITECTURE.md`:
    deliberately left drifting (a refund arriving after allocation needs a
    bank-side clawback that is not designed yet).
 
+## Addendum (2026-08-02): Recurring giving (monthly)
+
+Giving so far is one-off: a donor taps Give, a PaymentIntent settles, a
+`donations` row and a ledger credit follow. Monthly recurring giving is the
+same money flow on a Stripe **Subscription**, and the guiding decision is that
+it stays the same money flow — recurring adds a *schedule*, not a second
+accounting path.
+
+**Schema.** One new table, `recurringDonations` (`fundId`, `communityId`
+denormalized per `ledgerEntries`, `donorUserId`, `amountCents`,
+`feeCoverCents`, `stripeSubscriptionId?`, `stripeCustomerId?`,
+`stripeConnectedAccountId`, `checkoutSessionId`, `status: pending | active |
+past_due | canceled`, `currentPeriodEnd?`, `canceledAt?`, timestamps). It
+models the *standing instruction*, never a balance: it has no `balanceCents`
+and posts nothing to the ledger itself. Two fields deserve their reasons
+written down. `stripeCustomerId` is a Customer on the **connected** account,
+not the platform — donors have no platform Customer at all (only communities
+do, for SaaS billing), so that id is meaningless without
+`stripeAccount: stripeConnectedAccountId`; conflating the two is the mistake
+this table's comments exist to prevent. `checkoutSessionId` exists because
+there is a real window — donor on Stripe's hosted page — in which the row
+exists and the subscription id does not; it is the only handle binding the
+Checkout return and its webhook back to the row, hence
+`by_checkoutSessionId`. Indexes are deliberately five and no more:
+`by_stripeSubscriptionId` (webhook entry), `by_donor_fund` (the lookup the
+create path checks to keep one active monthly gift per donor per fund —
+Convex has no unique constraint, so that rule is enforced in code, not by the
+index), `by_fund`, `by_donor`,
+`by_checkoutSessionId`. `donations.recurringId` — reserved since the original
+schema and never written — is where a charge points back at its subscription.
+
+**Recording: `invoice.paid`, not the subscription.** Each successful monthly
+charge is recorded as an ordinary `donations` row from the `invoice.paid`
+event, stamped with `recurringId`. Nothing downstream learns a new concept:
+the ledger credit, the receipt from the church's EIN, allocation into the
+group's Increase Account, and the member transparency view all run on
+`donations` exactly as they do for one-off gifts. The subscription row only
+ever mirrors *state* (active / past_due / canceled, next bill date). This is
+the §5 invariant restated — money is only ever real when a provider event says
+it moved, and the object that says a monthly gift moved is the paid invoice,
+not the subscription.
+
+**Webhook routing: `event.account` disambiguates.** `/stripe-webhook` is one
+endpoint fed by two Stripe destinations (§6): the platform account for SaaS
+billing and "Events from: Connected accounts" for giving. Recurring giving
+makes three event types genuinely ambiguous —
+`customer.subscription.updated`, `customer.subscription.deleted`,
+`invoice.payment_failed` — because a monthly donation is a Stripe
+Subscription just like a community's Togather subscription. The rule: **if
+`event.account` is present the event belongs to a connected account and goes
+to the finance handler; otherwise it is a platform billing event and routes
+as before.** Stripe sets that field itself, so the routing key is the
+provider's, not metadata of ours. Getting this wrong is not a missing feature
+but a live billing bug: unrouted, a donor canceling a $20/month gift can carry
+a subscription id into `handleSubscriptionUpdated` and mark a paying community
+canceled. The predicate lives in `lib/finance/webhookRouting.ts`
+(`isConnectEvent`) so the rule is testable without the signature-verified
+route. `invoice.paid` needs no such branch — billing never claimed it, so it
+already falls through to the finance dispatcher.
+
+Two boundaries of this foundation are worth stating plainly, because both are
+"correct today, wrong the moment the next PR lands":
+
+- **Routed is not yet handled.** `handleFinanceStripeEvent` has no case for
+  `customer.subscription.updated/deleted` or `invoice.payment_failed` yet, so
+  today a Connect-flagged one is routed away from billing and then returns
+  silently from the dispatcher's `default`. That is the intended landing — the
+  point of this PR is that these events stop corrupting SaaS billing, not that
+  they do anything yet. The subscription-handler PR adds the cases.
+- **`checkout.session.completed` is deliberately NOT gated.** It stays on the
+  billing path regardless of `event.account`, which is safe only while nothing
+  opens a Checkout Session on a connected account (one-off giving uses
+  PaymentIntents, and the Connect destination doesn't subscribe to the event).
+  The PR that adds recurring-giving Checkout must gate this case too:
+  otherwise a donation session completes with `event.account` set and donor
+  metadata, `handleCheckoutCompleted` rejects the missing required
+  `communityId`, and the route 500s into an endless Stripe retry loop.
+
 ## Open questions
 
 - Increase program structure: confirm during underwriting that

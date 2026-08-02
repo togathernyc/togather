@@ -23,6 +23,7 @@ import {
   handleFinanceStripeEvent,
   handleIncreaseWebhookRequest,
 } from "./functions/finance/webhooks";
+import { isConnectEvent } from "./lib/finance/webhookRouting";
 
 const http = httpRouter();
 
@@ -408,6 +409,12 @@ http.route({
  * - customer.subscription.updated -> syncs subscription status
  * - customer.subscription.deleted -> marks subscription as canceled
  * - invoice.payment_failed -> marks subscription as past_due
+ *
+ * ALL FOUR are shared with recurring giving (a monthly donation is a Stripe
+ * Subscription on the community's CONNECTED account, set up through a
+ * subscription-mode Checkout Session): when `event.account` is set the event
+ * is a Connect event and goes to the finance handler instead of billing. See
+ * lib/finance/webhookRouting.ts.
  */
 http.route({
   path: "/stripe-webhook",
@@ -451,7 +458,18 @@ http.route({
 
     try {
       switch (event.type) {
+        // Ambiguous for the same reason as the three cases below: a monthly
+        // donation is set up through a subscription-mode Checkout Session on
+        // the community's CONNECTED account, and lands here alongside a
+        // community's own SaaS-billing checkout. `event.account` is the
+        // routing key (lib/finance/webhookRouting.ts) — without this, the
+        // billing handler would read a donor's session as a community
+        // subscription activation.
         case "checkout.session.completed": {
+          if (isConnectEvent(event)) {
+            await handleFinanceStripeEvent(ctx, event);
+            break;
+          }
           const session = event.data.object;
           await ctx.runMutation(
             internal.functions.ee.billing.handleCheckoutCompleted,
@@ -468,7 +486,18 @@ http.route({
           );
           break;
         }
+        // The next three cases are AMBIGUOUS: a recurring donation is a
+        // Stripe Subscription too, so these event types arrive for both SaaS
+        // billing (platform account) and group giving (connected account).
+        // `event.account` is what tells them apart — without this check the
+        // billing handlers swallow a donor's subscription event and, worse,
+        // could match a Connect subscription id against a community's own
+        // (see lib/finance/webhookRouting.ts).
         case "customer.subscription.updated": {
+          if (isConnectEvent(event)) {
+            await handleFinanceStripeEvent(ctx, event);
+            break;
+          }
           const subscription = event.data.object;
           await ctx.runMutation(
             internal.functions.ee.billing.handleSubscriptionUpdated,
@@ -480,6 +509,10 @@ http.route({
           break;
         }
         case "customer.subscription.deleted": {
+          if (isConnectEvent(event)) {
+            await handleFinanceStripeEvent(ctx, event);
+            break;
+          }
           const subscription = event.data.object;
           await ctx.runMutation(
             internal.functions.ee.billing.handleSubscriptionUpdated,
@@ -491,6 +524,10 @@ http.route({
           break;
         }
         case "invoice.payment_failed": {
+          if (isConnectEvent(event)) {
+            await handleFinanceStripeEvent(ctx, event);
+            break;
+          }
           const invoice = event.data.object;
           await ctx.runMutation(
             internal.functions.ee.billing.handlePaymentFailed,
