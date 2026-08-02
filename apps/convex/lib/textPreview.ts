@@ -44,10 +44,36 @@ export function truncateChars(text: string, max: number): string {
 }
 
 /**
+ * How much of the budget we're willing to give up to land on a word boundary.
+ * A cut inside the last 25% of the text backs up to the preceding space; a
+ * single token longer than that (a URL, a wall of CJK with no spaces) gets the
+ * character-safe hard cut instead of being shortened to almost nothing.
+ */
+const WORD_BOUNDARY_SEARCH_RATIO = 0.25;
+
+/**
  * Truncate to at most `max` UTF-16 units (ellipsis included in the budget),
  * suffixing "…" only when the text was actually shortened.
+ *
+ * Prefers a word boundary: issue #661's complaint was messages ending
+ * mid-word, and a cut at char 1000 is just as chopped as a cut at char 100.
+ * Falls back to the hard character-safe cut when there's no space to back up
+ * to within {@link WORD_BOUNDARY_SEARCH_RATIO} of the budget.
  */
 export function truncateWithEllipsis(text: string, max: number): string {
   if (text.length <= max) return text;
-  return truncateChars(text, Math.max(0, max - 1)) + "…";
+
+  const hardCut = truncateChars(text, Math.max(0, max - 1));
+  // Only a cut that lands *inside* a word needs backing up — if the next
+  // character is whitespace we already ended cleanly.
+  if (/\s/.test(text.charAt(hardCut.length))) {
+    return hardCut.trimEnd() + "…";
+  }
+
+  const floor = Math.floor(hardCut.length * (1 - WORD_BOUNDARY_SEARCH_RATIO));
+  const lastSpace = hardCut.search(/\s+\S*$/);
+  if (lastSpace > 0 && lastSpace >= floor) {
+    return hardCut.slice(0, lastSpace) + "…";
+  }
+  return hardCut + "…";
 }

@@ -70,4 +70,35 @@ describe("truncateWithEllipsis", () => {
     expect(out).toBe(`${"A".repeat(198)}…`);
     expect(hasLoneSurrogate(out)).toBe(false);
   });
+
+  it("backs up to the word boundary instead of chopping a word", () => {
+    // The budget lands inside "prayers", which is exactly the mid-word cut
+    // issue #661 reported — just at a later offset than the old 100-char one.
+    expect(truncateWithEllipsis("Please keep me in prayers tonight", 22)).toBe(
+      "Please keep me in…",
+    );
+  });
+
+  it("does not back up when the cut already lands between words", () => {
+    expect(truncateWithEllipsis("Please keep me in prayers", 19)).toBe(
+      "Please keep me in…",
+    );
+  });
+
+  it("hard-cuts a single token too long to back up out of", () => {
+    // No space within the search window, so shortening to a word boundary
+    // would throw away almost the whole preview.
+    const url = `https://example.com/${"a".repeat(300)}`;
+    const out = truncateWithEllipsis(url, 200);
+    expect(out).toBe(`${url.slice(0, 199)}…`);
+    expect(out.length).toBe(200);
+  });
+
+  it("keeps the word-boundary cut inside the budget", () => {
+    const words = "lorem ipsum dolor sit amet ".repeat(20);
+    const out = truncateWithEllipsis(words, 200);
+    expect(out.length).toBeLessThanOrEqual(200);
+    expect(out.endsWith("…")).toBe(true);
+    expect(out.slice(0, -1).endsWith(" ")).toBe(false);
+  });
 });
