@@ -69,6 +69,10 @@ export function ServingRunsheetScreen() {
   // per-plan section headers around it.
   const wa = useWhatsappShell();
   const router = useRouter();
+  // §1 canvas — see the same note in `NativeRunSheetView`. This screen owns
+  // serving mode's canvas, and `PlanRunSheet`'s rows fill `bg.card` flag-on,
+  // so the two have to agree or the cards render invisible.
+  const canvas = wa ? colors.backgroundGrouped : colors.background;
   const isServingMode = useEventModeStore((s) => s.isServingMode);
   const previewPlanId = useEventModeStore((s) => s.previewPlanId);
 
@@ -91,7 +95,7 @@ export function ServingRunsheetScreen() {
 
   if (!isServingMode) {
     return (
-      <View style={[styles.centered, { backgroundColor: colors.background }]}>
+      <View style={[styles.centered, { backgroundColor: canvas }]}>
         <Text
           style={[styles.emptyText, wa && waStyles.emptyText, { color: colors.textSecondary }]}
         >
@@ -104,7 +108,7 @@ export function ServingRunsheetScreen() {
   // Still loading the eligible plans (only when we have no cached fallback yet).
   if (eligibility === undefined && plans.length === 0) {
     return (
-      <View style={[styles.centered, { backgroundColor: colors.background }]}>
+      <View style={[styles.centered, { backgroundColor: canvas }]}>
         <Ionicons name="list-outline" size={28} color={colors.textTertiary} />
         <Text
           style={[styles.emptyText, wa && waStyles.emptyText, { color: colors.textSecondary }]}
@@ -117,7 +121,7 @@ export function ServingRunsheetScreen() {
 
   if (plans.length === 0) {
     return (
-      <View style={[styles.centered, { backgroundColor: colors.background }]}>
+      <View style={[styles.centered, { backgroundColor: canvas }]}>
         <Ionicons name="list-outline" size={28} color={colors.textTertiary} />
         <Text
           style={[styles.emptyText, wa && waStyles.emptyText, { color: colors.textSecondary }]}
@@ -132,7 +136,7 @@ export function ServingRunsheetScreen() {
 
   return (
     <ScrollView
-      style={[styles.container, { backgroundColor: colors.background }]}
+      style={[styles.container, { backgroundColor: canvas }]}
       contentContainerStyle={{
         paddingTop: insets.top,
         paddingBottom: insets.bottom + 24,
@@ -227,6 +231,10 @@ const styles = StyleSheet.create({
  * `PlanRunSheet`. The header moves onto the §2 landing-section-header role
  * (~20pt semibold sentence-case) with a 15pt gray date beside it, and the
  * inter-plan gap onto `WA_GROUP_SPACING`.
+ *
+ * The canvas isn't in this block because it isn't a static style: it's
+ * `colors.backgroundGrouped` flag-on (see the `canvas` const above), which
+ * `PlanRunSheet`'s `bg.card` rows are drawn to sit on.
  */
 const waStyles = StyleSheet.create({
   emptyText: { fontSize: WA_TYPE_SUBTITLE },

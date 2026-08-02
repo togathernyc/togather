@@ -98,6 +98,18 @@ export type ThemeColors = {
    *  community's saturated brand color in BOTH themes, so unlike
    *  `textInverse`/`buttonPrimaryText` this must not flip with light/dark. */
   onAccent: string;
+
+  /** Run sheet "happening now" row fill — the live-clock highlight on the item
+   *  whose [start, start + duration) window contains the current time
+   *  (`NativeRunSheetView`). A transient STATE highlight, not a taxonomy color:
+   *  it marks one row at a time and moves as the service runs, so it is not the
+   *  colored-category-chip pattern WHATSAPP-DESIGN-SYSTEM.md §7 bans. Amber
+   *  rather than the brand accent because the accent is reserved for
+   *  selection/positive states (§1.3) and "now" is neither. */
+  runSheetCurrentItem: string;
+  /** Leading strip on the "happening now" run sheet row — the same amber at
+   *  full strength, so the row reads as marked even where its fill is subtle. */
+  runSheetCurrentItemAccent: string;
 };
 
 export const lightColors: ThemeColors = {
@@ -166,6 +178,9 @@ export const lightColors: ThemeColors = {
   mentionBlue: '#0068C9',
 
   onAccent: '#ffffff',
+
+  runSheetCurrentItem: '#FFF9E6',
+  runSheetCurrentItemAccent: '#D4A017',
 };
 
 export const darkColors: ThemeColors = {
@@ -234,6 +249,9 @@ export const darkColors: ThemeColors = {
   mentionBlue: '#53BDEB',
 
   onAccent: '#ffffff',
+
+  runSheetCurrentItem: '#2a2700',
+  runSheetCurrentItemAccent: '#D4A017',
 };
 
 /**
