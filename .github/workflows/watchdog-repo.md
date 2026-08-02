@@ -30,10 +30,23 @@ if: ${{ vars.GARDENERS_ENABLED == 'true' }}
 tracker-id: togather-watchdog-repo
 
 # Cost caps. gh-aw meters spend in AI Credits (AIC); 1 AIC = $0.01 USD.
-# Four runs a day against the weekly gardeners' one, so the per-run cap is a
-# quarter of the daily slice rather than equal to it.
-max-ai-credits: 50         # ~$0.50 per run
-max-daily-ai-credits: 200  # ~$2.00 / 24h — this watchdog's slice of the $12/day repo budget
+#
+# RAISED 50 -> 200 after run 30697357668 hit `403 Maximum AI credits exceeded
+# (50.469 / 50)`. 50 was a quarter of what the gardeners use, on the reasoning
+# that four runs a day should each cost a quarter as much. That reasoning is
+# wrong on this provider: Ollama does no prompt caching, so every turn re-bills
+# the entire conversation so far and cumulative input grows quadratically with
+# turn count. A 25-turn run is not a quarter of a 30-turn run, it is most of one.
+#
+# The DAILY cap has to be per-run × cadence, not something smaller. At every 6h
+# that is 4 runs, so a 400 ceiling makes the sustainable per-run budget 100 — and
+# the failing run reached 50.7 credits *before starting a single sweep*, so a
+# complete run plausibly clears 100. Runs 3 and 4 would then be skipped by the
+# pre-flight guardrail and the watchdog would quietly become twice-daily while
+# the docs still claimed every 6h. Silent halving is exactly the failure this
+# thing exists to catch, so: 4 runs × 200 = 800.
+max-ai-credits: 200        # ~$2.00 per run
+max-daily-ai-credits: 800  # ~$8.00 / 24h — 4 runs × 200, so no sweep is ever skipped for budget
 max-turns: 25
 # NOT a cache guard on this provider — Ollama does no prompt caching, so every
 # request counts as a "consecutive miss" and this is really a request counter.
@@ -123,12 +136,17 @@ tools:
   github:
     toolsets: [default, actions]
   bash:
-    - "gh issue list *"
-    - "gh issue view *"
-    - "gh pr list *"
-    - "gh pr view *"
-    - "gh run list *"
-    - "gh api *"
+    # `gh` is NOT authenticated inside the agent container — every `gh api` /
+    # `gh issue list` in the old allowlist was dead on arrival, and the agent
+    # burned its whole budget in run 30697357668 discovering that. GitHub reads
+    # go through the `github` CLI shim gh-aw mounts on PATH. See the prompt.
+    #
+    # This entry is DECORATIVE. `tools.bash` is inert on engine:codex (it never
+    # reaches the lock file and the agent runs with
+    # --dangerously-bypass-approvals-and-sandbox). What actually mounts the shim
+    # is the `github:` toolsets line above — do not remove that one thinking this
+    # one is doing the work.
+    - "github *"
     - "date *"
     - "jq *"
     - "sort *"
@@ -153,6 +171,49 @@ and do not contradict it — if a claim is stale, describe it and move on.
 You are running in **shadow mode**. Your only outputs are one issue and updates
 to it.
 
+## How to read GitHub here — read this before anything else
+
+> [!IMPORTANT]
+> **`gh` is NOT authenticated in this container, and `mcp__github__*` tool calls
+> do not work.** Both were tried in run 30697357668 and the run burned its entire
+> credit budget rediscovering this. Do not repeat it.
+>
+> - `gh auth status` reports nothing; every `gh api` / `gh issue list` fails.
+> - `mcp__github__list_issues` and friends return
+>   `unsupported call: mcp__github__list_issues` — under the `codex` engine gh-aw
+>   does not expose MCP servers as callable functions.
+> - **What works** is the `github` CLI shim gh-aw mounts on `PATH`. It proxies to
+>   the same read-only GitHub MCP server.
+
+```bash
+github --help          # 28 read commands
+github list_issues --help
+```
+
+The commands you need are `list_issues`, `list_pull_requests`, `issue_read`,
+`pull_request_read` and `actions_list`. Two calling forms — **use the first one**:
+
+```bash
+# VERIFIED form — a JSON object on stdin, with `.` as the argument.
+# This is the only form observed returning `MCP tools/call: status=200`.
+# Start here for every command.
+printf '%s' '{"owner":"togathernyc","repo":"togather","state":"open","labels":"agent:in-progress","perPage":50}' \
+  | github list_issues .
+
+# Documented form — named parameters. What `--help` advertises, but unproven
+# against this shim. Only try this if the stdin form errors.
+github list_issues --owner togathernyc --repo togather --state open
+```
+
+The examples throughout the sweeps below are written in the named-parameter form
+because it reads more clearly — **translate each one into the stdin form when you
+run it.** Every parameter maps to a JSON key of the same name.
+
+If the first form errors, use the second rather than exploring. **You have a
+budget; spend it on the sweeps, not on rediscovering the tooling.** If both forms
+fail for a given command, report that sweep as "could not run" and move on — do
+not go looking for another way in.
+
 ## The three sweeps
 
 Resolve your cutoffs first — every check below is a date comparison and getting
@@ -174,17 +235,22 @@ queue — `agent:ready` is what the supervisor reads, and this issue no longer
 has it.
 
 ```bash
-gh issue list --label "agent:in-progress" --state open --limit 50 \
-  --json number,title,url,updatedAt,comments
+github list_issues --owner togathernyc --repo togather \
+  --state open --labels agent:in-progress --perPage 50
 ```
 
 For each, check whether a pull request already covers it before you say
 anything — an issue whose PR is open and awaiting review is finished, not stuck:
 
 ```bash
-gh issue view <N> --json closedByPullRequestsReferences \
-  --jq '.closedByPullRequestsReferences[] | "\(.number) \(.state)"'
+github issue_read --owner togathernyc --repo togather \
+  --method get --issue_number <N>
 ```
+
+`issue_read` carries the issue's timeline references. If you cannot establish
+from it whether a linked PR is open, **say the claim is unverified rather than
+reporting it as stuck** — a false "nobody is working on this" sends someone to
+redo work that is already in review.
 
 Report only issues with **no OPEN pull request** and a last comment (or
 `updatedAt`, if there are no comments) older than the 6h cutoff. Say how long
@@ -203,24 +269,23 @@ once and filter afterwards:
 ```bash
 for wf in gardener-large-files gardener-docs-drift gardener-ci-doctor \
           gardener-cost-report watchdog-repo; do
-  gh run list --workflow="$wf.lock.yml" --status failure \
-    --created ">=<24h cutoff>" --limit 20 \
-    --json workflowName,conclusion,createdAt,url
+  github actions_list --owner togathernyc --repo togather \
+    --method list_workflow_runs --resource_id "$wf.lock.yml" --per_page 20
 done
 ```
 
-`--limit` is applied **before** any filtering you do downstream, so a single
-unscoped `gh run list --limit 50` on a heavy CI day returns fifty `CI` failures
-and pushes every gardener failure off the end — the sweep then reports nothing,
-which reads as an all-clear. Scoping per workflow makes it exact.
+Filter the results to `conclusion == "failure"` and `created_at` inside the 24h
+cutoff yourself. **Query per workflow, never once for the whole repo** — a
+per-repo listing applies its page limit *before* your filter, so on a heavy CI
+day fifty `CI` runs push every gardener failure off the end and the sweep reports
+nothing, which reads as an all-clear.
 
 Report a workflow only if it failed at all in the window; give the count and
 link the most recent run.
 
 > [!IMPORTANT]
-> **Exclude your own in-flight run.** This workflow appears in its own
-> `gh run list` output and has no conclusion yet. Drop the run whose ID is
-> `${{ github.run_id }}`.
+> **Exclude your own in-flight run.** This workflow appears in its own run list
+> and has no conclusion yet. Drop the run whose ID is `${{ github.run_id }}`.
 
 ### Sweep 3 — agent pull requests going stale
 
@@ -229,9 +294,14 @@ the work is *done* and it is sitting there. Find open PRs older than the 24h
 cutoff:
 
 ```bash
-gh pr list --state open --limit 50 \
-  --json number,title,url,createdAt,updatedAt,author,isDraft,reviewDecision,statusCheckRollup,body
+github list_pull_requests --owner togathernyc --repo togather \
+  --state open --perPage 50
 ```
+
+If you need a single PR's checks or review state, `pull_request_read` takes a
+`method` (`get`, `get_status`, `get_reviews`, `get_comments`) plus
+`pull_number`. Prefer one listing plus targeted follow-ups on the handful that
+look stale — not a `pull_request_read` per open PR.
 
 A PR qualifies when **all** of these hold:
 
@@ -240,11 +310,11 @@ A PR qualifies when **all** of these hold:
   `agent:*` label. A PR by a human is not your business.
 - **Not a draft.**
 - **Created more than 24 hours ago.**
-- **CI is green** — read it from `statusCheckRollup`, where every check has
-  `conclusion` of `SUCCESS`, `NEUTRAL`, or `SKIPPED`. Never from
-  `gh pr checks`. A PR with a failing or still-pending check is not "waiting for
-  review", it is waiting for CI, and saying otherwise sends the owner to the
-  wrong place.
+- **CI is green** — from `pull_request_read --method get_status`, where every
+  check is `success`, `neutral` or `skipped`. A PR with a failing or
+  still-pending check is not "waiting for review", it is waiting for CI, and
+  saying otherwise sends the owner to the wrong place. If you cannot read the
+  status, leave the PR out rather than guessing.
 - **No review activity** — `reviewDecision` is null or empty, and there are no
   review comments.
 
