@@ -30,7 +30,7 @@
  * layer in `functions/finance/jobs.ts`.
  */
 
-import { v } from "convex/values";
+import { v, ConvexError } from "convex/values";
 import {
   query,
   action,
@@ -46,6 +46,7 @@ import { isCommunityAdmin } from "../../lib/permissions";
 import { postLedgerEntry } from "../../lib/finance/ledger";
 import { logFinanceAudit } from "../../lib/finance/audit";
 import { buildDonationReceiptEmail } from "../../lib/finance/receipts";
+import { computeCoverFeesCents, COVER_FEE_TOLERANCE_CENTS } from "../../lib/finance/fees";
 import { getResendClient } from "../../lib/resend";
 import { now, getDisplayName } from "../../lib/utils";
 import {
@@ -364,12 +365,19 @@ export const getGivingContext = query({
 // ============================================================================
 
 /**
- * Validates the donor-chosen amount is within Stripe/our own bounds and
- * normalizes `coverFeesCents` to a non-negative integer. Pure (no `ctx`) so
- * it's trivial to unit test directly, but only called from
+ * Validates the donor-chosen amount is within Stripe/our own bounds and that
+ * `coverFeesCents` is a fee we'd actually have quoted for that amount. Pure (no
+ * `ctx`) so it's trivial to unit test directly, but only called from
  * `prepareDonationIntent` — the ONE place that gates every donation-creating
  * action, per the ADR-032 rule that money-initiating actions share one
  * validation path rather than duplicating checks per Stripe surface.
+ *
+ * The fee check is a bound, not a nicety: the card is charged
+ * `amountCents + feeCoverCents`, so a fee field that only had to be
+ * non-negative made `MAX_DONATION_CENTS` a fiction — any total was reachable by
+ * putting the money in the fee. Pinning the fee to the server's own gross-up
+ * (or zero, for the toggle being off) caps the actual charge at
+ * `MAX_DONATION_CENTS + computeCoverFeesCents(MAX_DONATION_CENTS)`.
  */
 function validateDonationAmount(
   amountCents: number,
@@ -386,7 +394,19 @@ function validateDonationAmount(
   }
   const feeCoverCents = coverFeesCents ?? 0;
   if (!Number.isInteger(feeCoverCents) || feeCoverCents < 0) {
-    throw new Error("Invalid fee-cover amount");
+    throw new ConvexError("Invalid fee-cover amount");
+  }
+  // Zero means the donor left the "cover the fees" toggle off. Anything else
+  // must be the fee we'd have quoted, within a couple of cents of rounding
+  // drift between the client's estimate and this calculation.
+  const expectedFeeCents = computeCoverFeesCents(amountCents);
+  if (
+    feeCoverCents !== 0 &&
+    Math.abs(feeCoverCents - expectedFeeCents) > COVER_FEE_TOLERANCE_CENTS
+  ) {
+    throw new ConvexError(
+      `Fee-cover amount doesn't match the processing fee for this gift (expected ${expectedFeeCents} cents or 0)`,
+    );
   }
   return { feeCoverCents };
 }
