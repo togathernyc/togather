@@ -1541,11 +1541,10 @@ export const sendDonationReceipt = internalAction({
 //     subscription later, by `checkout.session.completed`.
 // ============================================================================
 
-/** The give screen's own route, which doubles as the manage screen today.
- * When a dedicated "manage my monthly gift" screen ships, this is the one
- * line that changes. */
+/** The dedicated manage screen for a monthly gift — where the Stripe Billing
+ * Portal returns the donor after a card update. */
 function buildRecurringManageUrl(groupId: string): string {
-  return `${DOMAIN_CONFIG.appUrl}/groups/${encodeURIComponent(groupId)}/give`;
+  return `${DOMAIN_CONFIG.appUrl}/groups/${encodeURIComponent(groupId)}/monthly-giving`;
 }
 
 /** Copy the donor actually reads when they already give monthly to this fund. */

@@ -1340,7 +1340,7 @@ describe("createCardUpdateSession", () => {
     // The group id is percent-encoded into the path, as it is for the
     // Checkout return URLs — a Convex id contains a ";".
     expect((portal.params as any).return_url).toContain(
-      `/groups/${encodeURIComponent(s.groupId)}/give`,
+      `/groups/${encodeURIComponent(s.groupId)}/monthly-giving`,
     );
   });
 
