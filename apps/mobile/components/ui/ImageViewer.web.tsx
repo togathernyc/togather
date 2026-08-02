@@ -46,8 +46,12 @@ const DOUBLE_CLICK_SCALE = 2.5;
 const BUTTON_ZOOM_STEP = 1.25;
 // Wheel delta → zoom factor. Tuned so one trackpad flick is ~1 step.
 const WHEEL_SENSITIVITY = 0.0015;
+// Assumed pixels per line for wheels that report deltaMode = DOM_DELTA_LINE.
+const WHEEL_LINE_HEIGHT_PX = 16;
 // A press that moves less than this is a click (close), not a pan.
 const DRAG_SLOP_PX = 4;
+// Horizontal drag distance at fit scale that pages to the next/previous image.
+const SWIPE_THRESHOLD_PX = 48;
 // `mouseup` fires before `dblclick`, so closing on the first click of a
 // double-click would tear the viewer down before it could zoom. Defer the
 // backdrop close by this window and cancel it when a second press arrives.
@@ -155,6 +159,13 @@ export function ImageViewer({
     applyTransform(FIT);
   }, [applyTransform]);
 
+  const stepSlide = useCallback(
+    (delta: number) => {
+      setCurrentIndex((index) => Math.min(Math.max(index + delta, 0), images.length - 1));
+    },
+    [images.length],
+  );
+
   const handleStageRef = useCallback((node: View | null) => {
     setStageNode((node as unknown as HTMLElement) ?? null);
   }, []);
@@ -210,7 +221,16 @@ export function ImageViewer({
     const handleWheel = (event: WheelEvent) => {
       event.preventDefault();
       const rect = stageNode.getBoundingClientRect();
-      const factor = Math.exp(-event.deltaY * WHEEL_SENSITIVITY);
+      // Firefox and some mice report deltas in lines or pages, not pixels;
+      // WHEEL_SENSITIVITY is tuned for pixels, so normalize first or a single
+      // notch either does nothing or slams into the zoom limit.
+      const deltaPx =
+        event.deltaMode === WheelEvent.DOM_DELTA_LINE
+          ? event.deltaY * WHEEL_LINE_HEIGHT_PX
+          : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
+            ? event.deltaY * rect.height
+            : event.deltaY;
+      const factor = Math.exp(-deltaPx * WHEEL_SENSITIVITY);
       applyTransform(
         zoomAt(
           transformRef.current,
@@ -231,6 +251,10 @@ export function ImageViewer({
 
   // Drag to pan while zoomed; a press that never moves is a backdrop click and
   // closes the viewer, matching the native TouchableWithoutFeedback backdrop.
+  //
+  // Pointer events, not mouse events: this `.web.tsx` is bundled for mobile
+  // browsers too, where a mouse-only implementation would strip the touch
+  // panning and swipe-to-change-slide that the native gesture path provided.
   useEffect(() => {
     if (!stageNode) return;
 
@@ -238,10 +262,15 @@ export function ImageViewer({
     // window listeners.
     let detachDrag: (() => void) | null = null;
 
-    const handleMouseDown = (event: MouseEvent) => {
-      if (event.button !== 0) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      // Ignore right/middle buttons and any secondary touch (no pinch here —
+      // touch users zoom with the −/+/fit toolbar).
+      if (!event.isPrimary) return;
+      if (event.pointerType === 'mouse' && event.button !== 0) return;
       // Suppress the browser's native image-drag ghost and text selection.
-      event.preventDefault();
+      // Mouse only: preventDefault on a touch pointerdown also suppresses the
+      // synthesized click/dblclick that double-tap-to-zoom relies on.
+      if (event.pointerType === 'mouse') event.preventDefault();
       // Second press of a double-click: drop the close the first one queued.
       cancelPendingClose();
 
@@ -249,11 +278,17 @@ export function ImageViewer({
       const start = transformRef.current;
       const startX = event.clientX;
       const startY = event.clientY;
+      const pointerId = event.pointerId;
       let moved = false;
+      let lastX = startX;
+      let lastY = startY;
 
-      const handleMouseMove = (moveEvent: MouseEvent) => {
-        const dx = moveEvent.clientX - startX;
-        const dy = moveEvent.clientY - startY;
+      const handlePointerMove = (moveEvent: PointerEvent) => {
+        if (moveEvent.pointerId !== pointerId) return;
+        lastX = moveEvent.clientX;
+        lastY = moveEvent.clientY;
+        const dx = lastX - startX;
+        const dy = lastY - startY;
         if (!moved && Math.abs(dx) + Math.abs(dy) > DRAG_SLOP_PX) moved = true;
         if (!moved || transformRef.current.scale <= MIN_SCALE) return;
         applyTransform(
@@ -265,24 +300,36 @@ export function ImageViewer({
         );
       };
 
-      const handleMouseUp = () => {
+      const handlePointerUp = (upEvent: PointerEvent) => {
+        if (upEvent.pointerId !== pointerId) return;
         detachDrag?.();
-        if (!moved && transformRef.current.scale <= MIN_SCALE) {
+        if (transformRef.current.scale > MIN_SCALE) return;
+        if (!moved) {
           // Deferred, not immediate — see DOUBLE_CLICK_WINDOW_MS.
           pendingCloseRef.current = setTimeout(() => {
             pendingCloseRef.current = null;
             onCloseRef.current();
           }, DOUBLE_CLICK_WINDOW_MS);
+          return;
+        }
+        // At fit, a horizontal drag pages between images — the touch
+        // equivalent of the arrow buttons, replacing the native FlatList swipe.
+        const dx = lastX - startX;
+        const dy = lastY - startY;
+        if (Math.abs(dx) > SWIPE_THRESHOLD_PX && Math.abs(dx) > Math.abs(dy)) {
+          stepSlide(dx < 0 ? 1 : -1);
         }
       };
 
       detachDrag = () => {
-        window.removeEventListener('mousemove', handleMouseMove);
-        window.removeEventListener('mouseup', handleMouseUp);
+        window.removeEventListener('pointermove', handlePointerMove);
+        window.removeEventListener('pointerup', handlePointerUp);
+        window.removeEventListener('pointercancel', handlePointerUp);
         detachDrag = null;
       };
-      window.addEventListener('mousemove', handleMouseMove);
-      window.addEventListener('mouseup', handleMouseUp);
+      window.addEventListener('pointermove', handlePointerMove);
+      window.addEventListener('pointerup', handlePointerUp);
+      window.addEventListener('pointercancel', handlePointerUp);
     };
 
     const handleDoubleClick = (event: MouseEvent) => {
@@ -304,20 +351,24 @@ export function ImageViewer({
       );
     };
 
-    stageNode.addEventListener('mousedown', handleMouseDown);
+    stageNode.addEventListener('pointerdown', handlePointerDown);
     stageNode.addEventListener('dblclick', handleDoubleClick);
     return () => {
-      stageNode.removeEventListener('mousedown', handleMouseDown);
+      stageNode.removeEventListener('pointerdown', handlePointerDown);
       stageNode.removeEventListener('dblclick', handleDoubleClick);
       detachDrag?.();
       cancelPendingClose();
     };
-  }, [stageNode, applyTransform, cancelPendingClose]);
+  }, [stageNode, applyTransform, cancelPendingClose, stepSlide]);
 
-  // Affordance: grab cursor only when there is something to pan.
+  // Affordance: grab cursor only when there is something to pan. touchAction
+  // none keeps the browser from claiming a touch drag as a page scroll (which
+  // would fire pointercancel mid-pan).
   useEffect(() => {
     if (!stageNode) return;
     stageNode.style.cursor = transform.scale > MIN_SCALE ? 'grab' : 'default';
+    stageNode.style.touchAction = 'none';
+    stageNode.style.userSelect = 'none';
   }, [stageNode, transform.scale]);
 
   const handleSave = async () => {
@@ -334,13 +385,8 @@ export function ImageViewer({
     }
   };
 
-  const goToPrevious = () => {
-    if (currentIndex > 0) setCurrentIndex(currentIndex - 1);
-  };
-
-  const goToNext = () => {
-    if (currentIndex < images.length - 1) setCurrentIndex(currentIndex + 1);
-  };
+  const goToPrevious = () => stepSlide(-1);
+  const goToNext = () => stepSlide(1);
 
   // Reserve space so the contained image doesn't render behind the header
   // toolbar or the Done/Save buttons (same reasoning as the native viewer).
