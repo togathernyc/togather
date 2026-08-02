@@ -45,6 +45,7 @@ import {
 } from "@features/scheduling/utils/runSheetViewerFilter";
 import { ServiceTimeSelector } from "@features/scheduling/components/ServiceTimeSelector";
 import { renderTextWithLinks } from "../utils/runSheetLinks";
+import { assigneeLabels } from "../utils/runSheetUtils";
 
 /** "All" / "Mine" run sheet filter (stakeholder request — see runSheetViewerFilter.ts). */
 type ViewMode = "all" | "mine";
@@ -389,9 +390,7 @@ export function PlanRunSheet({
   const peopleByRole = useMemo(() => {
     const map: Record<string, string[]> = {};
     for (const r of effEvent?.roles ?? []) {
-      map[r.roleId as string] = r.assignments
-        .filter((a) => a.status !== "declined")
-        .map((a) => a.userName);
+      map[r.roleId as string] = assigneeLabels(r.assignments);
     }
     return map;
   }, [effEvent?.roles]);
@@ -822,7 +821,18 @@ function ReadOnlyRow({
                   ]}
                 >
                   <View style={[styles.assignSwatch, { backgroundColor: a.roleColor ?? DEFAULT_ROLE_COLOR }]} />
-                  <Text style={[styles.assignText, { color: colors.text }]} numberOfLines={1}>
+                  {/* The visible line truncates to one row, so on a full role the
+                      "(Unconfirmed)" marker can ellipsize away — the label carries
+                      the whole chip so a screen reader never loses it. */}
+                  <Text
+                    style={[styles.assignText, { color: colors.text }]}
+                    numberOfLines={1}
+                    accessibilityLabel={
+                      names.length > 0
+                        ? `${a.roleName}: ${names.join(", ")}`
+                        : a.roleName
+                    }
+                  >
                     {a.roleName}
                     {names.length > 0 ? `: ${names.join(", ")}` : ""}
                   </Text>
