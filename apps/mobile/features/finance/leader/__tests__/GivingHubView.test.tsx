@@ -108,6 +108,24 @@ describe("GivingHubView", () => {
       expect(screen.getByText("People")).toBeTruthy();
       expect(screen.getByText("Activity")).toBeTruthy();
     });
+
+    // The pre-restyle cells were hand-rolled TouchableOpacitys with an
+    // explicit accessibilityRole; the WaCells that replaced them must keep
+    // announcing as buttons, or the whole hub reads as plain text to
+    // VoiceOver/TalkBack.
+    it("exposes every tappable cell as a button to screen readers", () => {
+      render(<GivingHubView {...baseProps} canManageCards cards={[makeCard()]} />);
+
+      for (const testID of [
+        "giving-hub-roles-link",
+        "giving-hub-action-share",
+        "giving-hub-create-card",
+        "giving-hub-see-all-transactions",
+        "giving-hub-card-card-1",
+      ]) {
+        expect(screen.getByTestId(testID).props.accessibilityRole).toBe("button");
+      }
+    });
   });
 
   describe("people", () => {
