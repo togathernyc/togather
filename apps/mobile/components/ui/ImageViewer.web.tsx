@@ -66,14 +66,33 @@ interface Transform {
 
 const FIT: Transform = { scale: 1, x: 0, y: 0 };
 
+interface Size {
+  width: number;
+  height: number;
+}
+
 /**
- * Keep the image from being dragged entirely off the stage: at scale `s` the
- * overflow in each axis is `size * (s - 1)`, so half of that is the furthest
- * the center may travel before an edge crosses the middle of the stage.
+ * Size the image actually occupies at scale 1. `resizeMode="contain"`
+ * letterboxes it inside the stage, so for an aspect ratio that differs from
+ * the stage the rendered image is *smaller* than the stage in one axis —
+ * clamping against the stage would let that axis be dragged out of view.
+ * Falls back to the stage box until the natural size is known.
  */
-function clampTransform(next: Transform, width: number, height: number): Transform {
-  const maxX = Math.max(0, (width * (next.scale - 1)) / 2);
-  const maxY = Math.max(0, (height * (next.scale - 1)) / 2);
+function renderedSize(stage: Size, natural: Size | null): Size {
+  if (!natural || natural.width <= 0 || natural.height <= 0) return stage;
+  const fit = Math.min(stage.width / natural.width, stage.height / natural.height);
+  return { width: natural.width * fit, height: natural.height * fit };
+}
+
+/**
+ * Keep the image from being dragged out of view: at scale `s` its overflow
+ * past the stage in each axis is `rendered * s - stage`, so half of that is
+ * the furthest the center may travel before an edge crosses the stage edge.
+ */
+function clampTransform(next: Transform, stage: Size, natural: Size | null): Transform {
+  const rendered = renderedSize(stage, natural);
+  const maxX = Math.max(0, (rendered.width * next.scale - stage.width) / 2);
+  const maxY = Math.max(0, (rendered.height * next.scale - stage.height) / 2);
   return {
     scale: next.scale,
     x: Math.min(Math.max(next.x, -maxX), maxX),
@@ -93,8 +112,8 @@ function zoomAt(
   targetScale: number,
   px: number,
   py: number,
-  width: number,
-  height: number,
+  stage: Size,
+  natural: Size | null,
 ): Transform {
   const scale = Math.min(Math.max(targetScale, MIN_SCALE), MAX_SCALE);
   if (scale === MIN_SCALE) return FIT;
@@ -105,8 +124,8 @@ function zoomAt(
       x: px - (px - current.x) * ratio,
       y: py - (py - current.y) * ratio,
     },
-    width,
-    height,
+    stage,
+    natural,
   );
 }
 
@@ -142,6 +161,11 @@ export function ImageViewer({
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
   const pendingCloseRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Intrinsic size of the current image, once the browser reports it — needed
+  // to clamp panning against the letterboxed rectangle rather than the stage.
+  const naturalSizeRef = useRef<Size | null>(null);
+  // Vertical space the chrome reserves, mirrored for the DOM handlers.
+  const reserveRef = useRef({ top: 0, bottom: 0 });
 
   const cancelPendingClose = useCallback(() => {
     if (pendingCloseRef.current !== null) {
@@ -170,34 +194,75 @@ export function ImageViewer({
     setStageNode((node as unknown as HTMLElement) ?? null);
   }, []);
 
-  const stageSize = useCallback(() => {
+  const imageUrl = images[currentIndex];
+
+  // The image is transformed inside the stage's *content* box — the stage's
+  // padding reserves room for the header and footer chrome — so both pan
+  // clamping and pointer-anchored zoom work in content-box coordinates.
+  const stageGeometry = useCallback(() => {
     const rect = stageNode?.getBoundingClientRect();
-    return { width: rect?.width ?? 0, height: rect?.height ?? 0 };
+    const { top, bottom } = reserveRef.current;
+    const stage: Size = {
+      width: rect?.width ?? 0,
+      height: Math.max(0, (rect?.height ?? 0) - top - bottom),
+    };
+    return {
+      stage,
+      centerX: (rect?.left ?? 0) + stage.width / 2,
+      centerY: (rect?.top ?? 0) + top + stage.height / 2,
+    };
   }, [stageNode]);
 
   // Zoom from the toolbar buttons: centered on the stage, not the pointer.
   const zoomByStep = useCallback(
     (factor: number) => {
-      const { width, height } = stageSize();
+      const { stage } = stageGeometry();
       applyTransform(
-        zoomAt(transformRef.current, transformRef.current.scale * factor, 0, 0, width, height),
+        zoomAt(
+          transformRef.current,
+          transformRef.current.scale * factor,
+          0,
+          0,
+          stage,
+          naturalSizeRef.current,
+        ),
       );
     },
-    [applyTransform, stageSize],
+    [applyTransform, stageGeometry],
   );
 
-  // Reset zoom when the slide changes or the viewer (re)opens, so the next
-  // image never inherits the previous one's pan offset.
+  // Reset zoom and load state whenever the displayed image changes — a slide
+  // change, or the same index now pointing at a different URL — so nothing is
+  // inherited from the previous one, and learn its intrinsic size for clamping.
   useEffect(() => {
     applyTransform(FIT);
+    naturalSizeRef.current = null;
     setLoading(true);
     setError(false);
-  }, [currentIndex, applyTransform]);
+    if (!imageUrl) return;
+
+    let cancelled = false;
+    Image.getSize(
+      imageUrl,
+      (width, height) => {
+        if (!cancelled) naturalSizeRef.current = { width, height };
+      },
+      // Size unknown: clamping falls back to the stage box.
+      () => {},
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [imageUrl, applyTransform]);
 
   useEffect(() => {
     if (visible) {
       setCurrentIndex(initialIndex);
       applyTransform(FIT);
+      // Reopening on the same index doesn't re-run the effect above, so a
+      // transient load failure would otherwise never be retried.
+      setLoading(true);
+      setError(false);
 
       fadeAnim.setValue(0);
       scaleAnim.setValue(0.9);
@@ -220,7 +285,7 @@ export function ImageViewer({
 
     const handleWheel = (event: WheelEvent) => {
       event.preventDefault();
-      const rect = stageNode.getBoundingClientRect();
+      const { stage, centerX, centerY } = stageGeometry();
       // Firefox and some mice report deltas in lines or pages, not pixels;
       // WHEEL_SENSITIVITY is tuned for pixels, so normalize first or a single
       // notch either does nothing or slams into the zoom limit.
@@ -228,17 +293,17 @@ export function ImageViewer({
         event.deltaMode === WheelEvent.DOM_DELTA_LINE
           ? event.deltaY * WHEEL_LINE_HEIGHT_PX
           : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
-            ? event.deltaY * rect.height
+            ? event.deltaY * stage.height
             : event.deltaY;
       const factor = Math.exp(-deltaPx * WHEEL_SENSITIVITY);
       applyTransform(
         zoomAt(
           transformRef.current,
           transformRef.current.scale * factor,
-          event.clientX - rect.left - rect.width / 2,
-          event.clientY - rect.top - rect.height / 2,
-          rect.width,
-          rect.height,
+          event.clientX - centerX,
+          event.clientY - centerY,
+          stage,
+          naturalSizeRef.current,
         ),
       );
     };
@@ -247,7 +312,7 @@ export function ImageViewer({
     // without it the browser scrolls the page behind the viewer.
     stageNode.addEventListener('wheel', handleWheel, { passive: false });
     return () => stageNode.removeEventListener('wheel', handleWheel);
-  }, [stageNode, applyTransform]);
+  }, [stageNode, applyTransform, stageGeometry]);
 
   // Drag to pan while zoomed; a press that never moves is a backdrop click and
   // closes the viewer, matching the native TouchableWithoutFeedback backdrop.
@@ -276,7 +341,7 @@ export function ImageViewer({
       // Never stack drags: if a previous one somehow never ended, drop it.
       detachDrag?.();
 
-      const rect = stageNode.getBoundingClientRect();
+      const { stage } = stageGeometry();
       const start = transformRef.current;
       const startX = event.clientX;
       const startY = event.clientY;
@@ -303,8 +368,8 @@ export function ImageViewer({
         applyTransform(
           clampTransform(
             { scale: start.scale, x: start.x + dx, y: start.y + dy },
-            rect.width,
-            rect.height,
+            stage,
+            naturalSizeRef.current,
           ),
         );
       };
@@ -356,19 +421,19 @@ export function ImageViewer({
 
     const handleDoubleClick = (event: MouseEvent) => {
       cancelPendingClose();
-      const rect = stageNode.getBoundingClientRect();
       if (transformRef.current.scale > MIN_SCALE) {
         applyTransform(FIT);
         return;
       }
+      const { stage, centerX, centerY } = stageGeometry();
       applyTransform(
         zoomAt(
           transformRef.current,
           DOUBLE_CLICK_SCALE,
-          event.clientX - rect.left - rect.width / 2,
-          event.clientY - rect.top - rect.height / 2,
-          rect.width,
-          rect.height,
+          event.clientX - centerX,
+          event.clientY - centerY,
+          stage,
+          naturalSizeRef.current,
         ),
       );
     };
@@ -381,7 +446,7 @@ export function ImageViewer({
       detachDrag?.();
       cancelPendingClose();
     };
-  }, [stageNode, applyTransform, cancelPendingClose, stepSlide]);
+  }, [stageNode, applyTransform, cancelPendingClose, stepSlide, stageGeometry]);
 
   // Affordance: grab cursor only when there is something to pan. touchAction
   // none keeps the browser from claiming a touch drag as a page scroll (which
@@ -414,7 +479,8 @@ export function ImageViewer({
   // toolbar or the Done/Save buttons (same reasoning as the native viewer).
   const topReserve = insets.top + HEADER_HEIGHT;
   const bottomReserve = insets.bottom + FOOTER_HEIGHT;
-  const imageUrl = images[currentIndex];
+  // Mirrored for the DOM handlers, which measure the stage's content box.
+  reserveRef.current = { top: topReserve, bottom: bottomReserve };
   const zoomPercent = Math.round(transform.scale * 100);
 
   return (
