@@ -375,9 +375,9 @@ export const getGivingContext = query({
  * The fee check is a bound, not a nicety: the card is charged
  * `amountCents + feeCoverCents`, so a fee field that only had to be
  * non-negative made `MAX_DONATION_CENTS` a fiction — any total was reachable by
- * putting the money in the fee. Pinning the fee to the server's own gross-up
- * (or zero, for the toggle being off) caps the actual charge at
- * `MAX_DONATION_CENTS + computeCoverFeesCents(MAX_DONATION_CENTS)`.
+ * putting the money in the fee. Ceiling the fee at the server's own gross-up
+ * caps the actual charge at
+ * `MAX_DONATION_CENTS + computeCoverFeesCents(MAX_DONATION_CENTS) + COVER_FEE_TOLERANCE_CENTS`.
  */
 function validateDonationAmount(
   amountCents: number,
@@ -388,7 +388,7 @@ function validateDonationAmount(
     amountCents < MIN_DONATION_CENTS ||
     amountCents > MAX_DONATION_CENTS
   ) {
-    throw new Error(
+    throw new ConvexError(
       `Donation amount must be between $${MIN_DONATION_CENTS / 100} and $${MAX_DONATION_CENTS / 100}`,
     );
   }
@@ -396,16 +396,27 @@ function validateDonationAmount(
   if (!Number.isInteger(feeCoverCents) || feeCoverCents < 0) {
     throw new ConvexError("Invalid fee-cover amount");
   }
-  // Zero means the donor left the "cover the fees" toggle off. Anything else
-  // must be the fee we'd have quoted, within a couple of cents of rounding
-  // drift between the client's estimate and this calculation.
+  // The bound is deliberately ONE-SIDED — a ceiling, not a match. Only an
+  // over-large fee moves money it shouldn't: the card is charged
+  // `amountCents + feeCoverCents`, so it's the upper edge that keeps
+  // MAX_DONATION_CENTS honest. A fee *below* the quote just under-covers the
+  // fund, which is what every client did before this gross-up landed and is
+  // the donor's own money either way.
+  //
+  // That asymmetry is also what makes this safe to ship: the pre-gross-up
+  // estimate diverges from this one by more than the tolerance from $12.93 up,
+  // so a symmetric match would have rejected every fee-covered mid-size gift
+  // from a donor still on the old JS bundle for the whole length of the OTA
+  // rollout. The tolerance absorbs rounding drift on the high side only.
   const expectedFeeCents = computeCoverFeesCents(amountCents);
-  if (
-    feeCoverCents !== 0 &&
-    Math.abs(feeCoverCents - expectedFeeCents) > COVER_FEE_TOLERANCE_CENTS
-  ) {
+  if (feeCoverCents > expectedFeeCents + COVER_FEE_TOLERANCE_CENTS) {
+    // Logged with the numbers because the donor-facing copy deliberately has
+    // none: a spike here is how we'd notice the two fee implementations drifting.
+    console.warn(
+      `[finance] fee-cover above the quoted fee — amount=${amountCents} submitted=${feeCoverCents} expected=${expectedFeeCents}`,
+    );
     throw new ConvexError(
-      `Fee-cover amount doesn't match the processing fee for this gift (expected ${expectedFeeCents} cents or 0)`,
+      "We couldn't confirm the processing fee for this gift. Please reopen the give screen and try again.",
     );
   }
   return { feeCoverCents };

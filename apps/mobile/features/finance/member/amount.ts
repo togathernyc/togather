@@ -35,9 +35,11 @@ export function parseDollarsToCents(
  * NOTE: deliberately duplicated in `apps/convex/lib/finance/fees.ts`. There is
  * no shared finance module in `packages/shared` to hold them, and inventing one
  * for two constants isn't worth a new cross-app import path. The server
- * re-derives the fee from its own copy and validates the client's number
- * against it (±2c), so a drift between the two surfaces fails loudly at the
- * donation-creation seam rather than silently shortchanging a fund.
+ * re-derives the fee from its own copy and refuses a client number more than
+ * 2c ABOVE it, so this copy drifting upward fails loudly at the
+ * donation-creation seam instead of overcharging a card. Drifting downward is
+ * allowed on purpose — that's what lets an old client keep giving through a
+ * rollout — and is caught by the shared tests below, not at runtime.
  */
 const STRIPE_FEE_RATE = 0.029;
 const STRIPE_FEE_FIXED_CENTS = 30;

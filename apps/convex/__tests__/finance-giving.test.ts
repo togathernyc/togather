@@ -643,6 +643,43 @@ describe("prepareDonationIntent", () => {
       }
     });
 
+    // The bound is a ceiling, not a match: a fee UNDER the quote can't inflate
+    // the charge past MAX_DONATION_CENTS, it just under-covers the fund — which
+    // is exactly what a donor still on the pre-gross-up JS bundle sends. A
+    // symmetric check would have refused those gifts outright for the length of
+    // the OTA rollout.
+    test("accepts a fee below the quote, including the pre-gross-up estimate an old client still sends", async () => {
+      const t = convexTest(schema, modules);
+      const s = await seedGivingFixture(t);
+      const token = await tokenFor(s.donorUserId);
+
+      /** The estimate shipped before this PR: the fee on the base amount only. */
+      const preGrossUpFee = (amountCents: number) => Math.round(amountCents * 0.029 + 30);
+
+      // $12.93 is where the old estimate first falls more than 2c short of the
+      // new one, so every amount at or above it is a gift an old client could
+      // no longer make under a symmetric check.
+      for (const amountCents of [1293, 2000, 5000, 30000, 2_000_000]) {
+        expect(computeCoverFeesCents(amountCents) - preGrossUpFee(amountCents)).toBeGreaterThan(2);
+
+        const result = await t.query(internal.functions.finance.giving.prepareDonationIntent, {
+          token,
+          fundId: s.fundId,
+          amountCents,
+          coverFeesCents: preGrossUpFee(amountCents),
+        });
+        expect(result.feeCoverCents).toBe(preGrossUpFee(amountCents));
+      }
+
+      // …and a 1c fee on a large gift is fine too — it's the donor's own money,
+      // and it lowers the charge rather than raising it.
+      const barelyCovered = await t.query(
+        internal.functions.finance.giving.prepareDonationIntent,
+        { token, fundId: s.fundId, amountCents: 100_000, coverFeesCents: 1 },
+      );
+      expect(barelyCovered.feeCoverCents).toBe(1);
+    });
+
     test("rejects a fee padded past the tolerance, however small the padding", async () => {
       const t = convexTest(schema, modules);
       const s = await seedGivingFixture(t);
@@ -655,7 +692,7 @@ describe("prepareDonationIntent", () => {
           amountCents: 5000,
           coverFeesCents: computeCoverFeesCents(5000) + 3,
         }),
-      ).rejects.toThrow("doesn't match the processing fee");
+      ).rejects.toThrow("couldn't confirm the processing fee");
 
       await expect(
         t.query(internal.functions.finance.giving.prepareDonationIntent, {
@@ -664,7 +701,7 @@ describe("prepareDonationIntent", () => {
           amountCents: 5000,
           coverFeesCents: computeCoverFeesCents(5000) + 1000,
         }),
-      ).rejects.toThrow("doesn't match the processing fee");
+      ).rejects.toThrow("couldn't confirm the processing fee");
     });
 
     test("rejects an enormous fee on a tiny gift — the cap is not smugglable through the fee field", async () => {
@@ -679,7 +716,7 @@ describe("prepareDonationIntent", () => {
           amountCents: 100,
           coverFeesCents: 99_000_000,
         }),
-      ).rejects.toThrow("doesn't match the processing fee");
+      ).rejects.toThrow("couldn't confirm the processing fee");
     });
 
     test("caps the total charge at the donation cap plus the fee on the cap", async () => {
@@ -698,7 +735,18 @@ describe("prepareDonationIntent", () => {
         amountCents: capCents,
         coverFeesCents: computeCoverFeesCents(capCents) + 2,
       });
-      expect(capCents + atCap.feeCoverCents).toBeLessThanOrEqual(maxTotal + 2);
+      expect(capCents + atCap.feeCoverCents).toBe(maxTotal + 2);
+
+      // …and that is the ceiling: one cent more is refused, so the largest
+      // charge this endpoint can ever authorise is exactly maxTotal + 2c.
+      await expect(
+        t.query(internal.functions.finance.giving.prepareDonationIntent, {
+          token,
+          fundId: s.fundId,
+          amountCents: capCents,
+          coverFeesCents: computeCoverFeesCents(capCents) + 3,
+        }),
+      ).rejects.toThrow("couldn't confirm the processing fee");
 
       // Anything bigger fails on one bound or the other.
       await expect(
@@ -717,7 +765,7 @@ describe("prepareDonationIntent", () => {
           amountCents: capCents,
           coverFeesCents: maxTotal,
         }),
-      ).rejects.toThrow("doesn't match the processing fee");
+      ).rejects.toThrow("couldn't confirm the processing fee");
     });
   });
 

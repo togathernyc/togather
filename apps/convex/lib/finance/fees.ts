@@ -7,8 +7,8 @@
  * finance surface in `packages/shared` today, and one wasn't worth inventing
  * for two constants). The client estimate is a *display* number; this copy is
  * the authority: `validateDonationAmount` re-derives the fee here and rejects a
- * client-supplied `coverFeesCents` that doesn't match, which is also what keeps
- * the donation cap from being bypassable through the fee field.
+ * client-supplied `coverFeesCents` that exceeds it, which is what keeps the
+ * donation cap from being bypassable through the fee field.
  */
 
 /** Stripe's typical US card rate, charged on the amount that hits the card. */
@@ -40,9 +40,13 @@ export function computeCoverFeesCents(amountCents: number): number {
 }
 
 /**
- * How far a client's fee number may sit from the server's own before we refuse
+ * How far ABOVE the server's own number a client's fee may sit before we refuse
  * it: two cents, covering rounding drift between the two implementations (and
  * a future tweak to one of them) without leaving room to smuggle real money
  * past the donation cap.
+ *
+ * There is no matching floor — see `validateDonationAmount`. A fee under the
+ * quote cannot bypass the cap, and rejecting one would lock out every donor
+ * still running a pre-gross-up client.
  */
 export const COVER_FEE_TOLERANCE_CENTS = 2;
