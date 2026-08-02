@@ -660,13 +660,22 @@ describe("buildGiveReturnUrls", () => {
       communityName: "Test Church Inc.",
     });
 
-    expect(successUrl).toBe(
-      `${DOMAIN_CONFIG.appUrl}/groups/abc123/give-success` +
-        `?session_id={CHECKOUT_SESSION_ID}` +
-        `&amount=2650` +
-        `&fund=Young%20Adults%20Fund` +
-        `&community=Test%20Church%20Inc.`,
-    );
+    // Asserted as a hardcoded suffix rather than interpolating
+    // DOMAIN_CONFIG.appUrl into the whole expectation: building the expected
+    // string from the same constant the code reads would leave the
+    // path-and-query shape — the part this PR actually changes — unable to
+    // fail.
+    const expectedSuffix =
+      "/groups/abc123/give-success" +
+      "?session_id={CHECKOUT_SESSION_ID}" +
+      "&amount=2650" +
+      "&fund=Young%20Adults%20Fund" +
+      "&community=Test%20Church%20Inc.";
+    expect(successUrl.endsWith(expectedSuffix)).toBe(true);
+    // The origin is checked separately so a misresolved environment surfaces
+    // as its own failure instead of hiding inside the shape assertion.
+    expect(successUrl).toBe(`${DOMAIN_CONFIG.appUrl}${expectedSuffix}`);
+    expect(successUrl).toMatch(/^https:\/\//);
     // Stripe substitutes this placeholder itself — percent-encoding the
     // braces would leave the literal string in the redirect.
     expect(successUrl).toContain("session_id={CHECKOUT_SESSION_ID}");
@@ -685,6 +694,41 @@ describe("buildGiveReturnUrls", () => {
 
     expect(successUrl).toContain("&fund=Youth%20%26%20Kids%3F");
     expect(successUrl).toContain("&community=St.%20Mary's%20Church%20%2B%20Center");
+  });
+
+  // A community admin controls both names, and this URL is handed to Stripe —
+  // so an unusable name fails the CHARGE, not just the redirect.
+  test("bounds admin-controlled names so a long one can't break checkout", async () => {
+    const { successUrl } = buildGiveReturnUrls({
+      groupId: "g1",
+      totalCents: 100,
+      fundName: "A".repeat(500),
+      communityName: "B".repeat(500),
+    });
+
+    expect(successUrl).toContain(`&fund=${"A".repeat(100)}&`);
+    expect(successUrl).toContain(`&community=${"B".repeat(100)}`);
+    expect(successUrl).not.toContain("A".repeat(101));
+  });
+
+  test("survives a lone surrogate instead of throwing URIError", async () => {
+    expect(() =>
+      buildGiveReturnUrls({
+        groupId: "g1",
+        totalCents: 100,
+        fundName: "Youth \uD800 Fund", // unpaired high surrogate
+        communityName: "Church",
+      }),
+    ).not.toThrow();
+
+    // A valid pair is content, not corruption — it must survive intact.
+    const { successUrl } = buildGiveReturnUrls({
+      groupId: "g1",
+      totalCents: 100,
+      fundName: "Kids 🎉",
+      communityName: "Church",
+    });
+    expect(successUrl).toContain(`&fund=${encodeURIComponent("Kids 🎉")}`);
   });
 
   test("sends a cancelled gift back to the give screen, not the public share page", async () => {
@@ -732,7 +776,7 @@ describe("getCheckoutSessionStatus", () => {
     expect(
       await t.query(api.functions.finance.giving.getCheckoutSessionStatus, {
         token,
-        sessionId: "pi_waiting_1",
+        paymentIntentId: "pi_waiting_1",
       }),
     ).toEqual({ status: "pending" });
 
@@ -741,7 +785,7 @@ describe("getCheckoutSessionStatus", () => {
     expect(
       await t.query(api.functions.finance.giving.getCheckoutSessionStatus, {
         token,
-        sessionId: "pi_waiting_1",
+        paymentIntentId: "pi_waiting_1",
       }),
     ).toEqual({
       status: "complete",
@@ -758,7 +802,7 @@ describe("getCheckoutSessionStatus", () => {
 
     expect(
       await t.query(api.functions.finance.giving.getCheckoutSessionStatus, {
-        sessionId: "pi_anon_1",
+        paymentIntentId: "pi_anon_1",
       }),
     ).toEqual({ status: "pending" });
   });
@@ -772,7 +816,7 @@ describe("getCheckoutSessionStatus", () => {
     expect(
       await t.query(api.functions.finance.giving.getCheckoutSessionStatus, {
         token: await tokenFor(s.donorUserId),
-        sessionId: "pi_someone_else",
+        paymentIntentId: "pi_someone_else",
       }),
     ).toEqual({ status: "pending" });
   });
@@ -795,7 +839,7 @@ describe("getCheckoutSessionStatus", () => {
     expect(
       await t.query(api.functions.finance.giving.getCheckoutSessionStatus, {
         token: await tokenFor(s.donorUserId),
-        sessionId: "pi_guest_gift",
+        paymentIntentId: "pi_guest_gift",
       }),
     ).toEqual({ status: "pending" });
   });
@@ -810,7 +854,7 @@ describe("getCheckoutSessionStatus", () => {
     expect(
       await t.query(api.functions.finance.giving.getCheckoutSessionStatus, {
         token: "not.a.jwt",
-        sessionId: "pi_bad_token",
+        paymentIntentId: "pi_bad_token",
       }),
     ).toEqual({ status: "pending" });
   });
@@ -825,7 +869,7 @@ describe("getCheckoutSessionStatus", () => {
     expect(
       await t.query(api.functions.finance.giving.getCheckoutSessionStatus, {
         token: await tokenFor(s.donorUserId),
-        sessionId: "cs_test_abc123",
+        paymentIntentId: "cs_test_abc123",
       }),
     ).toEqual({ status: "pending" });
   });

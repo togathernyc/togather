@@ -581,6 +581,33 @@ export const createDonationIntent = action({
  * reached by a plain browser redirect: it renders the confirmation from the
  * params alone, with no session and no query of its own.
  */
+/**
+ * A community-controlled name, made safe to carry in the return URL.
+ *
+ * Both names that ride along are typed as plain strings a community admin
+ * set (`communityFinance.legalName`, and a fund name derived from a group
+ * name), and this URL is handed to Stripe — so a bad value fails the CHARGE,
+ * not just the redirect. Two ways that happens, both cheap to close here:
+ *
+ *  - Length: percent-encoding can roughly triple a string, and Stripe rejects
+ *    an over-long `success_url`. An admin who pastes an essay into their legal
+ *    name would take their own community's giving offline.
+ *  - Lone surrogates: `encodeURIComponent` throws `URIError` on an unpaired
+ *    surrogate, which would abort checkout with an opaque error instead of a
+ *    handled one. Iterating with `for...of` walks whole code points, so a
+ *    valid pair survives and only true orphans (including one the slice below
+ *    may have just created) are dropped.
+ */
+function urlSafeName(value: string): string {
+  let safe = "";
+  for (const char of value.slice(0, 100)) {
+    const code = char.codePointAt(0)!;
+    if (code >= 0xd800 && code <= 0xdfff) continue;
+    safe += char;
+  }
+  return encodeURIComponent(safe);
+}
+
 export function buildGiveReturnUrls(params: {
   groupId: string;
   /** Integer cents the Checkout session actually charges — gift + fee cover. */
@@ -588,13 +615,16 @@ export function buildGiveReturnUrls(params: {
   fundName: string;
   communityName: string;
 }): { successUrl: string; cancelUrl: string } {
-  const groupUrl = `${DOMAIN_CONFIG.appUrl}/groups/${params.groupId}`;
+  // groupId is a system-generated Convex id today, so encoding it is belt-and-
+  // braces — but it is the one value here interpolated into the PATH, where an
+  // unescaped character would retarget the redirect rather than garble a label.
+  const groupUrl = `${DOMAIN_CONFIG.appUrl}/groups/${encodeURIComponent(params.groupId)}`;
   return {
     successUrl:
       `${groupUrl}/give-success?session_id={CHECKOUT_SESSION_ID}` +
       `&amount=${params.totalCents}` +
-      `&fund=${encodeURIComponent(params.fundName)}` +
-      `&community=${encodeURIComponent(params.communityName)}`,
+      `&fund=${urlSafeName(params.fundName)}` +
+      `&community=${urlSafeName(params.communityName)}`,
     cancelUrl: `${groupUrl}/give?giving=cancelled`,
   };
 }
@@ -706,16 +736,35 @@ export const createDonationCheckoutSession = action({
       throw new Error("Stripe did not return a Checkout URL");
     }
 
-    // Checkout creates the PaymentIntent up front for a `payment`-mode
-    // session, and that id is the ONLY thing this checkout attempt and the
+    // The PaymentIntent id is the ONLY thing this checkout attempt and the
     // eventual `donations` row have in common (a donation stores
     // `stripePaymentIntentId`; nothing anywhere stores a Checkout Session
     // id). Handing it back is what lets the waiting screen poll
     // `getCheckoutSessionStatus` — see that query's doc comment.
+    //
+    // Checkout usually populates it at creation time for a `payment`-mode
+    // session, but Stripe types it nullable and does not contract that, so
+    // this is read defensively rather than asserted.
     const paymentIntentId =
       typeof session.payment_intent === "string"
         ? session.payment_intent
         : (session.payment_intent?.id ?? null);
+
+    if (!paymentIntentId) {
+      // Stripe types `payment_intent` as nullable, and newer API versions can
+      // defer creating it until the donor actually engages with the Checkout
+      // page. The gift itself is unaffected — the webhook still records it off
+      // the PaymentIntent that eventually exists — but with no key to hand
+      // back, `getCheckoutSessionStatus` can never resolve and the waiting
+      // screen loses its auto-dismiss (the donor must close the sheet
+      // themselves). Logged rather than thrown for exactly that reason: it
+      // degrades the wait, it does not fail the payment. If this ever fires in
+      // practice, the fix is a Checkout-Session→PaymentIntent lookup, which
+      // needs an action rather than this query.
+      console.warn(
+        `[finance] createDonationCheckoutSession: session ${session.id} has no payment_intent yet — waiting screen cannot auto-dismiss`,
+      );
+    }
 
     return { url: session.url, sessionId: session.id, paymentIntentId };
   },
@@ -731,8 +780,12 @@ export const createDonationCheckoutSession = action({
  * instead of waiting on a deep link that Android never delivers (see
  * `buildGiveReturnUrls`).
  *
- * `sessionId` is the checkout attempt's identifier as returned by
- * `createDonationCheckoutSession` — pass its `paymentIntentId`.
+ * The argument is named `paymentIntentId`, not `sessionId`, deliberately:
+ * `createDonationCheckoutSession` returns BOTH a `sessionId` (`cs_...`) and a
+ * `paymentIntentId` (`pi_...`), and only the latter resolves here. Since a
+ * mismatch fails silently — permanently "pending", i.e. a spinner that never
+ * ends — the parameter name has to be the thing that stops the wrong value
+ * being passed, because nothing downstream will.
  *
  * LIMITATION (deliberate, no schema change): nothing in the database records
  * a Stripe *Checkout Session* id. The webhook path
@@ -752,7 +805,7 @@ export const createDonationCheckoutSession = action({
 export const getCheckoutSessionStatus = query({
   args: {
     token: v.optional(v.string()),
-    sessionId: v.string(),
+    paymentIntentId: v.string(),
   },
   handler: async (
     ctx,
@@ -771,7 +824,7 @@ export const getCheckoutSessionStatus = query({
     const donation = await ctx.db
       .query("donations")
       .withIndex("by_stripePaymentIntentId", (q) =>
-        q.eq("stripePaymentIntentId", args.sessionId),
+        q.eq("stripePaymentIntentId", args.paymentIntentId),
       )
       .first();
     if (!donation || donation.donorUserId !== userId) {
