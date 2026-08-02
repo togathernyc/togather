@@ -1,14 +1,15 @@
 /**
  * /stripe-webhook routing between SaaS billing and group giving.
  *
- * Three Stripe event types are ambiguous between the two systems, because a
+ * Four Stripe event types are ambiguous between the two systems, because a
  * recurring donation is a Stripe Subscription just like a community's
- * Togather subscription: `customer.subscription.updated`,
- * `customer.subscription.deleted`, `invoice.payment_failed`. A recurring
- * donation lives on the community's CONNECTED account, so its events arrive
- * with `event.account` set — those must NOT reach the billing handlers,
- * which would otherwise match a donor's subscription id against a
- * community's own row.
+ * Togather subscription — set up through a Checkout Session and then living
+ * the same lifecycle: `checkout.session.completed`,
+ * `customer.subscription.updated`, `customer.subscription.deleted`,
+ * `invoice.payment_failed`. A recurring donation lives on the community's
+ * CONNECTED account, so its events arrive with `event.account` set — those
+ * must NOT reach the billing handlers, which would otherwise match a donor's
+ * subscription id against a community's own row.
  *
  * These tests drive the real HTTP route (signature and all) and assert the
  * only externally-observable thing billing does: patching
@@ -238,21 +239,16 @@ describe("/stripe-webhook routes shared event types by event.account", () => {
     expect(await subscriptionStatusOf(t, communityId)).toBe("past_due");
   });
 
-  test("checkout.session.completed is untouched by the routing change", async () => {
-    // Guard against over-broad routing: only the three ambiguous cases check
-    // event.account. A Connect-flagged checkout.session.completed must still
-    // reach billing exactly as before.
-    //
-    // This asserts TODAY's behavior, and today it is safe: nothing creates a
-    // Checkout Session on a connected account (one-off giving uses
-    // PaymentIntents), and the Connect event destination does not subscribe
-    // to checkout.session.completed at all. It stops being safe the moment
-    // recurring giving opens Checkout on the connected account — that session
-    // completes with `event.account` set and donor metadata, and billing's
-    // handleCheckoutCompleted requires `communityId: v.string()`, so it would
-    // throw -> 500 -> Stripe retries forever. The PR that adds the
-    // subscription Checkout action MUST gate this case on isConnectEvent too
-    // and flip this assertion.
+  test("checkout.session.completed WITH event.account never activates a community subscription", async () => {
+    // This assertion is the FLIP that PR #736's version of this test told the
+    // recurring-giving PR to make. Its reasoning was exactly right: a monthly
+    // donation opens a subscription-mode Checkout Session on the CONNECTED
+    // account, so this type became ambiguous the moment that action shipped.
+    // Left unrouted, the completed session arrives with `event.account` set
+    // and donor metadata, and billing's handleCheckoutCompleted requires
+    // `communityId: v.string()` — it would either mark the wrong community
+    // paid or throw, 500, and have Stripe retry forever.
+
     const t = convexTest(schema, modules);
     const communityId = await seedSubscribedCommunity(t);
     await t.run(async (ctx) => {
@@ -265,6 +261,33 @@ describe("/stripe-webhook routes shared event types by event.account", () => {
     const response = await postEvent(t, {
       type: "checkout.session.completed",
       account: "acct_connected_123",
+      data: {
+        object: {
+          id: "cs_donor_monthly",
+          mode: "subscription",
+          customer: "cus_donor_123",
+          subscription: "sub_donor_123",
+          metadata: { communityId },
+        },
+      },
+    });
+
+    expect(response.status).toBe(200);
+    expect(await subscriptionStatusOf(t, communityId)).toBeNull();
+  });
+
+  test("checkout.session.completed WITHOUT event.account still activates the community subscription (unchanged)", async () => {
+    const t = convexTest(schema, modules);
+    const communityId = await seedSubscribedCommunity(t);
+    await t.run(async (ctx) => {
+      await ctx.db.patch(communityId, {
+        subscriptionStatus: undefined,
+        stripeSubscriptionId: undefined,
+      });
+    });
+
+    const response = await postEvent(t, {
+      type: "checkout.session.completed",
       data: {
         object: {
           customer: "cus_platform_123",

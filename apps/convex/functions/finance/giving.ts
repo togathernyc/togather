@@ -20,6 +20,14 @@
  *      `donations` row, posts the ledger credit, and schedules the receipt
  *      email.
  *   3. `getFundOverview` powers the member-facing transparency screen.
+ *   4. MONTHLY gifts are a Stripe Subscription on the same connected
+ *      account (`createRecurringDonationCheckoutSession` and the donor
+ *      management actions at the bottom of this file). Each charge is
+ *      recorded as an ordinary `donations` row from `invoice.paid` — NOT
+ *      `payment_intent.succeeded`, because subscription-mode Checkout
+ *      forbids `payment_intent_data` and so the PaymentIntent carries none
+ *      of our metadata. Both paths write through `recordDonationCore`, so a
+ *      monthly gift and a one-off gift credit, audit and receipt identically.
  *
  * Every query here first authorizes the caller, then (for `getFundOverview`)
  * separately decides how MUCH detail they see — active members get
@@ -38,6 +46,7 @@ import {
   internalMutation,
   internalAction,
 } from "../../_generated/server";
+import type { MutationCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
 import { getOptionalAuth, requireAuth } from "../../lib/auth";
@@ -47,6 +56,9 @@ import { postLedgerEntry } from "../../lib/finance/ledger";
 import { logFinanceAudit } from "../../lib/finance/audit";
 import { buildDonationReceiptEmail } from "../../lib/finance/receipts";
 import { computeCoverFeesCents, COVER_FEE_TOLERANCE_CENTS } from "../../lib/finance/fees";
+// Pure helper, no cycle: webhooks.ts reaches giving.ts through the generated
+// `internal` API, never by importing this module.
+import { splitDonationAmounts } from "./webhooks";
 import { getResendClient } from "../../lib/resend";
 import { now, getDisplayName } from "../../lib/utils";
 import {
@@ -69,6 +81,23 @@ const MAX_DONATION_CENTS = 2_000_000;
 
 /** How many recent ledger entries the transparency screen shows. */
 const RECENT_ACTIVITY_LIMIT = 20;
+
+/**
+ * How long a `pending` recurringDonations row (row created, donor still on
+ * Stripe's hosted Checkout page) keeps blocking a second attempt.
+ *
+ * "One monthly gift per donor per fund" has to hold, but a donor who opens
+ * Checkout and closes the tab must not be locked out of ever setting one up.
+ * Past this window the abandoned row is SUPERSEDED — its Stripe Checkout
+ * Session is expired so it can never complete behind our back, and the row is
+ * marked canceled — before the new attempt starts. 30 minutes is comfortably
+ * longer than anyone spends entering a card and far shorter than Stripe's own
+ * 24h session expiry, which would otherwise be the lockout.
+ */
+const PENDING_CHECKOUT_GRACE_MS = 30 * 60 * 1000;
+
+/** Statuses that mean "this donor already gives monthly to this fund". */
+const LIVE_RECURRING_STATUSES = ["active", "past_due"] as const;
 
 // ============================================================================
 // Access helpers (local — not exported from lib/helpers.ts, which this task
@@ -170,6 +199,64 @@ function startOfMonthUTC(ms: number): number {
 function startOfYearUTC(ms: number): number {
   const d = new Date(ms);
   return Date.UTC(d.getUTCFullYear(), 0, 1);
+}
+
+/**
+ * The donor's currently-collecting monthly gift to `fundId`, or null.
+ *
+ * "Collecting" deliberately excludes `pending` (row created, donor still on
+ * Stripe's Checkout page — no subscription exists yet) and `canceled`
+ * (terminal). `past_due` counts: Stripe is still retrying it, the donor still
+ * has a monthly gift, and offering to start a second one would double-charge
+ * them the moment the first recovers.
+ */
+async function findLiveRecurring(
+  ctx: { db: any },
+  fundId: Id<"funds">,
+  donorUserId: Id<"users">,
+): Promise<Doc<"recurringDonations"> | null> {
+  const rows = await ctx.db
+    .query("recurringDonations")
+    .withIndex("by_donor_fund", (q: any) =>
+      q.eq("donorUserId", donorUserId).eq("fundId", fundId),
+    )
+    .collect();
+  return (
+    rows.find((r: Doc<"recurringDonations">) =>
+      (LIVE_RECURRING_STATUSES as readonly string[]).includes(r.status),
+    ) ?? null
+  );
+}
+
+/**
+ * Does this row stop the donor starting ANOTHER monthly gift to the same fund?
+ *
+ * Deliberately wider than `findLiveRecurring`: that one answers "is a gift
+ * collecting?" (what the give screen renders), this one answers "would a
+ * second Checkout risk double-charging them?" (what the create path must
+ * refuse). A `pending` row blocks when either
+ *
+ *  - it already has a subscription — Checkout completed and `invoice.paid`
+ *    simply hasn't landed yet, so the donor IS being billed however the row
+ *    reads; or
+ *  - it is younger than `PENDING_CHECKOUT_GRACE_MS` — a Checkout page that may
+ *    still be open in another tab.
+ *
+ * Anything older with no subscription is an abandoned Checkout, which the
+ * create path supersedes rather than letting it lock the donor out forever.
+ */
+function blocksNewRecurring(
+  row: Doc<"recurringDonations">,
+  nowMs: number,
+): boolean {
+  if ((LIVE_RECURRING_STATUSES as readonly string[]).includes(row.status)) {
+    return true;
+  }
+  return (
+    row.status === "pending" &&
+    (!!row.stripeSubscriptionId ||
+      nowMs - row.createdAt < PENDING_CHECKOUT_GRACE_MS)
+  );
 }
 
 /** "Friend of the ministry" covers anonymous/guest gifts (no donorUserId) — getDisplayName's own "Anonymous" fallback is for a real user with no name set, a different case. */
@@ -346,12 +433,24 @@ export const getGivingContext = query({
     const givingLive =
       fund.status === "active" && communityFinance?.onboardingStatus === "live";
 
+    // The give screen switches its monthly toggle between "start a monthly
+    // gift" and "you already give $X/month" from this one field, so it must
+    // reflect only gifts that are actually collecting — a `pending` row (donor
+    // still in Checkout) or a canceled one is not a monthly gift yet/anymore.
+    const liveRecurring = await findLiveRecurring(ctx, fund._id, userId);
+
     return {
       fundId: fund._id,
       fundName: fund.name,
       communityLegalName: communityFinance?.legalName ?? community?.name ?? "",
       suggestedAmountsCents: SUGGESTED_AMOUNTS_CENTS,
       givingLive,
+      existingRecurring: liveRecurring
+        ? {
+            amountCents: liveRecurring.amountCents,
+            feeCoverCents: liveRecurring.feeCoverCents,
+          }
+        : null,
     };
   },
 });
@@ -654,6 +753,13 @@ export function buildGiveReturnUrls(params: {
   totalCents: number;
   fundName: string;
   communityName: string;
+  /**
+   * Monthly gift rather than a one-off. Adds `recurring=1` so the success
+   * screen — which renders from these params alone, with no session of its
+   * own — can say "$25 a month" instead of "$25". A flag rather than a
+   * separate route because everything else on that screen is identical.
+   */
+  recurring?: boolean;
 }): { successUrl: string; cancelUrl: string } {
   // groupId is a system-generated Convex id today, so encoding it is belt-and-
   // braces — but it is the one value here interpolated into the PATH, where an
@@ -664,7 +770,8 @@ export function buildGiveReturnUrls(params: {
       `${groupUrl}/give-success?session_id={CHECKOUT_SESSION_ID}` +
       `&amount=${params.totalCents}` +
       `&fund=${urlSafeName(params.fundName)}` +
-      `&community=${urlSafeName(params.communityName)}`,
+      `&community=${urlSafeName(params.communityName)}` +
+      (params.recurring ? "&recurring=1" : ""),
     cancelUrl: `${groupUrl}/give?giving=cancelled`,
   };
 }
@@ -916,16 +1023,32 @@ export const getCheckoutSessionStatus = query({
 // total Stripe charged. The ledger credit below adds `feeCoverCents` on top,
 // so callers passing the charged total would double-count the cover — the
 // webhook layer splits the intent amount via splitDonationAmounts() first.
-export const recordDonationSucceeded = internalMutation({
+/**
+ * The one place a succeeded gift becomes a `donations` row + ledger credit +
+ * audit row + scheduled receipt, shared by BOTH collection paths: a one-off
+ * PaymentIntent (`recordDonationSucceeded`, from `payment_intent.succeeded`)
+ * and a monthly subscription's invoice (`recordRecurringDonationPaid`, from
+ * `invoice.paid`). Extracted rather than copied so a monthly gift can never
+ * drift from a one-off one in what it credits, audits, or receipts — the two
+ * webhook events differ only in how they FIND the fund/amounts.
+ *
+ * Idempotent on `paymentIntentId`: a redelivered webhook returns the existing
+ * donation id without touching the ledger or the balance a second time.
+ */
+async function recordDonationCore(
+  ctx: MutationCtx,
   args: {
-    paymentIntentId: v.string(),
-    fundId: v.id("funds"),
-    donorUserId: v.optional(v.id("users")),
-    amountCents: v.number(),
-    feeCoverCents: v.number(),
-    communityId: v.id("communities"),
+    paymentIntentId: string;
+    fundId: Id<"funds">;
+    donorUserId?: Id<"users">;
+    amountCents: number;
+    feeCoverCents: number;
+    communityId: Id<"communities">;
+    /** Set for a monthly gift — the `recurringDonations` row it was billed under. */
+    recurringId?: string;
   },
-  handler: async (ctx, args) => {
+): Promise<Id<"donations">> {
+  {
     const existing = await ctx.db
       .query("donations")
       .withIndex("by_stripePaymentIntentId", (q) =>
@@ -953,6 +1076,7 @@ export const recordDonationSucceeded = internalMutation({
       amountCents: args.amountCents,
       feeCoverCents: args.feeCoverCents,
       stripePaymentIntentId: args.paymentIntentId,
+      recurringId: args.recurringId,
       allocationStatus: "pending",
       receiptEmailStatus: "pending",
       createdAt: now(),
@@ -983,6 +1107,7 @@ export const recordDonationSucceeded = internalMutation({
         paymentIntentId: args.paymentIntentId,
         amountCents: args.amountCents,
         feeCoverCents: args.feeCoverCents,
+        recurringId: args.recurringId ?? null,
       },
     });
 
@@ -993,6 +1118,20 @@ export const recordDonationSucceeded = internalMutation({
     );
 
     return donationId;
+  }
+}
+
+export const recordDonationSucceeded = internalMutation({
+  args: {
+    paymentIntentId: v.string(),
+    fundId: v.id("funds"),
+    donorUserId: v.optional(v.id("users")),
+    amountCents: v.number(),
+    feeCoverCents: v.number(),
+    communityId: v.id("communities"),
+  },
+  handler: async (ctx, args) => {
+    return await recordDonationCore(ctx, args);
   },
 });
 
@@ -1372,5 +1511,1321 @@ export const sendDonationReceipt = internalAction({
         { donationId: args.donationId, status: "failed" },
       );
     }
+  },
+});
+
+// ============================================================================
+// Recurring (monthly) giving — ADR-032 §3 "standing gifts".
+//
+// A monthly gift is a Stripe SUBSCRIPTION on the community's connected
+// account, and every charge it makes is recorded as an ordinary `donations`
+// row so the ledger, receipts, allocation and transparency screens keep
+// working unchanged (see the `recurringDonations` doc comment in schema.ts).
+//
+// Three things make this materially different from the one-off path, and
+// each is the reason for a piece of machinery below:
+//
+//  1. Subscription-mode Checkout REQUIRES a Stripe Customer, and donors have
+//     none — communities have a platform Customer for SaaS billing, donors
+//     have nothing anywhere. So one is created (and thereafter reused) on the
+//     CONNECTED account, and its id is stored on the row.
+//  2. `payment_intent_data` is not allowed in subscription mode, so the
+//     metadata that attributes a charge to a fund cannot ride on the
+//     PaymentIntent. It goes on `subscription_data.metadata` instead — which
+//     means a monthly charge is recorded from `invoice.paid`, NOT from
+//     `payment_intent.succeeded`. That handler sees a PaymentIntent with no
+//     `fundId` metadata and returns early, exactly as it does for billing's
+//     own intents; there is a test asserting that non-interference.
+//  3. The subscription does not exist while the donor is still on Stripe's
+//     hosted page, so the row is inserted `pending` and bound to its
+//     subscription later, by `checkout.session.completed`.
+// ============================================================================
+
+/** The give screen's own route, which doubles as the manage screen today.
+ * When a dedicated "manage my monthly gift" screen ships, this is the one
+ * line that changes. */
+function buildRecurringManageUrl(groupId: string): string {
+  return `${DOMAIN_CONFIG.appUrl}/groups/${encodeURIComponent(groupId)}/give`;
+}
+
+/** Copy the donor actually reads when they already give monthly to this fund. */
+const ALREADY_RECURRING_MESSAGE =
+  "You already have a monthly gift to this fund. You can change the amount or stop it from your giving settings.";
+
+/** Copy for the narrower case of a Checkout page still open in another tab. */
+const RECURRING_CHECKOUT_IN_PROGRESS_MESSAGE =
+  "You just started setting up a monthly gift to this fund. Finish that checkout, or try again in a few minutes.";
+
+/**
+ * Everything the recurring Checkout path needs that `prepareDonationIntent`
+ * (the shared auth/amount/fund/live seam, which this path calls FIRST and
+ * does not duplicate) doesn't already answer: is there already a monthly gift
+ * here, is there a stale Checkout to supersede, and is there a Stripe
+ * Customer for this donor we should reuse.
+ */
+export const prepareRecurringDonation = internalQuery({
+  args: { token: v.string(), fundId: v.id("funds") },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    await requireGroupGivingEnabled(ctx);
+
+    const fund = await ctx.db.get(args.fundId);
+    if (!fund) {
+      throw new Error("Fund not found");
+    }
+    const communityFinance = await ctx.db
+      .query("communityFinance")
+      .withIndex("by_community", (q) => q.eq("communityId", fund.communityId))
+      .first();
+    const stripeConnectedAccountId = communityFinance?.stripeConnectedAccountId;
+    if (!stripeConnectedAccountId) {
+      throw new Error("Giving isn't set up for this community yet");
+    }
+
+    const rowsForFund = await ctx.db
+      .query("recurringDonations")
+      .withIndex("by_donor_fund", (q) =>
+        q.eq("donorUserId", userId).eq("fundId", args.fundId),
+      )
+      .collect();
+
+    const nowMs = now();
+    const blockingRows = rowsForFund.filter((r) => blocksNewRecurring(r, nowMs));
+    const blocking = blockingRows[0];
+    // Every OTHER `pending` row is an abandoned Checkout — see
+    // PENDING_CHECKOUT_GRACE_MS. They're superseded (session expired at
+    // Stripe, row canceled) rather than left to lock the donor out forever.
+    // Filtered against the whole blocking SET, not just the first one: with
+    // two blocking rows, `r !== blocking` would have handed the second to the
+    // supersede loop and canceled a row that is actively billing.
+    const stalePending = rowsForFund.filter(
+      (r) => r.status === "pending" && !blockingRows.includes(r),
+    );
+
+    // CUSTOMER REUSE RULE: one Stripe Customer per (donor, connected
+    // account) — NOT per fund and NOT per subscription. A donor giving
+    // monthly to two funds in the same community is one person with one card
+    // on file at that community, so a second Customer would split their
+    // payment methods across two billing-portal identities and make "update
+    // my card" fix only half their gifts. Scanning the donor's OWN rows is
+    // the whole search space (nothing else ever creates a donor Customer),
+    // and the connected-account match is what keeps community A's Customer
+    // out of community B's account, where the id would simply not exist.
+    const donorRows = await ctx.db
+      .query("recurringDonations")
+      .withIndex("by_donor", (q) => q.eq("donorUserId", userId))
+      .collect();
+    const reusableCustomerId =
+      donorRows.find(
+        (r) =>
+          r.stripeConnectedAccountId === stripeConnectedAccountId &&
+          !!r.stripeCustomerId,
+      )?.stripeCustomerId ?? null;
+
+    const donor = await ctx.db.get(userId);
+
+    return {
+      donorUserId: userId,
+      donorName: donorDisplayName(donor),
+      donorEmail: donor?.email,
+      stripeConnectedAccountId,
+      blockingStatus: blocking?.status ?? null,
+      stalePending: stalePending.map((r) => ({
+        id: r._id,
+        checkoutSessionId: r.checkoutSessionId,
+      })),
+      reusableCustomerId,
+    };
+  },
+});
+
+/**
+ * Marks an abandoned Checkout's row canceled so it stops blocking a fresh
+ * attempt. Never touches a row that has a subscription — by then it isn't a
+ * stale Checkout, it's a real monthly gift.
+ */
+export const supersedePendingRecurringDonation = internalMutation({
+  args: { recurringDonationId: v.id("recurringDonations") },
+  handler: async (ctx, args) => {
+    const row = await ctx.db.get(args.recurringDonationId);
+    if (!row || row.status !== "pending" || row.stripeSubscriptionId) {
+      return;
+    }
+    const timestamp = now();
+    await ctx.db.patch(row._id, {
+      status: "canceled",
+      canceledAt: timestamp,
+      updatedAt: timestamp,
+    });
+    await logFinanceAudit(ctx, {
+      communityId: row.communityId,
+      fundId: row.fundId,
+      actorUserId: row.donorUserId,
+      action: "recurring.checkout_abandoned",
+      details: { recurringDonationId: row._id, reason: "superseded" },
+    });
+  },
+});
+
+/**
+ * Inserts the `pending` row, re-checking the one-per-donor-per-fund rule
+ * INSIDE the transaction. The check in `prepareRecurringDonation` is for the
+ * error message; this one is the actual guarantee — two taps racing through
+ * the action would both pass a read-only check and only this write can
+ * serialize them.
+ *
+ * `checkoutSessionId` starts empty because the Stripe session doesn't exist
+ * yet: the row id has to exist FIRST so it can go into the subscription
+ * metadata (which is what every later invoice carries), and Convex ids are
+ * only minted by the insert. `bindRecurringCheckoutSession` fills it in a
+ * moment later; `abandonRecurringDonation` cancels the row if Stripe fails in
+ * between, so a failed create can't leave a phantom blocking the retry.
+ */
+export const beginRecurringDonation = internalMutation({
+  args: {
+    token: v.string(),
+    fundId: v.id("funds"),
+    amountCents: v.number(),
+    feeCoverCents: v.number(),
+    stripeConnectedAccountId: v.string(),
+    stripeCustomerId: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    const fund = await ctx.db.get(args.fundId);
+    if (!fund) {
+      throw new Error("Fund not found");
+    }
+
+    // `blocksNewRecurring`, NOT `findLiveRecurring`: this check has to include
+    // non-stale `pending` rows or it doesn't serialize anything. Two taps from
+    // two tabs both pass the read-only check in `prepareRecurringDonation`,
+    // and a live-only check here lets BOTH inserts land — two Checkouts, two
+    // subscriptions, a donor billed twice a month for one gift. Reading the
+    // same `by_donor_fund` range the insert writes to is what makes Convex's
+    // OCC retry the loser, so the invariant actually holds under a race.
+    const timestamp = now();
+    const rowsForFund = await ctx.db
+      .query("recurringDonations")
+      .withIndex("by_donor_fund", (q) =>
+        q.eq("donorUserId", userId).eq("fundId", args.fundId),
+      )
+      .collect();
+    const blocking = rowsForFund.find((r) => blocksNewRecurring(r, timestamp));
+    if (blocking) {
+      throw new ConvexError(
+        blocking.status === "pending"
+          ? RECURRING_CHECKOUT_IN_PROGRESS_MESSAGE
+          : ALREADY_RECURRING_MESSAGE,
+      );
+    }
+
+    const recurringDonationId = await ctx.db.insert("recurringDonations", {
+      fundId: args.fundId,
+      communityId: fund.communityId,
+      donorUserId: userId,
+      amountCents: args.amountCents,
+      feeCoverCents: args.feeCoverCents,
+      stripeCustomerId: args.stripeCustomerId,
+      stripeConnectedAccountId: args.stripeConnectedAccountId,
+      checkoutSessionId: "",
+      status: "pending",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+
+    await logFinanceAudit(ctx, {
+      communityId: fund.communityId,
+      fundId: args.fundId,
+      actorUserId: userId,
+      action: "recurring.created",
+      details: {
+        recurringDonationId,
+        amountCents: args.amountCents,
+        feeCoverCents: args.feeCoverCents,
+      },
+    });
+
+    return recurringDonationId;
+  },
+});
+
+/** Stamps the real Checkout Session id (and Customer) onto a row created by
+ * `beginRecurringDonation` — the handle `checkout.session.completed` resolves. */
+export const bindRecurringCheckoutSession = internalMutation({
+  args: {
+    recurringDonationId: v.id("recurringDonations"),
+    checkoutSessionId: v.string(),
+    stripeCustomerId: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.recurringDonationId, {
+      checkoutSessionId: args.checkoutSessionId,
+      ...(args.stripeCustomerId
+        ? { stripeCustomerId: args.stripeCustomerId }
+        : {}),
+      updatedAt: now(),
+    });
+  },
+});
+
+/** Cancels a row whose Stripe Checkout Session never got created, so the
+ * failed attempt doesn't block the donor's retry. */
+export const abandonRecurringDonation = internalMutation({
+  args: { recurringDonationId: v.id("recurringDonations") },
+  handler: async (ctx, args) => {
+    const row = await ctx.db.get(args.recurringDonationId);
+    if (!row || row.status !== "pending" || row.stripeSubscriptionId) {
+      return;
+    }
+    const timestamp = now();
+    await ctx.db.patch(row._id, {
+      status: "canceled",
+      canceledAt: timestamp,
+      updatedAt: timestamp,
+    });
+    await logFinanceAudit(ctx, {
+      communityId: row.communityId,
+      fundId: row.fundId,
+      actorUserId: row.donorUserId,
+      action: "recurring.checkout_abandoned",
+      details: { recurringDonationId: row._id, reason: "stripe_error" },
+    });
+  },
+});
+
+/**
+ * Creates a subscription-mode Stripe Checkout Session on the community's
+ * connected account for a MONTHLY gift to `fundId`.
+ *
+ * Everything the one-off path validates is validated here too, by calling the
+ * same `prepareDonationIntent` seam rather than re-deriving any of it.
+ */
+export const createRecurringDonationCheckoutSession = action({
+  args: {
+    token: v.string(),
+    fundId: v.id("funds"),
+    amountCents: v.number(),
+    coverFeesCents: v.optional(v.number()),
+    /** Same contract as createDonationCheckoutSession's — see that action. */
+    idempotencyNonce: v.optional(v.string()),
+  },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    url: string;
+    sessionId: string;
+    recurringDonationId: Id<"recurringDonations">;
+  }> => {
+    const context = await ctx.runQuery(
+      internal.functions.finance.giving.prepareDonationIntent,
+      {
+        token: args.token,
+        fundId: args.fundId,
+        amountCents: args.amountCents,
+        coverFeesCents: args.coverFeesCents,
+      },
+    );
+    if (!context.groupId) {
+      // Same limitation as one-off hosted Checkout: the success/cancel links
+      // are group-scoped routes a community-wide general fund has no screen for.
+      throw new Error("Checkout isn't available for this fund yet");
+    }
+
+    const recurring = await ctx.runQuery(
+      internal.functions.finance.giving.prepareRecurringDonation,
+      { token: args.token, fundId: args.fundId },
+    );
+    if (recurring.blockingStatus) {
+      throw new ConvexError(
+        recurring.blockingStatus === "pending"
+          ? RECURRING_CHECKOUT_IN_PROGRESS_MESSAGE
+          : ALREADY_RECURRING_MESSAGE,
+      );
+    }
+
+    const Stripe = (await import("stripe")).default;
+    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
+      apiVersion: "2026-02-25.clover",
+    });
+
+    // Expire abandoned Checkout Sessions BEFORE starting a new one. Without
+    // this, a donor who left one open in another tab could complete it after
+    // the new one and end up with two subscriptions to the same fund — the
+    // exact thing the one-per-fund rule exists to prevent.
+    //
+    // A row is only superseded once Stripe has CONFIRMED its session can never
+    // complete. Superseding on an unverified guess is worse than refusing the
+    // new attempt: a session that already completed has a live subscription
+    // behind it, and canceling the row orphans that subscription — it goes on
+    // billing the donor every month with no row for `invoice.paid` to find and
+    // nothing in the app to stop it. So "expire failed" is never treated as
+    // "expired".
+    for (const stale of recurring.stalePending) {
+      if (!stale.checkoutSessionId) {
+        // Never reached Stripe at all — nothing to expire, safe to supersede.
+        await ctx.runMutation(
+          internal.functions.finance.giving.supersedePendingRecurringDonation,
+          { recurringDonationId: stale.id },
+        );
+        continue;
+      }
+
+      let sessionStatus: string | null = null;
+      try {
+        const staleSession = await stripe.checkout.sessions.retrieve(
+          stale.checkoutSessionId,
+          { stripeAccount: recurring.stripeConnectedAccountId },
+        );
+        sessionStatus = staleSession.status ?? null;
+      } catch (error) {
+        console.warn(
+          `[finance] createRecurringDonationCheckoutSession: could not read stale session ${stale.checkoutSessionId}`,
+          error,
+        );
+      }
+
+      if (sessionStatus === "complete") {
+        // The donor DID finish this Checkout; the subscription exists at
+        // Stripe even though `checkout.session.completed` hasn't bound it to
+        // the row yet. They already give monthly to this fund.
+        throw new ConvexError(ALREADY_RECURRING_MESSAGE);
+      }
+      if (sessionStatus === null) {
+        // Stripe wouldn't tell us. Ask the donor to retry rather than gamble a
+        // supersede that might orphan a live subscription.
+        throw new ConvexError(RECURRING_CHECKOUT_IN_PROGRESS_MESSAGE);
+      }
+      if (sessionStatus === "open") {
+        try {
+          await stripe.checkout.sessions.expire(stale.checkoutSessionId, {
+            stripeAccount: recurring.stripeConnectedAccountId,
+          });
+        } catch (error) {
+          console.warn(
+            `[finance] createRecurringDonationCheckoutSession: could not expire stale session ${stale.checkoutSessionId}`,
+            error,
+          );
+          // Still open and we failed to close it — it can still complete.
+          throw new ConvexError(RECURRING_CHECKOUT_IN_PROGRESS_MESSAGE);
+        }
+      }
+      // Confirmed expired (or just expired by us): it can never complete.
+      await ctx.runMutation(
+        internal.functions.finance.giving.supersedePendingRecurringDonation,
+        { recurringDonationId: stale.id },
+      );
+    }
+
+    // See the CUSTOMER REUSE RULE in prepareRecurringDonation: one Customer
+    // per (donor, connected account), created here the first time only.
+    const stripeCustomerId =
+      recurring.reusableCustomerId ??
+      (
+        await stripe.customers.create(
+          {
+            name: recurring.donorName,
+            email: recurring.donorEmail,
+            metadata: { donorUserId: recurring.donorUserId },
+          },
+          { stripeAccount: recurring.stripeConnectedAccountId },
+        )
+      ).id;
+
+    const recurringDonationId = await ctx.runMutation(
+      internal.functions.finance.giving.beginRecurringDonation,
+      {
+        token: args.token,
+        fundId: args.fundId,
+        // From the PREPARED context, not `args` — see prepareDonationIntent's
+        // return comment. The row is what every future invoice is checked
+        // against, so it has to hold the validated pair, not the submitted one.
+        amountCents: context.amountCents,
+        feeCoverCents: context.feeCoverCents,
+        stripeConnectedAccountId: recurring.stripeConnectedAccountId,
+        stripeCustomerId,
+      },
+    );
+
+    const totalCents = context.amountCents + context.feeCoverCents;
+    const { successUrl, cancelUrl } = buildGiveReturnUrls({
+      groupId: context.groupId,
+      totalCents,
+      fundName: context.fundName,
+      communityName: context.communityName,
+      recurring: true,
+    });
+
+    let session;
+    try {
+      session = await stripe.checkout.sessions.create(
+        {
+          mode: "subscription",
+          customer: stripeCustomerId,
+          line_items: [
+            {
+              price_data: {
+                currency: "usd",
+                unit_amount: totalCents,
+                recurring: { interval: "month" },
+                product_data: { name: `Monthly gift to ${context.fundName}` },
+              },
+              quantity: 1,
+            },
+          ],
+          success_url: successUrl,
+          cancel_url: cancelUrl,
+          // NOT payment_intent_data — Stripe rejects it in subscription mode.
+          // These land on the Subscription, and every invoice this
+          // subscription ever raises carries them, which is how `invoice.paid`
+          // attributes a monthly charge back to this fund and donor.
+          subscription_data: {
+            description: `Monthly gift — ${context.fundName}`,
+            metadata: {
+              recurringDonationId,
+              fundId: args.fundId,
+              donorUserId: context.userId,
+              communityId: context.communityId,
+              amountCents: String(context.amountCents),
+              feeCoverCents: String(context.feeCoverCents),
+            },
+          },
+        },
+        {
+          stripeAccount: recurring.stripeConnectedAccountId,
+          // The AMOUNT is in the key, unlike the one-off path's: a donor who
+          // backs out, changes $25 to $50, and re-submits reuses the same
+          // client nonce, and a key without the amount would hand them back
+          // the $25 session — silently ignoring the change they just made.
+          ...(args.idempotencyNonce
+            ? {
+                idempotencyKey: `recurring-checkout:${args.fundId}:${args.idempotencyNonce}:${context.amountCents}:${context.feeCoverCents}`,
+              }
+            : {}),
+        },
+      );
+    } catch (error) {
+      await ctx.runMutation(
+        internal.functions.finance.giving.abandonRecurringDonation,
+        { recurringDonationId },
+      );
+      throw error;
+    }
+
+    if (!session.url) {
+      await ctx.runMutation(
+        internal.functions.finance.giving.abandonRecurringDonation,
+        { recurringDonationId },
+      );
+      throw new Error("Stripe did not return a Checkout URL");
+    }
+
+    await ctx.runMutation(
+      internal.functions.finance.giving.bindRecurringCheckoutSession,
+      {
+        recurringDonationId,
+        checkoutSessionId: session.id,
+        stripeCustomerId,
+      },
+    );
+
+    return { url: session.url, sessionId: session.id, recurringDonationId };
+  },
+});
+
+// ============================================================================
+// Recurring webhook mutations — called by functions/finance/webhooks.ts.
+// ============================================================================
+
+/**
+ * Binds a completed subscription-mode Checkout to its pending row
+ * (`checkout.session.completed`). Status deliberately STAYS "pending": the
+ * subscription existing is not the same as it having collected anything, and
+ * `invoice.paid` — the event that actually records the money — is what flips
+ * it to "active".
+ *
+ * Cross-checks `eventAccount` against the row's own connected account for the
+ * same reason `payment_intent.succeeded` does (ADR-032 §6): nothing about the
+ * event itself proves it came from the community this row belongs to.
+ */
+export const bindRecurringSubscription = internalMutation({
+  args: {
+    checkoutSessionId: v.string(),
+    stripeSubscriptionId: v.string(),
+    stripeCustomerId: v.optional(v.string()),
+    eventAccount: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const row = await ctx.db
+      .query("recurringDonations")
+      .withIndex("by_checkoutSessionId", (q) =>
+        q.eq("checkoutSessionId", args.checkoutSessionId),
+      )
+      .first();
+    if (!row) {
+      // Not one of ours (a one-off donation Checkout, or another integration
+      // on the same connected account) — nothing to do.
+      return;
+    }
+    if (!args.eventAccount || args.eventAccount !== row.stripeConnectedAccountId) {
+      console.error(
+        `[finance] checkout.session.completed: account mismatch on recurring donation ${row._id} — event.account=${args.eventAccount ?? "missing"} expected=${row.stripeConnectedAccountId}`,
+      );
+      await logFinanceAudit(ctx, {
+        communityId: row.communityId,
+        fundId: row.fundId,
+        action: "webhook.rejected_account_mismatch",
+        details: {
+          eventAccount: args.eventAccount ?? null,
+          expectedAccount: row.stripeConnectedAccountId,
+          recurringDonationId: row._id,
+        },
+      });
+      return;
+    }
+    if (row.status === "canceled") {
+      // Superseded/abandoned between creating the session and completing it.
+      // Do NOT resurrect it — the subscription is real at Stripe, so log
+      // loudly; the donor's live row (if any) is a different subscription.
+      console.error(
+        `[finance] checkout.session.completed: subscription ${args.stripeSubscriptionId} completed for canceled recurring donation ${row._id}`,
+      );
+      return;
+    }
+
+    await ctx.db.patch(row._id, {
+      stripeSubscriptionId: args.stripeSubscriptionId,
+      ...(args.stripeCustomerId
+        ? { stripeCustomerId: args.stripeCustomerId }
+        : {}),
+      updatedAt: now(),
+    });
+    await logFinanceAudit(ctx, {
+      communityId: row.communityId,
+      fundId: row.fundId,
+      actorUserId: row.donorUserId,
+      action: "recurring.subscription_bound",
+      details: {
+        recurringDonationId: row._id,
+        stripeSubscriptionId: args.stripeSubscriptionId,
+      },
+    });
+  },
+});
+
+/**
+ * Records a monthly charge (`invoice.paid`) as an ordinary donation and marks
+ * the subscription active.
+ *
+ * The invoice's PaymentIntent id is the idempotency key, exactly as for a
+ * one-off gift — `recordDonationCore` bails before any write if a donation
+ * already exists for it, so a redelivered `invoice.paid` credits the ledger
+ * exactly once.
+ *
+ * `amountPaidCents` (what Stripe actually collected) is the authority on the
+ * TOTAL, with the row supplying the fee-cover split — a stale row can then
+ * only ever mis-split a correct total, never credit money that wasn't
+ * collected. `splitDonationAmounts` normalizes a cover that no longer fits.
+ */
+export const recordRecurringDonationPaid = internalMutation({
+  args: {
+    stripeSubscriptionId: v.string(),
+    paymentIntentId: v.string(),
+    amountPaidCents: v.optional(v.number()),
+    currentPeriodEnd: v.optional(v.number()),
+    eventAccount: v.optional(v.string()),
+    /**
+     * The row id the subscription's metadata claims, used ONLY when the
+     * subscription id isn't bound to a row yet — see
+     * `resolveInvoiceRecurringDonationId` in webhooks.ts.
+     */
+    recurringDonationIdHint: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    let row = await ctx.db
+      .query("recurringDonations")
+      .withIndex("by_stripeSubscriptionId", (q) =>
+        q.eq("stripeSubscriptionId", args.stripeSubscriptionId),
+      )
+      .first();
+
+    // Webhook order is not guaranteed: the first month's `invoice.paid` can
+    // beat `checkout.session.completed`, so the subscription id may not be on
+    // any row yet. Falling back to the id we put in the subscription metadata
+    // is what stops that race silently swallowing a real payment. The row is
+    // only adopted when it is genuinely unbound — a row already pointing at a
+    // DIFFERENT subscription is never re-pointed by an invoice.
+    let boundHere = false;
+    if (!row && args.recurringDonationIdHint) {
+      const hintedId = ctx.db.normalizeId(
+        "recurringDonations",
+        args.recurringDonationIdHint,
+      );
+      const hinted = hintedId ? await ctx.db.get(hintedId) : null;
+      if (hinted && !hinted.stripeSubscriptionId) {
+        row = hinted;
+        boundHere = true;
+      }
+    }
+
+    if (!row) {
+      return; // Not a Togather monthly gift.
+    }
+    if (!args.eventAccount || args.eventAccount !== row.stripeConnectedAccountId) {
+      console.error(
+        `[finance] invoice.paid: account mismatch on recurring donation ${row._id} — event.account=${args.eventAccount ?? "missing"} expected=${row.stripeConnectedAccountId}`,
+      );
+      await logFinanceAudit(ctx, {
+        communityId: row.communityId,
+        fundId: row.fundId,
+        action: "webhook.rejected_account_mismatch",
+        details: {
+          eventAccount: args.eventAccount ?? null,
+          expectedAccount: row.stripeConnectedAccountId,
+          recurringDonationId: row._id,
+        },
+      });
+      return;
+    }
+
+    const rowTotalCents = row.amountCents + row.feeCoverCents;
+    const totalCents = args.amountPaidCents ?? rowTotalCents;
+    if (totalCents <= 0) {
+      // A $0 invoice (a full discount, or a $0 proration) collected nothing,
+      // so there is nothing to credit. Returning beats falling through:
+      // `recordDonationCore` THROWS on a non-positive amount, which would fail
+      // the webhook and put Stripe into a permanent redelivery loop.
+      console.warn(
+        `[finance] invoice.paid: subscription ${args.stripeSubscriptionId} collected ${totalCents} — nothing to record`,
+      );
+      return;
+    }
+    if (totalCents !== rowTotalCents) {
+      console.warn(
+        `[finance] invoice.paid: subscription ${args.stripeSubscriptionId} collected ${totalCents} but recurring donation ${row._id} expects ${rowTotalCents} — crediting what Stripe collected`,
+      );
+    }
+    const { baseCents, feeCoverCents } = splitDonationAmounts(
+      totalCents,
+      row.feeCoverCents,
+    );
+
+    const donationId = await recordDonationCore(ctx, {
+      paymentIntentId: args.paymentIntentId,
+      fundId: row.fundId,
+      donorUserId: row.donorUserId,
+      amountCents: baseCents,
+      feeCoverCents,
+      communityId: row.communityId,
+      recurringId: row._id,
+    });
+
+    // A canceled row is terminal: Stripe can still settle an invoice raised
+    // before the cancel landed (the money is real, and is recorded above),
+    // but it must not come back to life.
+    const patch: {
+      status?: "active";
+      currentPeriodEnd?: number;
+      stripeSubscriptionId?: string;
+      updatedAt: number;
+    } = { updatedAt: now() };
+    if (row.status !== "canceled") {
+      patch.status = "active";
+    }
+    if (args.currentPeriodEnd !== undefined) {
+      patch.currentPeriodEnd = args.currentPeriodEnd;
+    }
+    if (boundHere) {
+      // We got here before `checkout.session.completed` did. Stamping the
+      // subscription now means every LATER event for it resolves by the
+      // ordinary index, and the metadata fallback is only ever used once.
+      patch.stripeSubscriptionId = args.stripeSubscriptionId;
+    }
+    await ctx.db.patch(row._id, patch);
+
+    return donationId;
+  },
+});
+
+/**
+ * Syncs a subscription's lifecycle onto its row —
+ * `customer.subscription.updated` / `.deleted` and `invoice.payment_failed`
+ * all land here.
+ *
+ * `amountCents`/`feeCoverCents` are only applied when the caller resolved
+ * BOTH from the subscription's own metadata AND they add up to the price the
+ * subscription now charges. Anything else (metadata missing, stale, or
+ * inconsistent with the price) is ignored in favour of leaving the row alone
+ * rather than writing a split that doesn't match what the donor is billed.
+ */
+export const applyRecurringSubscriptionState = internalMutation({
+  args: {
+    stripeSubscriptionId: v.string(),
+    status: v.optional(
+      v.union(
+        v.literal("active"),
+        v.literal("past_due"),
+        v.literal("canceled"),
+      ),
+    ),
+    currentPeriodEnd: v.optional(v.number()),
+    amountCents: v.optional(v.number()),
+    feeCoverCents: v.optional(v.number()),
+    eventAccount: v.optional(v.string()),
+    /** For the audit row — which Stripe event drove this. */
+    reason: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const row = await ctx.db
+      .query("recurringDonations")
+      .withIndex("by_stripeSubscriptionId", (q) =>
+        q.eq("stripeSubscriptionId", args.stripeSubscriptionId),
+      )
+      .first();
+    if (!row) {
+      return;
+    }
+    if (!args.eventAccount || args.eventAccount !== row.stripeConnectedAccountId) {
+      console.error(
+        `[finance] ${args.reason}: account mismatch on recurring donation ${row._id} — event.account=${args.eventAccount ?? "missing"} expected=${row.stripeConnectedAccountId}`,
+      );
+      await logFinanceAudit(ctx, {
+        communityId: row.communityId,
+        fundId: row.fundId,
+        action: "webhook.rejected_account_mismatch",
+        details: {
+          eventAccount: args.eventAccount ?? null,
+          expectedAccount: row.stripeConnectedAccountId,
+          recurringDonationId: row._id,
+        },
+      });
+      return;
+    }
+
+    const timestamp = now();
+    const patch: Partial<Doc<"recurringDonations">> = { updatedAt: timestamp };
+
+    // "canceled" is terminal — a late/reordered update event must never
+    // reactivate a gift the donor already stopped.
+    if (args.status && row.status !== "canceled" && args.status !== row.status) {
+      patch.status = args.status;
+      if (args.status === "canceled") {
+        patch.canceledAt = timestamp;
+      }
+    }
+    if (args.currentPeriodEnd !== undefined) {
+      patch.currentPeriodEnd = args.currentPeriodEnd;
+    }
+    if (
+      args.amountCents !== undefined &&
+      args.feeCoverCents !== undefined &&
+      (args.amountCents !== row.amountCents ||
+        args.feeCoverCents !== row.feeCoverCents)
+    ) {
+      patch.amountCents = args.amountCents;
+      patch.feeCoverCents = args.feeCoverCents;
+    }
+
+    await ctx.db.patch(row._id, patch);
+
+    // No status/amount change means a redelivered or incidental event — keep
+    // it out of the audit trail (same rule as applyIncreaseEntityStatus).
+    if (patch.status === undefined && patch.amountCents === undefined) {
+      return;
+    }
+    await logFinanceAudit(ctx, {
+      communityId: row.communityId,
+      fundId: row.fundId,
+      actorUserId: row.donorUserId,
+      action: "recurring.status_synced",
+      details: {
+        recurringDonationId: row._id,
+        from: row.status,
+        to: patch.status ?? row.status,
+        amountCents: patch.amountCents ?? row.amountCents,
+        feeCoverCents: patch.feeCoverCents ?? row.feeCoverCents,
+        reason: args.reason,
+      },
+    });
+  },
+});
+
+// ============================================================================
+// Donor-facing management: list, read, change amount, cancel, update card.
+// ============================================================================
+
+/** Shape both donor-facing reads return. */
+interface RecurringSummary {
+  id: Id<"recurringDonations">;
+  fundId: Id<"funds">;
+  groupId: Id<"groups"> | null;
+  fundName: string;
+  amountCents: number;
+  feeCoverCents: number;
+  status: "pending" | "active" | "past_due" | "canceled";
+  currentPeriodEnd: number | null;
+  createdAt: number;
+}
+
+async function toRecurringSummary(
+  ctx: { db: any },
+  row: Doc<"recurringDonations">,
+): Promise<RecurringSummary> {
+  const fund = await ctx.db.get(row.fundId);
+  return {
+    id: row._id,
+    fundId: row.fundId,
+    groupId: fund?.groupId ?? null,
+    fundName: fund?.name ?? "",
+    amountCents: row.amountCents,
+    feeCoverCents: row.feeCoverCents,
+    status: row.status,
+    currentPeriodEnd: row.currentPeriodEnd ?? null,
+    createdAt: row.createdAt,
+  };
+}
+
+/**
+ * The signed-in donor's own monthly gifts, newest first.
+ *
+ * Scoped to the caller by construction — the `by_donor` index is keyed on the
+ * authenticated user id and no argument can widen it, so there is no fund or
+ * community a donor could ask about to see someone else's giving.
+ *
+ * Canceled gifts are excluded: this is the list you MANAGE, and a stopped
+ * gift has nothing left to manage. The charges it made remain visible as
+ * ordinary donations in giving history.
+ */
+export const listMyRecurringDonations = query({
+  args: { token: v.string() },
+  handler: async (ctx, args): Promise<RecurringSummary[]> => {
+    const userId = await requireAuth(ctx, args.token);
+    if (!(await isGroupGivingEnabled(ctx))) {
+      return [];
+    }
+    const rows = await ctx.db
+      .query("recurringDonations")
+      .withIndex("by_donor", (q) => q.eq("donorUserId", userId))
+      .order("desc")
+      .collect();
+    return await Promise.all(
+      rows
+        .filter((r) => r.status !== "canceled")
+        .map((r) => toRecurringSummary(ctx, r)),
+    );
+  },
+});
+
+/**
+ * The caller's own monthly gift to one fund (the give screen's monthly toggle
+ * and the fund dashboard's "you give $X/month" box), or null.
+ *
+ * Same donor scoping as `listMyRecurringDonations`: `fundId` narrows, it
+ * never widens — the donor half of the index is always the caller.
+ */
+export const getRecurringForFund = query({
+  args: { token: v.string(), fundId: v.id("funds") },
+  handler: async (ctx, args): Promise<RecurringSummary | null> => {
+    const userId = await requireAuth(ctx, args.token);
+    if (!(await isGroupGivingEnabled(ctx))) {
+      return null;
+    }
+    const row = await findLiveRecurring(ctx, args.fundId, userId);
+    return row ? await toRecurringSummary(ctx, row) : null;
+  },
+});
+
+/** Loads a recurring row the caller OWNS, for the management actions. */
+export const getMyRecurringDonation = internalQuery({
+  args: { token: v.string(), recurringDonationId: v.id("recurringDonations") },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    await requireGroupGivingEnabled(ctx);
+    const row = await ctx.db.get(args.recurringDonationId);
+    if (!row || row.donorUserId !== userId) {
+      // Same answer for "doesn't exist" and "isn't yours" — a donor must not
+      // be able to probe for other people's giving by id.
+      throw new Error("Monthly gift not found");
+    }
+    const fund = await ctx.db.get(row.fundId);
+    return { row, groupId: fund?.groupId ?? null, fundName: fund?.name ?? "" };
+  },
+});
+
+/** Applies a donor-initiated amount change once Stripe has accepted it. */
+export const applyRecurringAmountUpdate = internalMutation({
+  args: {
+    recurringDonationId: v.id("recurringDonations"),
+    amountCents: v.number(),
+    feeCoverCents: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const row = await ctx.db.get(args.recurringDonationId);
+    if (!row) return;
+    await ctx.db.patch(row._id, {
+      amountCents: args.amountCents,
+      feeCoverCents: args.feeCoverCents,
+      updatedAt: now(),
+    });
+    await logFinanceAudit(ctx, {
+      communityId: row.communityId,
+      fundId: row.fundId,
+      actorUserId: row.donorUserId,
+      action: "recurring.amount_updated",
+      details: {
+        recurringDonationId: row._id,
+        fromAmountCents: row.amountCents,
+        fromFeeCoverCents: row.feeCoverCents,
+        toAmountCents: args.amountCents,
+        toFeeCoverCents: args.feeCoverCents,
+      },
+    });
+  },
+});
+
+/**
+ * Changes what a monthly gift charges from the NEXT invoice onward.
+ *
+ * Validation runs through `prepareDonationIntent` — the same seam the create
+ * paths use — so the amount bounds, the one-sided fee-cover bound (a CEILING
+ * at `computeCoverFeesCents` + tolerance, with no floor, since only an
+ * over-large fee can move money past `MAX_DONATION_CENTS`), the fund-active
+ * check and the community-live check are literally the same code, not a
+ * re-implementation. There is no fee math in this action at all.
+ *
+ * `proration_behavior: "none"`: the donor already paid for the current period
+ * at its start, and this is a gift, not a service they are getting more or
+ * less of. Prorating would either bill them again mid-month or hand back part
+ * of a gift they meant to give — both wrong. The new amount simply applies at
+ * the next renewal.
+ */
+export const updateRecurringAmount = action({
+  args: {
+    token: v.string(),
+    recurringDonationId: v.id("recurringDonations"),
+    amountCents: v.number(),
+    coverFeesCents: v.optional(v.number()),
+  },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ amountCents: number; feeCoverCents: number }> => {
+    const { row } = await ctx.runQuery(
+      internal.functions.finance.giving.getMyRecurringDonation,
+      { token: args.token, recurringDonationId: args.recurringDonationId },
+    );
+    if (row.status === "canceled") {
+      throw new ConvexError(
+        "This monthly gift has been stopped. Start a new one to give monthly again.",
+      );
+    }
+    if (!row.stripeSubscriptionId) {
+      throw new ConvexError(
+        "This monthly gift is still being set up. Try again in a moment.",
+      );
+    }
+
+    // The shared seam: auth, flag, amount bounds, fee bound, fund active,
+    // community live — all of it, for the fund this gift actually belongs to.
+    const context = await ctx.runQuery(
+      internal.functions.finance.giving.prepareDonationIntent,
+      {
+        token: args.token,
+        fundId: row.fundId,
+        amountCents: args.amountCents,
+        coverFeesCents: args.coverFeesCents,
+      },
+    );
+
+    const Stripe = (await import("stripe")).default;
+    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
+      apiVersion: "2026-02-25.clover",
+    });
+
+    const subscription = await stripe.subscriptions.retrieve(
+      row.stripeSubscriptionId,
+      {},
+      { stripeAccount: row.stripeConnectedAccountId },
+    );
+    const item = subscription.items.data[0];
+    if (!item) {
+      throw new Error(
+        `updateRecurringAmount: subscription ${row.stripeSubscriptionId} has no items`,
+      );
+    }
+    // A SubscriptionItem's inline `price_data` takes a product ID (unlike
+    // Checkout's, which accepts `product_data`), so reuse the product the
+    // Checkout session already created for this gift.
+    const productId =
+      typeof item.price.product === "string"
+        ? item.price.product
+        : item.price.product.id;
+
+    const totalCents = context.amountCents + context.feeCoverCents;
+    await stripe.subscriptions.update(
+      row.stripeSubscriptionId,
+      {
+        items: [
+          {
+            id: item.id,
+            price_data: {
+              currency: "usd",
+              product: productId,
+              unit_amount: totalCents,
+              recurring: { interval: "month" },
+            },
+          },
+        ],
+        proration_behavior: "none",
+        // Kept in lockstep with the row: `customer.subscription.updated` reads
+        // the split back out of here when the price changes, and an invoice
+        // that arrives before our own patch commits must still describe the
+        // gift correctly.
+        metadata: {
+          recurringDonationId: row._id,
+          fundId: row.fundId,
+          donorUserId: row.donorUserId,
+          communityId: row.communityId,
+          amountCents: String(context.amountCents),
+          feeCoverCents: String(context.feeCoverCents),
+        },
+      },
+      { stripeAccount: row.stripeConnectedAccountId },
+    );
+
+    await ctx.runMutation(
+      internal.functions.finance.giving.applyRecurringAmountUpdate,
+      {
+        recurringDonationId: row._id,
+        amountCents: context.amountCents,
+        feeCoverCents: context.feeCoverCents,
+      },
+    );
+
+    return {
+      amountCents: context.amountCents,
+      feeCoverCents: context.feeCoverCents,
+    };
+  },
+});
+
+/** Marks a monthly gift stopped. Separate from
+ * `applyRecurringSubscriptionState` because this one is donor-initiated and
+ * should say so in the audit trail. */
+export const markRecurringCanceled = internalMutation({
+  args: { recurringDonationId: v.id("recurringDonations") },
+  handler: async (ctx, args) => {
+    const row = await ctx.db.get(args.recurringDonationId);
+    if (!row || row.status === "canceled") return;
+    const timestamp = now();
+    await ctx.db.patch(row._id, {
+      status: "canceled",
+      canceledAt: timestamp,
+      updatedAt: timestamp,
+    });
+    await logFinanceAudit(ctx, {
+      communityId: row.communityId,
+      fundId: row.fundId,
+      actorUserId: row.donorUserId,
+      action: "recurring.canceled",
+      details: { recurringDonationId: row._id, from: row.status },
+    });
+  },
+});
+
+/**
+ * Stops a monthly gift.
+ *
+ * Cancels IMMEDIATELY (`subscriptions.cancel`, not `cancel_at_period_end`).
+ * Stripe subscriptions charge in ADVANCE: the donor paid for the current
+ * period at its START, so there is nothing left in it for them to "use up" —
+ * `cancel_at_period_end` would only mean the gift keeps showing as active for
+ * up to a month while collecting nothing. Cancelling now ends future invoices
+ * and claws nothing back, which is exactly the approved promise: "Ends future
+ * gifts. Past gifts stay."
+ *
+ * A gift still in Checkout (`pending`, no subscription yet) has its Checkout
+ * Session expired instead, so it can't complete after the donor backed out.
+ */
+/**
+ * Has this subscription genuinely stopped billing at Stripe?
+ *
+ * Asked only after a `subscriptions.cancel` threw, to tell "already canceled,
+ * nothing to do" apart from "still live, the cancel really failed". Defaults
+ * to FALSE whenever Stripe can't answer: claiming a gift is stopped when we
+ * don't know is the one wrong answer here — it hides a card that keeps getting
+ * charged. A 404 (`resource_missing`) is the exception, and only because a
+ * subscription that doesn't exist cannot bill anyone.
+ */
+async function isSubscriptionGoneAtStripe(
+  stripe: {
+    subscriptions: {
+      retrieve: (
+        id: string,
+        params?: Record<string, never>,
+        options?: { stripeAccount: string },
+      ) => Promise<{ status?: string }>;
+    };
+  },
+  subscriptionId: string,
+  stripeAccount: string,
+): Promise<boolean> {
+  try {
+    const subscription = await stripe.subscriptions.retrieve(
+      subscriptionId,
+      {},
+      { stripeAccount },
+    );
+    return (
+      subscription.status === "canceled" ||
+      subscription.status === "incomplete_expired"
+    );
+  } catch (error) {
+    return (error as { code?: string })?.code === "resource_missing";
+  }
+}
+
+export const cancelRecurringDonation = action({
+  args: {
+    token: v.string(),
+    recurringDonationId: v.id("recurringDonations"),
+  },
+  handler: async (ctx, args): Promise<{ canceled: true }> => {
+    const { row } = await ctx.runQuery(
+      internal.functions.finance.giving.getMyRecurringDonation,
+      { token: args.token, recurringDonationId: args.recurringDonationId },
+    );
+    if (row.status === "canceled") {
+      return { canceled: true }; // Idempotent — a double tap is not an error.
+    }
+
+    const Stripe = (await import("stripe")).default;
+    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
+      apiVersion: "2026-02-25.clover",
+    });
+
+    if (row.stripeSubscriptionId) {
+      try {
+        await stripe.subscriptions.cancel(row.stripeSubscriptionId, undefined, {
+          stripeAccount: row.stripeConnectedAccountId,
+        });
+      } catch (error) {
+        // A cancel that failed is only safe to ignore once Stripe CONFIRMS
+        // the subscription is already gone (`customer.subscription.deleted`
+        // landed first, or the donor cancelled twice) — then the end state the
+        // donor asked for is already true. A transient network, rate-limit or
+        // 5xx failure is a different thing entirely: the subscription is still
+        // live and still charging, and marking the row canceled would both lie
+        // to the donor and make the row terminal, so no later Stripe event can
+        // ever put it back. Re-throw those and let them tap Stop again.
+        console.warn(
+          `[finance] cancelRecurringDonation: Stripe cancel failed for ${row.stripeSubscriptionId}`,
+          error,
+        );
+        if (
+          !(await isSubscriptionGoneAtStripe(
+            stripe,
+            row.stripeSubscriptionId,
+            row.stripeConnectedAccountId,
+          ))
+        ) {
+          throw error;
+        }
+      }
+    } else if (row.checkoutSessionId) {
+      try {
+        await stripe.checkout.sessions.expire(row.checkoutSessionId, {
+          stripeAccount: row.stripeConnectedAccountId,
+        });
+      } catch (error) {
+        console.warn(
+          `[finance] cancelRecurringDonation: could not expire session ${row.checkoutSessionId}`,
+          error,
+        );
+      }
+    }
+
+    await ctx.runMutation(
+      internal.functions.finance.giving.markRecurringCanceled,
+      { recurringDonationId: row._id },
+    );
+    return { canceled: true };
+  },
+});
+
+/**
+ * A hosted page where the donor can replace the card behind their monthly
+ * gift.
+ *
+ * SHIPPED: Stripe's Billing Portal, on the connected account, scoped to this
+ * donor's Customer. The portal is what actually re-attaches a new payment
+ * method to the live subscription — a Checkout `mode: "setup"` session would
+ * only vault a PaymentMethod and leave us to attach it ourselves from another
+ * webhook branch, which is more moving parts for a worse result.
+ *
+ * A connected account has no portal configuration by default and community
+ * admins will never create one, so one is created on first use, with exactly
+ * two features enabled: updating the payment method and viewing invoices.
+ * `subscription_cancel`/`subscription_update` stay OFF deliberately — cancels
+ * and amount changes go through this file so the `recurringDonations` row and
+ * the audit trail stay the source of truth rather than drifting behind a
+ * Stripe-hosted UI.
+ */
+export const createCardUpdateSession = action({
+  args: {
+    token: v.string(),
+    recurringDonationId: v.id("recurringDonations"),
+  },
+  handler: async (ctx, args): Promise<{ url: string }> => {
+    const { row, groupId } = await ctx.runQuery(
+      internal.functions.finance.giving.getMyRecurringDonation,
+      { token: args.token, recurringDonationId: args.recurringDonationId },
+    );
+    if (!row.stripeCustomerId) {
+      throw new ConvexError(
+        "This monthly gift is still being set up. Try again in a moment.",
+      );
+    }
+    if (!groupId) {
+      throw new Error("Card updates aren't available for this fund yet");
+    }
+    const returnUrl = buildRecurringManageUrl(groupId);
+
+    const Stripe = (await import("stripe")).default;
+    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
+      apiVersion: "2026-02-25.clover",
+    });
+
+    const existing = await stripe.billingPortal.configurations.list(
+      { limit: 1, active: true },
+      { stripeAccount: row.stripeConnectedAccountId },
+    );
+    const configurationId =
+      existing.data[0]?.id ??
+      (
+        await stripe.billingPortal.configurations.create(
+          {
+            business_profile: { headline: "Manage your monthly gift" },
+            features: {
+              payment_method_update: { enabled: true },
+              invoice_history: { enabled: true },
+            },
+            default_return_url: returnUrl,
+          },
+          { stripeAccount: row.stripeConnectedAccountId },
+        )
+      ).id;
+
+    const session = await stripe.billingPortal.sessions.create(
+      {
+        customer: row.stripeCustomerId,
+        return_url: returnUrl,
+        configuration: configurationId,
+      },
+      { stripeAccount: row.stripeConnectedAccountId },
+    );
+
+    return { url: session.url };
   },
 });
