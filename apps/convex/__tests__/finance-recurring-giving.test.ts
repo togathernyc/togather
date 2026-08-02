@@ -1339,8 +1339,12 @@ describe("createCardUpdateSession", () => {
     expect((portal.options as any).stripeAccount).toBe(CONNECTED_ACCOUNT);
     // The group id is percent-encoded into the path, as it is for the
     // Checkout return URLs — a Convex id contains a ";".
+    // `portal_return=1` is load-bearing, not cosmetic: on native this URL
+    // opens in the portal's own auth-less in-app browser, and the flag is how
+    // the manage screen tells that dead end apart from "auth still restoring"
+    // and shows a close-this-window notice instead of an endless skeleton.
     expect((portal.params as any).return_url).toContain(
-      `/groups/${encodeURIComponent(s.groupId)}/give`,
+      `/groups/${encodeURIComponent(s.groupId)}/monthly-giving?portal_return=1`,
     );
   });
 

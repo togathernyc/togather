@@ -47,6 +47,8 @@ export default function GiveSuccessScreen() {
     fund?: string;
     community?: string;
     session_id?: string;
+    /** `"1"` for a monthly gift — see `parseGiveSuccessParams`. */
+    recurring?: string;
   }>();
 
   const reduceMotion = useReduceMotion();

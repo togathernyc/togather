@@ -91,6 +91,7 @@ const noop = () => {};
 const baseProps = {
   context: liveContext,
   step: "amount" as const,
+  frequency: "once" as const,
   selectedPresetCents: null,
   customAmountText: "",
   coverFees: false,
@@ -98,12 +99,14 @@ const baseProps = {
   error: null,
   checkoutSession: null,
   onBack: noop,
+  onSelectFrequency: noop,
   onSelectPreset: noop,
   onCustomAmountChange: noop,
   onToggleCoverFees: noop,
   onContinue: noop,
   onReopenCheckout: noop,
   onFinishManually: noop,
+  onManageRecurringPress: noop,
   canAutoAdvance: true,
 };
 
@@ -198,6 +201,114 @@ describe("GiveScreenView", () => {
     ).toBeTruthy();
   });
 
+  // Frequency sits ABOVE the amount: the number a donor picks depends on how
+  // often they're being asked for it.
+  describe("frequency", () => {
+    it("offers One time and Monthly as chips", () => {
+      render(<GiveScreenView {...baseProps} />);
+      expect(screen.getByTestId("give-frequency-once")).toBeTruthy();
+      expect(screen.getByTestId("give-frequency-monthly")).toBeTruthy();
+    });
+
+    it("marks the chosen frequency as selected, and only that one", () => {
+      render(<GiveScreenView {...baseProps} frequency="monthly" />);
+      expect(
+        screen.getByTestId("give-frequency-monthly").props.accessibilityState.selected,
+      ).toBe(true);
+      expect(
+        screen.getByTestId("give-frequency-once").props.accessibilityState.selected,
+      ).toBe(false);
+    });
+
+    it("reports a frequency change upward", () => {
+      const onSelectFrequency = jest.fn();
+      render(<GiveScreenView {...baseProps} onSelectFrequency={onSelectFrequency} />);
+      fireEvent.press(screen.getByTestId("give-frequency-monthly"));
+      expect(onSelectFrequency).toHaveBeenCalledWith("monthly");
+    });
+
+    // The CTA is the last thing read before a card is charged — it has to say
+    // whether this is once or every month.
+    it("says 'monthly' on the CTA when monthly is chosen", () => {
+      render(
+        <GiveScreenView {...baseProps} frequency="monthly" selectedPresetCents={5000} />,
+      );
+      expect(screen.getByLabelText(`Give ${formatCents(5000)} monthly`)).toBeTruthy();
+      expect(screen.queryByLabelText(`Give ${formatCents(5000)}`)).toBeNull();
+    });
+
+    it("leaves the one-off CTA alone", () => {
+      render(<GiveScreenView {...baseProps} selectedPresetCents={5000} />);
+      expect(screen.getByLabelText(`Give ${formatCents(5000)}`)).toBeTruthy();
+      expect(screen.queryByLabelText(/monthly/)).toBeNull();
+    });
+
+    it("adds the covered fee to the monthly CTA's total too", () => {
+      render(
+        <GiveScreenView
+          {...baseProps}
+          frequency="monthly"
+          selectedPresetCents={5000}
+          coverFees
+        />,
+      );
+      const fee = estimateCoverFeesCents(5000);
+      expect(
+        screen.getByLabelText(`Give ${formatCents(5000 + fee)} monthly`),
+      ).toBeTruthy();
+    });
+  });
+
+  // One active monthly per fund is a backend rule. The UI never offers a
+  // second — it points at the one they have instead of letting them find out
+  // from an error after a tap.
+  describe("when the donor already gives monthly to this fund", () => {
+    const withExisting = {
+      ...baseProps,
+      context: {
+        ...liveContext,
+        existingRecurring: { amountCents: 2500, feeCoverCents: 105 },
+      },
+      selectedPresetCents: 5000,
+    };
+
+    it("replaces the CTA with a notice naming the gift they already have", () => {
+      render(<GiveScreenView {...withExisting} frequency="monthly" />);
+      expect(screen.getByTestId("give-existing-recurring-notice")).toBeTruthy();
+      expect(screen.getByText(/You already give/)).toBeTruthy();
+      expect(screen.getByText(/\$25\.00\/month/)).toBeTruthy();
+      expect(screen.queryByLabelText(/^Give /)).toBeNull();
+    });
+
+    // The notice names the GIFT, not the charge: a donor covering the fee
+    // chose $25, and restating it as $26.05 is a number they never picked.
+    it("names the gift amount, not the fee-inclusive charge", () => {
+      render(<GiveScreenView {...withExisting} frequency="monthly" />);
+      expect(screen.queryByText(/\$26\.05/)).toBeNull();
+    });
+
+    it("offers a way through to managing it", () => {
+      const onManageRecurringPress = jest.fn();
+      render(
+        <GiveScreenView
+          {...withExisting}
+          frequency="monthly"
+          onManageRecurringPress={onManageRecurringPress}
+        />,
+      );
+      fireEvent.press(screen.getByLabelText("Manage your monthly gift"));
+      expect(onManageRecurringPress).toHaveBeenCalledTimes(1);
+    });
+
+    // Non-blocking: an existing monthly gift must not stop a one-off.
+    it("leaves the one-time CTA fully usable", () => {
+      render(<GiveScreenView {...withExisting} frequency="once" />);
+      expect(screen.queryByTestId("give-existing-recurring-notice")).toBeNull();
+      const cta = screen.getByLabelText(`Give ${formatCents(5000)}`);
+      expect(cta.props.accessibilityState.disabled).toBe(false);
+    });
+  });
+
   describe("waiting step", () => {
     const waitingProps = {
       ...baseProps,
@@ -215,6 +326,13 @@ describe("GiveScreenView", () => {
       expect(screen.getByText("Finish in the browser")).toBeTruthy();
       expect(screen.getByText(formatCents(5000))).toBeTruthy();
       expect(screen.getByText("Young Adults — Manhattan")).toBeTruthy();
+    });
+
+    // A monthly gift's summary must not read as a one-off total — the donor is
+    // committing to this number every month, not once.
+    it("marks the amount as monthly on a monthly gift", () => {
+      render(<GiveScreenView {...waitingProps} frequency="monthly" />);
+      expect(screen.getByText(`${formatCents(5000)}/month`)).toBeTruthy();
     });
 
     it("calls onReopenCheckout when 'Reopen payment page' is tapped", () => {

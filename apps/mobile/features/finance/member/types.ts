@@ -59,6 +59,16 @@ export interface GivingContext {
   communityLegalName: string;
   suggestedAmountsCents: readonly number[];
   givingLive: boolean;
+  /**
+   * The viewer's own live monthly gift to this fund, or `null`. Set only for
+   * `active`/`past_due` — the backend's `findLiveRecurring` excludes a
+   * `pending` row (donor still in Checkout) and a canceled one.
+   *
+   * Its presence is what turns the give sheet's Monthly option from "start a
+   * monthly gift" into "you already give $X/month" — one active monthly per
+   * fund is a backend rule, so the UI never offers a second.
+   */
+  existingRecurring?: { amountCents: number; feeCoverCents: number } | null;
 }
 
 /** Return shape of `createDonationCheckoutSession` — the hosted Stripe
@@ -74,6 +84,15 @@ export interface CheckoutSession {
    *
    * `null` when Stripe deferred creating the PaymentIntent — the gift still
    * lands via the webhook, but the wait degrades to manual (Reopen/Cancel).
+   *
+   * Also `null` for a MONTHLY gift: `mode: "subscription"` Checkout has no
+   * PaymentIntent at all, and that path watches `recurringDonationId` instead.
    */
   paymentIntentId: string | null;
+  /**
+   * Set only by `createRecurringDonationCheckoutSession` — the
+   * `recurringDonations` row this Checkout will bind to, and the join key the
+   * monthly waiting step watches (see `GiveScreen`).
+   */
+  recurringDonationId?: string | null;
 }

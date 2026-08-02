@@ -32,6 +32,15 @@ export function FundScreen() {
     fundId ? { fundId } : "skip",
   );
 
+  // The viewer's own monthly gift to this fund, if any. Donor-scoped by
+  // construction on the server (`by_donor_fund`), so this is never anyone
+  // else's giving — and it returns `null` for a `pending`/canceled row, which
+  // is exactly when the dashboard box should not exist.
+  const recurring = useAuthenticatedQuery(
+    api.functions.finance.giving.getRecurringForFund,
+    fundId ? { fundId } : "skip",
+  );
+
   // Manager+ (or leader/community admin) viewers get the "Fund settings" cell
   // linking to the leader giving hub (approvals + roles) — the only nav entry
   // point into it besides deep links, since the per-group toolbar config is
@@ -68,6 +77,12 @@ export function FundScreen() {
         onBack={handleBack}
         onGivePress={handleGivePress}
         onGetReimbursedPress={() => setShowReimbursement(true)}
+        recurring={recurring}
+        onManageRecurringPress={
+          groupId
+            ? () => router.push(`/groups/${groupId}/monthly-giving` as any)
+            : undefined
+        }
         onManagePress={
           canManage && groupId
             ? () =>

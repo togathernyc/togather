@@ -2,6 +2,7 @@ import React from "react";
 import { render, screen, fireEvent } from "@testing-library/react-native";
 import { FundScreenView } from "../FundScreenView";
 import type { FundOverview, MyExpense } from "../types";
+import type { RecurringSummary } from "../recurring";
 import { formatCents, formatSignedCents } from "../../format";
 
 jest.mock("@hooks/useTheme", () => ({
@@ -356,6 +357,99 @@ describe("FundScreenView", () => {
       renderWith(baseExpenses);
       expect(screen.getByText("Pending")).toBeTruthy();
       expect(screen.queryByTestId("expense-note-exp1")).toBeNull();
+    });
+  });
+
+  // The monthly box is standing money the donor should be able to see and stop
+  // without hunting — but only when there IS one collecting.
+  describe("the monthly-giving box", () => {
+    const activeMonthly: RecurringSummary = {
+      id: "rec1",
+      fundId: "fund1",
+      groupId: "group1",
+      fundName: "Small Group Fund",
+      amountCents: 2500,
+      feeCoverCents: 0,
+      status: "active",
+      // 2026-09-01T12:00:00Z, rendered in the runner's local zone.
+      currentPeriodEnd: Date.UTC(2026, 8, 1, 12),
+      createdAt: 1,
+    };
+
+    const renderWith = (
+      recurring: RecurringSummary | null | undefined,
+      onManageRecurringPress: () => void = noop,
+    ) =>
+      render(
+        <FundScreenView
+          overview={baseOverview}
+          myExpenses={baseExpenses}
+          onBack={noop}
+          onGivePress={noop}
+          onGetReimbursedPress={noop}
+          recurring={recurring}
+          onManageRecurringPress={onManageRecurringPress}
+        />,
+      );
+
+    it("names the gift and where it goes next", () => {
+      renderWith(activeMonthly);
+      expect(screen.getByText("You give $25.00 monthly")).toBeTruthy();
+      expect(screen.getByText(/^Next gift .+ · Manage or cancel$/)).toBeTruthy();
+    });
+
+    it("opens the manage screen when tapped", () => {
+      const onManageRecurringPress = jest.fn();
+      renderWith(activeMonthly, onManageRecurringPress);
+      fireEvent.press(screen.getByText("You give $25.00 monthly"));
+      expect(onManageRecurringPress).toHaveBeenCalledTimes(1);
+    });
+
+    // A failing card is the one thing on this screen a donor has to act on —
+    // "Next gift Sep 1" over a declined payment would stop them fixing it.
+    it("swaps the sub-line for the fix-it prompt when the payment failed", () => {
+      renderWith({ ...activeMonthly, status: "past_due" });
+      expect(screen.getByText("Payment issue — tap to fix")).toBeTruthy();
+      expect(screen.queryByText(/Next gift/)).toBeNull();
+    });
+
+    it("colors that sub-line as a warning rather than leaving it neutral gray", () => {
+      renderWith({ ...activeMonthly, status: "past_due" });
+      const line = screen.getByText("Payment issue — tap to fix");
+      // `warning` from the theme mock above.
+      expect(line.props.style).toEqual(
+        expect.arrayContaining([expect.objectContaining({ color: "#e0a800" })]),
+      );
+    });
+
+    // A gift still inside Stripe Checkout has charged nothing yet, and a
+    // canceled one has nothing left to manage. Neither gets a box.
+    it("renders nothing at all for a pending gift", () => {
+      renderWith({ ...activeMonthly, status: "pending" });
+      expect(screen.queryByTestId("fund-monthly-box")).toBeNull();
+      expect(screen.queryByText(/You give/)).toBeNull();
+    });
+
+    it("renders nothing at all for a canceled gift", () => {
+      renderWith({ ...activeMonthly, status: "canceled" });
+      expect(screen.queryByTestId("fund-monthly-box")).toBeNull();
+    });
+
+    it("renders nothing when the donor has no monthly gift", () => {
+      renderWith(null);
+      expect(screen.queryByTestId("fund-monthly-box")).toBeNull();
+    });
+
+    it("renders nothing while the query is still loading", () => {
+      renderWith(undefined);
+      expect(screen.queryByTestId("fund-monthly-box")).toBeNull();
+    });
+
+    // Stripe hasn't reported a period on a just-bound gift; the row still has
+    // to be usable rather than printing a fabricated date.
+    it("drops the date when there isn't one yet", () => {
+      renderWith({ ...activeMonthly, currentPeriodEnd: null });
+      expect(screen.getByText("Manage or cancel")).toBeTruthy();
     });
   });
 
