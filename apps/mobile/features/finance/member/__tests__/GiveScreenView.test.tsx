@@ -152,6 +152,14 @@ describe("GiveScreenView", () => {
     expect(screen.getByTestId("give-amount-input").props.value).toBe("37");
   });
 
+  // Focusing a $50 preset and typing 2 must mean $2, not $502 — the caret
+  // sitting after the preset's digits would otherwise turn a replacement into
+  // a ten-times-larger gift.
+  it("selects the showing amount on focus so typing replaces it", () => {
+    render(<GiveScreenView {...baseProps} selectedPresetCents={5000} />);
+    expect(screen.getByTestId("give-amount-input").props.selectTextOnFocus).toBe(true);
+  });
+
   it("routes typing through onCustomAmountChange (which clears the preset upstream)", () => {
     const onCustomAmountChange = jest.fn();
     render(

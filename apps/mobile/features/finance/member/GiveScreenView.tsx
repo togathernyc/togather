@@ -174,6 +174,10 @@ export function GiveScreenView({
                   <TextInput
                     value={displayText}
                     onChangeText={onCustomAmountChange}
+                    // Tapping in to type means "a different amount", not "add
+                    // digits to the one showing" — without this, focusing a
+                    // $50 preset and typing 2 gives $502.
+                    selectTextOnFocus
                     keyboardType="number-pad"
                     placeholder="0"
                     placeholderTextColor={colors.textTertiary}
