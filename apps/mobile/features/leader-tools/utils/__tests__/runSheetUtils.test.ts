@@ -7,7 +7,7 @@ import { assigneeLabels } from "../runSheetUtils";
  */
 const person = (userName: string, status: string) => ({ userName, status });
 
-describe("run sheet assignee labels", () => {
+describe("assigneeLabels", () => {
   it("shows a confirmed assignee with no marker", () => {
     expect(assigneeLabels([person("Ada", "confirmed")])).toEqual(["Ada"]);
   });
@@ -47,7 +47,29 @@ describe("run sheet assignee labels", () => {
     expect(labels).toEqual(["Ada", "Bo (Unconfirmed)", "Di"]);
   });
 
+  // The run sheet reads from a stale AsyncStorage cache when offline, and that
+  // payload is cast rather than validated — a blob written by an older build can
+  // arrive without `status`. Same fail-safe as an unrecognised status: flagged,
+  // never silently presented as confirmed.
+  it("flags an assignee whose status is missing entirely", () => {
+    expect(assigneeLabels([{ userName: "Ada" } as never])).toEqual([
+      "Ada (Unconfirmed)",
+    ]);
+  });
+
   it("returns nothing for an unfilled role", () => {
     expect(assigneeLabels([])).toEqual([]);
+  });
+
+  // The chip renders these comma-joined on ONE truncating line, so the joined
+  // string — not the array — is what a leader actually reads. Pinned here to
+  // keep the cost of the marker visible: it competes with the names it qualifies.
+  it("joins into a chip line where markers cost room for names", () => {
+    const labels = assigneeLabels([
+      person("Ada", "unconfirmed"),
+      person("Bo", "unconfirmed"),
+      person("Cy", "confirmed"),
+    ]);
+    expect(labels.join(", ")).toBe("Ada (Unconfirmed), Bo (Unconfirmed), Cy");
   });
 });

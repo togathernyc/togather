@@ -821,7 +821,18 @@ function ReadOnlyRow({
                   ]}
                 >
                   <View style={[styles.assignSwatch, { backgroundColor: a.roleColor ?? DEFAULT_ROLE_COLOR }]} />
-                  <Text style={[styles.assignText, { color: colors.text }]} numberOfLines={1}>
+                  {/* The visible line truncates to one row, so on a full role the
+                      "(Unconfirmed)" marker can ellipsize away — the label carries
+                      the whole chip so a screen reader never loses it. */}
+                  <Text
+                    style={[styles.assignText, { color: colors.text }]}
+                    numberOfLines={1}
+                    accessibilityLabel={
+                      names.length > 0
+                        ? `${a.roleName}: ${names.join(", ")}`
+                        : a.roleName
+                    }
+                  >
                     {a.roleName}
                     {names.length > 0 ? `: ${names.join(", ")}` : ""}
                   </Text>
