@@ -71,6 +71,12 @@ export interface WaCellProps {
   title: string;
   /** Sub-line under the title (e.g. "Lock chat"'s explanatory text) — grows the cell to the tall variant. */
   description?: string;
+  /**
+   * Overrides the sub-line's default tertiary gray. For the rare row whose
+   * sub-line carries a state the reader must not skim past (a failing payment,
+   * an expired invite) — not for decoration: WA sub-lines are gray.
+   */
+  descriptionColor?: string;
   /** Right-aligned value before the chevron, e.g. "5.4 MB", "Off", "On" (`navigational` only). */
   value?: string;
   /** Replaces the default value+chevron block entirely (`navigational` only) — e.g. a copy-icon button. */
@@ -94,6 +100,7 @@ export function WaCell({
   iconColor,
   title,
   description,
+  descriptionColor,
   value,
   trailingAccessory,
   variant = 'navigational',
@@ -164,7 +171,9 @@ export function WaCell({
             {title}
           </Text>
           {description ? (
-            <Text style={[styles.description, { color: colors.textTertiary }]}>{description}</Text>
+            <Text style={[styles.description, { color: descriptionColor ?? colors.textTertiary }]}>
+              {description}
+            </Text>
           ) : null}
         </View>
 

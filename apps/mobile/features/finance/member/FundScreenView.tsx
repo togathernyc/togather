@@ -45,12 +45,25 @@ import {
   expenseStatusNote,
 } from "./labels";
 import { GIVING_GOLD, GIVING_GOLD_TINT } from "./giveTheme";
+import {
+  isLiveRecurring,
+  formatMonthlyTitle,
+  formatMonthlySubtitle,
+  type RecurringSummary,
+} from "./recurring";
 import type { FundActivityEntry, FundOverview, MyExpense } from "./types";
 
 /** Hero balance type size — the one number this whole screen exists to show. */
 const BALANCE_SIZE = 46;
 /** Fund-glyph tile edge, sized to sit above the balance without competing. */
 const GLYPH_TILE = 44;
+/**
+ * Gold tile edge inside the monthly box's cell. A hair wider than
+ * `WA_CELL_ICON_COLUMN` (24) so the disc reads as a tile rather than a bare
+ * glyph; the 4pt it borrows comes out of the 16pt icon→label gap, which stays
+ * comfortably wider than the gap on a plain cell's 24pt glyph.
+ */
+const MONTHLY_TILE = 28;
 
 export interface FundScreenViewProps {
   /** `undefined` while loading, `null` when giving isn't set up for this group. */
@@ -60,6 +73,14 @@ export interface FundScreenViewProps {
   onBack: () => void;
   onGivePress: () => void;
   onGetReimbursedPress: () => void;
+  /**
+   * The viewer's own monthly gift to this fund. `undefined` while loading,
+   * `null` when they have none. A `pending` or `canceled` row renders nothing
+   * at all — see `isLiveRecurring`.
+   */
+  recurring?: RecurringSummary | null;
+  /** Opens the monthly-giving manage screen. */
+  onManageRecurringPress?: () => void;
   /**
    * Set for manager+ viewers — renders the leaders-only "Fund settings" cell
    * that opens the leader giving hub (approvals + roles). Its presence IS the
@@ -74,6 +95,8 @@ export function FundScreenView({
   onBack,
   onGivePress,
   onGetReimbursedPress,
+  recurring,
+  onManageRecurringPress,
   onManagePress,
 }: FundScreenViewProps) {
   const { colors, isDark } = useTheme();
@@ -181,6 +204,43 @@ export function FundScreenView({
               )}
             </WaInsetGroup>
           </View>
+
+          {/* YOUR MONTHLY GIVING — pinned between the group's activity and the
+              viewer's own errands, because that is exactly what it is: the
+              hinge from "here is what the fund did" to "here is your business
+              with it". Above Reimbursements on purpose — a live monthly gift
+              is standing money the donor should be able to see and stop
+              without scrolling past a rare errand to reach it.
+
+              Rendered only for a gift that is actually collecting: a `pending`
+              row (donor still in Checkout) or a canceled one gets no group at
+              all, header included, rather than an empty card. */}
+          {isLiveRecurring(recurring) && (
+            <View style={styles.group}>
+              <WaInsetGroup>
+                <WaCell
+                  testID="fund-monthly-box"
+                  iconNode={
+                    <View
+                      style={[styles.monthlyTile, { backgroundColor: GIVING_GOLD_TINT }]}
+                    >
+                      <Ionicons name="repeat" size={16} color={GIVING_GOLD} />
+                    </View>
+                  }
+                  title={formatMonthlyTitle(recurring.amountCents)}
+                  description={formatMonthlySubtitle(recurring)}
+                  // A failing card has to LOOK different, not just read
+                  // differently — the sub-line's default gray is the same ink
+                  // "Next gift Sep 1" wears, and a donor scanning the screen
+                  // would skim straight past the one row that needs them.
+                  descriptionColor={
+                    recurring.status === "past_due" ? colors.warning : undefined
+                  }
+                  onPress={onManageRecurringPress}
+                />
+              </WaInsetGroup>
+            </View>
+          )}
 
           {/* REIMBURSEMENTS — the ask sits first as a normal navigational cell,
               then the viewer's own requests below it, so "Get reimbursed" and
@@ -358,6 +418,13 @@ const styles = StyleSheet.create({
   group: { marginTop: WA_GROUP_SPACING },
 
   hero: { alignItems: "center", paddingHorizontal: WA_CELL_PADDING, paddingVertical: 24 },
+  monthlyTile: {
+    width: MONTHLY_TILE,
+    height: MONTHLY_TILE,
+    borderRadius: MONTHLY_TILE / 2,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   glyphTile: {
     width: GLYPH_TILE,
     height: GLYPH_TILE,
