@@ -1719,7 +1719,7 @@ export default defineSchema({
     disabledByUserId: v.optional(v.id("users")),
     // Denormalized for performance
     lastMessageAt: v.optional(v.number()), // Unix timestamp ms
-    lastMessagePreview: v.optional(v.string()), // First 100 chars
+    lastMessagePreview: v.optional(v.string()), // First ~200 chars (see LIST_PREVIEW_MAX)
     lastMessageSenderId: v.optional(v.id("users")), // For inbox preview
     lastMessageSenderName: v.optional(v.string()), // For inbox preview
     memberCount: v.number(),

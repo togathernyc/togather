@@ -281,12 +281,14 @@ describe("Send Message", () => {
     expect(channel?.lastMessagePreview).toBe("This is the preview text");
   });
 
-  test("should truncate long message preview", async () => {
+  test("should truncate long message preview to the list cap", async () => {
     vi.useFakeTimers();
     const t = convexTest(schema, modules);
     const { channelId, accessToken } = await seedTestData(t);
 
-    const longMessage = "A".repeat(150);
+    // Longer than the ~200-char list cap so the inbox row's 2 lines have
+    // content to show but the stored preview stays bounded.
+    const longMessage = "A".repeat(500);
 
     await t.mutation(api.functions.messaging.messages.sendMessage, {
       token: accessToken,
@@ -302,7 +304,10 @@ describe("Send Message", () => {
       return await ctx.db.get(channelId);
     });
 
-    expect(channel?.lastMessagePreview?.length).toBeLessThanOrEqual(100);
+    // Raised from the old 100 to ~200 (LIST_PREVIEW_MAX) — long enough for a
+    // 2-line row, still bounded so the row stays a normal height.
+    expect(channel?.lastMessagePreview?.length).toBe(200);
+    expect(channel?.lastMessagePreview?.length).toBeGreaterThan(100);
   });
 
   test("should extract mentions from message", async () => {

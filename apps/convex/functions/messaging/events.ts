@@ -24,12 +24,15 @@ import {
   getLeaderDmRelationship,
   type LeaderDmRelationship,
 } from "../../lib/leaderDm";
+import {
+  truncatePreview,
+  EMAIL_PREVIEW_MAX,
+  PUSH_PREVIEW_MAX,
+} from "../../lib/text";
 
 // ============================================================================
 // Constants
 // ============================================================================
-
-const MAX_PREVIEW_LENGTH = 100;
 
 /**
  * First-message notification copy per leadership relationship. The push keeps
@@ -149,9 +152,14 @@ export const onMessageSent = internalMutation({
       }
     }
 
-    // Generate preview for notifications (but don't update channel - sendMessage already does it
-    // with smart previews like "Sent a photo" or "Sent X files")
-    const preview = message.content.slice(0, MAX_PREVIEW_LENGTH);
+    // Generate the preview that feeds notifications (but don't update the
+    // channel — sendMessage already does that with smart previews like "Sent a
+    // photo" or "Sent X files"). We hand the notification actions the (nearly)
+    // full message body, capped only by a generous email safety limit so a
+    // pasted essay can't create a runaway email. Each surface then shortens it
+    // to fit: emails show this whole value, the push re-truncates to
+    // PUSH_PREVIEW_MAX. The cut is emoji-safe so it never leaves a broken glyph.
+    const preview = truncatePreview(message.content, EMAIL_PREVIEW_MAX);
 
     // Get all channel members (except sender if there is one). Muted members
     // stay in this list so their unread bookkeeping keeps running — mute
@@ -588,14 +596,6 @@ export const sendMessageNotifications = internalAction({
 });
 
 /**
- * Truncate a string to `max` chars, suffixing "…" if truncation occurred.
- */
-function truncateForBody(text: string, max: number): string {
-  if (text.length <= max) return text;
-  return text.slice(0, Math.max(0, max - 1)) + "…";
-}
-
-/**
  * Send push notifications for a new message in an ad-hoc DM / group_dm channel.
  *
  * Distinct from `sendMessageNotifications` because:
@@ -651,10 +651,12 @@ export const sendAdHocMessageNotifications = internalAction({
       `[sendAdHocMessageNotifications] channelId=${args.channelId}, pending=${args.pendingRecipients.length}, accepted=${args.acceptedRecipients.length}`,
     );
 
-    // Truncate the body's message excerpt. Match the previous fanout's
-    // ~120-char ceiling so iOS/Android push surfaces don't ellipsize twice.
-    const MAX_BODY_PREVIEW = 120;
-    const previewBody = truncateForBody(args.messagePreview, MAX_BODY_PREVIEW);
+    // Shorten the push body's message excerpt. `messagePreview` arrives capped
+    // at the email safety limit (much longer than a push should show), so we
+    // re-truncate to PUSH_PREVIEW_MAX and always end in "…" when we cut, so the
+    // push reads as an intentional preview rather than a mid-word glitch. The
+    // OS still clips the lock-screen banner further; tapping opens the thread.
+    const previewBody = truncatePreview(args.messagePreview, PUSH_PREVIEW_MAX);
 
     // Resolve channel + non-sender accepted member names so group_dms can
     // render "<sender> in <channelName | first-two-others>" titles when

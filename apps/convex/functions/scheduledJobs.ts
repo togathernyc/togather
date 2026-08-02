@@ -32,6 +32,7 @@ import {
   isScheduleDueNow,
 } from "../lib/scheduling";
 import { DOMAIN_CONFIG } from "@togather/shared/config";
+import { truncatePreview, LIST_PREVIEW_MAX } from "../lib/text";
 
 // ============================================================================
 // CONFIGURATION
@@ -1797,8 +1798,9 @@ export const insertBotMessage = internalMutation({
       }
     }
 
-    // Update channel with last message info
-    const preview = content.slice(0, 100);
+    // Update channel with last message info. Emoji-safe cut at the list cap so
+    // the 2-line inbox row has content to show without a broken glyph.
+    const preview = truncatePreview(content, LIST_PREVIEW_MAX, false);
     await ctx.db.patch(channelId, {
       lastMessageAt: now_,
       lastMessagePreview: preview,

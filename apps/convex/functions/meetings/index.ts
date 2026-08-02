@@ -12,6 +12,7 @@ import { internal } from "../../_generated/api";
 import { now, generateShortId, getDisplayName, getMediaUrl } from "../../lib/utils";
 import { resolveChannelCommunityId } from "../../lib/messaging/communityScope";
 import { requireAuth } from "../../lib/auth";
+import { truncatePreview, LIST_PREVIEW_MAX } from "../../lib/text";
 import { isActiveLeader, isActiveMembership } from "../../lib/helpers";
 import {
   canCreateInGroup,
@@ -1116,8 +1117,9 @@ export const postToChat = mutation({
       lastActivityAt: timestamp,
     });
 
-    // Update channel with last message info
-    const preview = content.slice(0, 100);
+    // Update channel with last message info. Emoji-safe cut at the list cap so
+    // the 2-line inbox row has content to show without a broken glyph.
+    const preview = truncatePreview(content, LIST_PREVIEW_MAX, false);
     await ctx.db.patch(targetChannel._id, {
       lastMessageAt: timestamp,
       lastMessagePreview: preview,

@@ -751,7 +751,7 @@ function GroupedInboxItemInner({
           <View style={styles.bottomRow}>
             <Text
               style={[styles.lastMessage, { color: colors.textSecondary }, hasUnread && { fontWeight: "600", color: colors.text }]}
-              numberOfLines={1}
+              numberOfLines={2}
             >
               {getMessagePreview(primaryChannel)}
             </Text>
@@ -1089,7 +1089,7 @@ function GroupedInboxItemInner({
           <View style={styles.bottomRow}>
             <Text
               style={[styles.lastMessage, { color: colors.textSecondary }, mainHasUnread && { fontWeight: "600", color: colors.text }]}
-              numberOfLines={1}
+              numberOfLines={2}
             >
               {getMessagePreview(mainChannel)}
             </Text>
@@ -1149,7 +1149,7 @@ function GroupedInboxItemInner({
               <Text style={[styles.subChannelName, { color: colors.text }, hasUnread && styles.subChannelNameUnread]}>{channel.name}</Text>
               <Text
                 style={[styles.subChannelPreview, { color: colors.textSecondary }, hasUnread && { fontWeight: "500", color: colors.text }]}
-                numberOfLines={1}
+                numberOfLines={2}
               >
                 {getMessagePreview(channel)}
               </Text>
