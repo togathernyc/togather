@@ -1,13 +1,42 @@
 /**
  * FundScreenView — presentational transparency screen for group giving
- * (ADR-032 §3/§7 Phase 1). Pure props in, no Convex/router imports, so a
- * verification harness can render it standalone with mock data.
+ * (ADR-032 §3/§7 Phase 1), restyled onto the WhatsApp shell. Pure props in, no
+ * Convex/router imports, so a verification harness can render it standalone
+ * with mock data.
+ *
+ * Shell per `docs/plans/church-migration-ui-redesign/WHATSAPP-DESIGN-SYSTEM.md`
+ * §3.1/§3.2, mirroring GroupInfoScreen: grouped-gray canvas + floating
+ * `WaSubScreenHeader`, content as `WaInsetGroup` cards. The bespoke bar header
+ * this replaced carried the gear and a header "Give" link; both moved into the
+ * page (a full-width hero pill, and a leaders-only "Fund settings" cell at the
+ * bottom) so the header is back/title only.
+ *
+ * `paddingTop: insets.top` is load-bearing, not cosmetic: this screen never
+ * applied safe-area insets, so on a notched device its top row sat under the
+ * status bar and could not be reached.
  */
 import React from "react";
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from "react-native";
+import { View, Text, StyleSheet, ScrollView, Pressable } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "@hooks/useTheme";
-import { Badge, Button, Skeleton, EmptyState } from "@components/ui";
+import { Badge, Skeleton, EmptyState } from "@components/ui";
+import {
+  WaSubScreenHeader,
+  WaInsetGroup,
+  WaCell,
+  waAvatarPalette,
+  waAvatarInitials,
+  WA_GROUP_MARGIN,
+  WA_GROUP_RADIUS,
+  WA_GROUP_SPACING,
+  WA_CELL_PADDING,
+  WA_TYPE_FOOTNOTE,
+  WA_TYPE_SUBTITLE,
+  WA_TYPE_ROW_TITLE,
+  WA_WEIGHT_BOLD,
+  WA_WEIGHT_SEMIBOLD,
+} from "@components/wa";
 import { formatCents, formatSignedCents } from "../format";
 import {
   formatLedgerKind,
@@ -15,7 +44,13 @@ import {
   expenseStatusBadgeVariant,
   expenseStatusNote,
 } from "./labels";
-import type { FundOverview, MyExpense } from "./types";
+import { GIVING_GOLD, GIVING_GOLD_TINT } from "./giveTheme";
+import type { FundActivityEntry, FundOverview, MyExpense } from "./types";
+
+/** Hero balance type size — the one number this whole screen exists to show. */
+const BALANCE_SIZE = 46;
+/** Fund-glyph tile edge, sized to sit above the balance without competing. */
+const GLYPH_TILE = 44;
 
 export interface FundScreenViewProps {
   /** `undefined` while loading, `null` when giving isn't set up for this group. */
@@ -25,7 +60,11 @@ export interface FundScreenViewProps {
   onBack: () => void;
   onGivePress: () => void;
   onGetReimbursedPress: () => void;
-  /** Set for manager+ viewers — shows the "Manage" link to the leader giving hub (approvals + roles). */
+  /**
+   * Set for manager+ viewers — renders the leaders-only "Fund settings" cell
+   * that opens the leader giving hub (approvals + roles). Its presence IS the
+   * permission gate; `FundScreen` passes `undefined` for everyone else.
+   */
   onManagePress?: () => void;
 }
 
@@ -37,41 +76,23 @@ export function FundScreenView({
   onGetReimbursedPress,
   onManagePress,
 }: FundScreenViewProps) {
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
+  const insets = useSafeAreaInsets();
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background }]}>
-      <View
-        style={[
-          styles.header,
-          { backgroundColor: colors.surface, borderBottomColor: colors.border },
-        ]}
-      >
-        <TouchableOpacity style={styles.backButton} onPress={onBack} accessibilityLabel="Back">
-          <Ionicons name="arrow-back" size={24} color={colors.text} />
-        </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: colors.text }]}>Giving</Text>
-        {overview ? (
-          <View style={styles.headerActions}>
-            {onManagePress && (
-              <TouchableOpacity onPress={onManagePress} accessibilityLabel="Manage giving">
-                <Ionicons name="settings-outline" size={22} color={colors.link} />
-              </TouchableOpacity>
-            )}
-            <TouchableOpacity onPress={onGivePress} accessibilityLabel="Give">
-              <Text style={[styles.headerGive, { color: colors.link }]}>Give</Text>
-            </TouchableOpacity>
-          </View>
-        ) : (
-          <View style={styles.headerSpacer} />
-        )}
-      </View>
+    <View
+      style={[
+        styles.screen,
+        { backgroundColor: colors.backgroundGrouped, paddingTop: insets.top },
+      ]}
+    >
+      <WaSubScreenHeader title="Giving" onBack={onBack} />
 
       {overview === undefined ? (
         <View style={styles.loadingContainer} testID="fund-screen-loading">
-          <Skeleton height={100} borderRadius={16} style={{ marginBottom: 16 }} />
-          <Skeleton height={60} borderRadius={12} style={{ marginBottom: 16 }} />
-          <Skeleton height={200} borderRadius={12} />
+          <Skeleton height={180} borderRadius={WA_GROUP_RADIUS} style={styles.loadingBlock} />
+          <Skeleton height={90} borderRadius={WA_GROUP_RADIUS} style={styles.loadingBlock} />
+          <Skeleton height={200} borderRadius={WA_GROUP_RADIUS} />
         </View>
       ) : overview === null ? (
         <EmptyState
@@ -85,150 +106,112 @@ export function FundScreenView({
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
         >
-          {/* BALANCE */}
-          <View style={[styles.balanceCard, { backgroundColor: colors.surfaceSecondary }]}>
-            <Text style={[styles.balanceLabel, { color: colors.textSecondary }]}>
-              {overview.fund.name} balance
-            </Text>
-            <Text style={[styles.balanceAmount, { color: colors.text }]}>
-              {formatCents(overview.balanceCents)}
-            </Text>
-            <View style={styles.balanceActions}>
-              <Button onPress={onGivePress} style={styles.balanceActionButton}>
-                Give
-              </Button>
-              <Button
-                onPress={onGetReimbursedPress}
-                variant="secondary"
-                style={styles.balanceActionButton}
+          {/* HERO — glyph, fund name, balance, and the screen's single primary
+              action. "Get reimbursed" deliberately does NOT sit here: it is a
+              rare errand, and pairing it with Give made two equal-weight
+              buttons out of one obvious one. It lives in its own card below. */}
+          <WaInsetGroup>
+            <View style={styles.hero}>
+              <View style={[styles.glyphTile, { backgroundColor: GIVING_GOLD_TINT }]}>
+                <Ionicons name="cash-outline" size={24} color={GIVING_GOLD} />
+              </View>
+              <Text style={[styles.fundName, { color: colors.textSecondary }]} numberOfLines={2}>
+                {overview.fund.name}
+              </Text>
+              <Text style={[styles.balance, { color: colors.text }]}>
+                {formatCents(overview.balanceCents)}
+              </Text>
+              <Pressable
+                onPress={onGivePress}
+                accessibilityRole="button"
+                accessibilityLabel="Give"
+                style={({ pressed }) => [
+                  styles.givePill,
+                  { backgroundColor: colors.buttonPrimary },
+                  pressed && styles.pressed,
+                ]}
               >
-                Get reimbursed
-              </Button>
+                <Text style={[styles.givePillLabel, { color: colors.buttonPrimaryText }]}>
+                  Give
+                </Text>
+              </Pressable>
             </View>
-          </View>
+          </WaInsetGroup>
 
-          {/* MTD / YTD STATS */}
+          {/* STAT TILES — this month / this year, 2-up. Card fees keep their
+              own line (rather than folding into "spent") because a fee is
+              money the group never chose to spend; see summarizePeriod. */}
           <View style={styles.statsRow}>
-            <View style={[styles.statCard, { backgroundColor: colors.surfaceSecondary }]}>
-              <Text style={[styles.statHeader, { color: colors.textSecondary }]}>
-                MONTH TO DATE
-              </Text>
-              <Text style={[styles.statValue, { color: colors.text }]}>
-                {formatCents(overview.monthToDate.donationsCents)} given
-              </Text>
-              <Text style={[styles.statSubvalue, { color: colors.textSecondary }]}>
-                {formatCents(overview.monthToDate.spentCents)} spent ·{" "}
-                {overview.monthToDate.donationCount}{" "}
-                {overview.monthToDate.donationCount === 1 ? "gift" : "gifts"}
-              </Text>
-              {overview.monthToDate.feesCents > 0 && (
-                <Text style={[styles.statSubvalue, { color: colors.textSecondary }]}>
-                  {formatCents(overview.monthToDate.feesCents)} card fees
-                </Text>
-              )}
-            </View>
-            <View style={[styles.statCard, { backgroundColor: colors.surfaceSecondary }]}>
-              <Text style={[styles.statHeader, { color: colors.textSecondary }]}>
-                YEAR TO DATE
-              </Text>
-              <Text style={[styles.statValue, { color: colors.text }]}>
-                {formatCents(overview.yearToDate.donationsCents)} given
-              </Text>
-              <Text style={[styles.statSubvalue, { color: colors.textSecondary }]}>
-                {formatCents(overview.yearToDate.spentCents)} spent ·{" "}
-                {overview.yearToDate.donationCount}{" "}
-                {overview.yearToDate.donationCount === 1 ? "gift" : "gifts"}
-              </Text>
-              {overview.yearToDate.feesCents > 0 && (
-                <Text style={[styles.statSubvalue, { color: colors.textSecondary }]}>
-                  {formatCents(overview.yearToDate.feesCents)} card fees
-                </Text>
-              )}
-            </View>
+            <StatTile
+              label="This month"
+              totals={overview.monthToDate}
+              surface={colors.surfaceGrouped}
+              titleColor={colors.text}
+              subtitleColor={colors.textSecondary}
+            />
+            <StatTile
+              label="This year"
+              totals={overview.yearToDate}
+              surface={colors.surfaceGrouped}
+              titleColor={colors.text}
+              subtitleColor={colors.textSecondary}
+            />
           </View>
 
-          {/* ACTIVITY */}
-          <View style={styles.section}>
-            <Text style={[styles.sectionHeader, { color: colors.textSecondary }]}>
-              RECENT ACTIVITY
-            </Text>
-            {overview.activity.length === 0 ? (
-              <View style={[styles.card, { backgroundColor: colors.surfaceSecondary }]}>
-                <Text style={[styles.emptyRowText, { color: colors.textSecondary }]}>
-                  No activity yet
-                </Text>
-              </View>
-            ) : (
-              <View style={[styles.card, { backgroundColor: colors.surfaceSecondary }]}>
-                {overview.activity.map((entry, index) => (
-                  <View
+          {/* RECENT ACTIVITY */}
+          <View style={styles.group}>
+            <WaInsetGroup header="Recent activity" separatorInset={0}>
+              {overview.activity.length === 0 ? (
+                <View style={styles.emptyRow}>
+                  <Text style={[styles.emptyRowText, { color: colors.textSecondary }]}>
+                    No activity yet
+                  </Text>
+                </View>
+              ) : (
+                overview.activity.map((entry) => (
+                  <ActivityRow
                     key={entry.id}
-                    style={[
-                      styles.activityRow,
-                      index > 0 && {
-                        borderTopWidth: StyleSheet.hairlineWidth,
-                        borderTopColor: colors.border,
-                      },
-                    ]}
-                  >
-                    <View style={{ flex: 1 }}>
-                      <Text style={[styles.activityKind, { color: colors.text }]}>
-                        {formatLedgerKind(entry.kind)}
-                      </Text>
-                      {!!entry.donorName && (
-                        <Text
-                          style={[styles.activityDonor, { color: colors.textSecondary }]}
-                        >
-                          {entry.donorName}
-                        </Text>
-                      )}
-                    </View>
-                    <Text
-                      style={[
-                        styles.activityAmount,
-                        { color: entry.direction === "credit" ? colors.success : colors.text },
-                      ]}
-                    >
-                      {formatSignedCents(entry.amountCents, entry.direction)}
-                    </Text>
-                  </View>
-                ))}
-              </View>
-            )}
+                    entry={entry}
+                    isDark={isDark}
+                    titleColor={colors.text}
+                    subtitleColor={colors.textSecondary}
+                    creditColor={colors.success}
+                  />
+                ))
+              )}
+            </WaInsetGroup>
           </View>
 
-          {/* MY REIMBURSEMENTS */}
-          <View style={styles.section}>
-            <Text style={[styles.sectionHeader, { color: colors.textSecondary }]}>
-              MY REIMBURSEMENTS
-            </Text>
-            {myExpenses === undefined ? (
-              <Skeleton height={72} borderRadius={12} />
-            ) : myExpenses.length === 0 ? (
-              <View style={[styles.card, { backgroundColor: colors.surfaceSecondary }]}>
-                <Text style={[styles.emptyRowText, { color: colors.textSecondary }]}>
-                  No reimbursement requests yet
-                </Text>
-              </View>
-            ) : (
-              <View style={[styles.card, { backgroundColor: colors.surfaceSecondary }]}>
-                {myExpenses.map((expense, index) => {
+          {/* REIMBURSEMENTS — the ask sits first as a normal navigational cell,
+              then the viewer's own requests below it, so "Get reimbursed" and
+              "where did my request get to" are one place instead of two. */}
+          <View style={styles.group}>
+            <WaInsetGroup header="Reimbursements" separatorInset={0}>
+              <WaCell
+                icon="receipt-outline"
+                title="Get reimbursed"
+                description="Spent for the group? Send the receipt."
+                onPress={onGetReimbursedPress}
+              />
+              {myExpenses === undefined ? (
+                <View style={styles.emptyRow}>
+                  <Skeleton height={40} borderRadius={8} />
+                </View>
+              ) : myExpenses.length === 0 ? (
+                <View style={styles.emptyRow}>
+                  <Text style={[styles.emptyRowText, { color: colors.textSecondary }]}>
+                    No requests yet
+                  </Text>
+                </View>
+              ) : (
+                myExpenses.map((expense) => {
                   // Approved-but-unpaid is the one status a member can read as
                   // "settled" when it isn't — it gets a sentence saying who
                   // still owes them the money (see labels.ts).
                   const note = expenseStatusNote(expense.status);
                   return (
-                    <View
-                      key={expense.id}
-                      style={[
-                        styles.expenseRow,
-                        index > 0 && {
-                          borderTopWidth: StyleSheet.hairlineWidth,
-                          borderTopColor: colors.border,
-                        },
-                      ]}
-                    >
-                      <View style={{ flex: 1 }}>
+                    <View key={expense.id} style={styles.expenseRow}>
+                      <View style={styles.expenseText}>
                         <Text style={[styles.expenseDescription, { color: colors.text }]}>
                           {expense.description || "Reimbursement"}
                         </Text>
@@ -249,85 +232,217 @@ export function FundScreenView({
                       </Badge>
                     </View>
                   );
-                })}
-              </View>
-            )}
+                })
+              )}
+            </WaInsetGroup>
           </View>
+
+          {/* FUND — leaders only. Last, and labelled, because it is the one row
+              on this screen most members will never see. */}
+          {!!onManagePress && (
+            <View style={styles.group}>
+              <WaInsetGroup header="Fund">
+                <WaCell
+                  icon="settings-outline"
+                  title="Fund settings"
+                  description="Leaders only"
+                  onPress={onManagePress}
+                />
+              </WaInsetGroup>
+            </View>
+          )}
         </ScrollView>
       )}
     </View>
   );
 }
 
+/** One of the two "This month" / "This year" tiles. */
+function StatTile({
+  label,
+  totals,
+  surface,
+  titleColor,
+  subtitleColor,
+}: {
+  label: string;
+  totals: FundOverview["monthToDate"];
+  surface: string;
+  titleColor: string;
+  subtitleColor: string;
+}) {
+  return (
+    <View style={[styles.statTile, { backgroundColor: surface }]}>
+      <Text style={[styles.statLabel, { color: subtitleColor }]}>{label}</Text>
+      <Text style={[styles.statValue, { color: titleColor }]}>
+        {formatCents(totals.donationsCents)}
+      </Text>
+      <Text style={[styles.statSubtitle, { color: subtitleColor }]}>
+        {totals.donationCount} {totals.donationCount === 1 ? "gift" : "gifts"} ·{" "}
+        {formatCents(totals.spentCents)} spent
+      </Text>
+      {totals.feesCents > 0 && (
+        <Text style={[styles.statSubtitle, { color: subtitleColor }]}>
+          {formatCents(totals.feesCents)} card fees
+        </Text>
+      )}
+    </View>
+  );
+}
+
+/**
+ * One ledger row: initials disc, who, what + when, signed amount.
+ *
+ * Anonymized entries (a viewer who isn't manager+ sees no donor names) fall
+ * back to the ledger kind as the title, so the row still reads as a sentence
+ * instead of leaving a blank line above the subtitle.
+ */
+function ActivityRow({
+  entry,
+  isDark,
+  titleColor,
+  subtitleColor,
+  creditColor,
+}: {
+  entry: FundActivityEntry;
+  isDark: boolean;
+  titleColor: string;
+  subtitleColor: string;
+  creditColor: string;
+}) {
+  const kind = formatLedgerKind(entry.kind);
+  const title = entry.donorName || kind;
+  const palette = waAvatarPalette(title, isDark);
+  return (
+    <View style={styles.activityRow}>
+      <View style={[styles.activityAvatar, { backgroundColor: palette.background }]}>
+        <Text style={[styles.activityInitials, { color: palette.foreground }]}>
+          {waAvatarInitials(title)}
+        </Text>
+      </View>
+      <View style={styles.activityText}>
+        <Text style={[styles.activityTitle, { color: titleColor }]} numberOfLines={1}>
+          {title}
+        </Text>
+        <Text style={[styles.activitySubtitle, { color: subtitleColor }]} numberOfLines={1}>
+          {kind} · {formatActivityDate(entry.createdAt)}
+        </Text>
+      </View>
+      <Text
+        style={[
+          styles.activityAmount,
+          { color: entry.direction === "credit" ? creditColor : titleColor },
+        ]}
+      >
+        {formatSignedCents(entry.amountCents, entry.direction)}
+      </Text>
+    </View>
+  );
+}
+
+/** "Jul 29" — the ledger's own date, never a relative "2 days ago". */
+function formatActivityDate(timestamp: number): string {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+const ACTIVITY_AVATAR = 40;
+
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    padding: 16,
-    borderBottomWidth: 1,
-  },
-  backButton: { padding: 4 },
-  headerTitle: {
-    flex: 1,
-    fontSize: 18,
-    fontWeight: "600",
-    textAlign: "center",
-    marginRight: 32,
-  },
-  headerGive: { fontSize: 16, fontWeight: "600" },
-  headerActions: { flexDirection: "row", alignItems: "center", gap: 14 },
-  headerSpacer: { width: 32 },
-  loadingContainer: { padding: 16 },
+  screen: { flex: 1 },
+  loadingContainer: { padding: WA_GROUP_MARGIN },
+  loadingBlock: { marginBottom: 16 },
   emptyState: { flex: 1, justifyContent: "center" },
-  scrollContent: { padding: 16, paddingBottom: 32, gap: 16 },
-  balanceCard: {
-    borderRadius: 16,
-    padding: 20,
+  scrollContent: { paddingTop: 16, paddingBottom: 40 },
+  group: { marginTop: WA_GROUP_SPACING },
+
+  hero: { alignItems: "center", paddingHorizontal: WA_CELL_PADDING, paddingVertical: 24 },
+  glyphTile: {
+    width: GLYPH_TILE,
+    height: GLYPH_TILE,
+    borderRadius: GLYPH_TILE / 2,
     alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 12,
   },
-  balanceLabel: { fontSize: 13, fontWeight: "500" },
-  balanceAmount: { fontSize: 36, fontWeight: "700", marginTop: 4, marginBottom: 16 },
-  balanceActions: { flexDirection: "row", gap: 12, width: "100%" },
-  balanceActionButton: { flex: 1 },
-  statsRow: { flexDirection: "row", gap: 12 },
-  statCard: { flex: 1, borderRadius: 12, padding: 14 },
-  statHeader: { fontSize: 11, fontWeight: "600", letterSpacing: 0.6, marginBottom: 6 },
-  statValue: { fontSize: 16, fontWeight: "600" },
-  statSubvalue: { fontSize: 12, marginTop: 2 },
-  section: {},
-  sectionHeader: {
-    fontSize: 11,
-    fontWeight: "600",
-    letterSpacing: 0.6,
-    marginBottom: 8,
-    paddingHorizontal: 4,
+  fundName: {
+    fontSize: 13.5,
+    fontWeight: WA_WEIGHT_SEMIBOLD,
+    textAlign: "center",
   },
-  card: { borderRadius: 12, overflow: "hidden" },
-  emptyRowText: { fontSize: 14, padding: 16, textAlign: "center" },
+  balance: {
+    fontSize: BALANCE_SIZE,
+    fontWeight: WA_WEIGHT_BOLD,
+    fontVariant: ["tabular-nums"],
+    marginTop: 4,
+    marginBottom: 20,
+  },
+  givePill: {
+    alignSelf: "stretch",
+    height: 50,
+    borderRadius: 25,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  givePillLabel: { fontSize: WA_TYPE_ROW_TITLE, fontWeight: WA_WEIGHT_SEMIBOLD },
+  pressed: { opacity: 0.85 },
+
+  statsRow: {
+    flexDirection: "row",
+    gap: 12,
+    marginHorizontal: WA_GROUP_MARGIN,
+    marginTop: WA_GROUP_SPACING,
+  },
+  statTile: { flex: 1, borderRadius: WA_GROUP_RADIUS, padding: 16 },
+  statLabel: { fontSize: WA_TYPE_FOOTNOTE, fontWeight: WA_WEIGHT_SEMIBOLD },
+  statValue: {
+    fontSize: 24,
+    fontWeight: WA_WEIGHT_BOLD,
+    fontVariant: ["tabular-nums"],
+    marginTop: 4,
+  },
+  statSubtitle: { fontSize: 12, marginTop: 2 },
+
+  emptyRow: { paddingHorizontal: WA_CELL_PADDING, paddingVertical: 18 },
+  emptyRowText: { fontSize: WA_TYPE_SUBTITLE },
+
   activityRow: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    minHeight: 48,
+    paddingHorizontal: WA_CELL_PADDING,
+    paddingVertical: 10,
+    gap: 12,
   },
-  activityKind: { fontSize: 15, fontWeight: "500" },
-  activityDonor: { fontSize: 13, marginTop: 2 },
-  activityAmount: { fontSize: 15, fontWeight: "600" },
+  activityAvatar: {
+    width: ACTIVITY_AVATAR,
+    height: ACTIVITY_AVATAR,
+    borderRadius: ACTIVITY_AVATAR / 2,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  activityInitials: { fontSize: 15, fontWeight: WA_WEIGHT_SEMIBOLD },
+  activityText: { flex: 1, minWidth: 0 },
+  activityTitle: { fontSize: WA_TYPE_ROW_TITLE, fontWeight: WA_WEIGHT_SEMIBOLD },
+  activitySubtitle: { fontSize: WA_TYPE_FOOTNOTE, marginTop: 2 },
+  activityAmount: {
+    fontSize: WA_TYPE_SUBTITLE,
+    fontWeight: WA_WEIGHT_SEMIBOLD,
+    fontVariant: ["tabular-nums"],
+  },
+
   expenseRow: {
     flexDirection: "row",
-    // Top-aligned, not centered: the approved rows carry a wrapping note, and
-    // a centered badge would drift to the middle of a three-line row.
+    // Top-aligned, not centered: approved rows carry a wrapping note, and a
+    // centered badge would drift to the middle of a three-line row.
     alignItems: "flex-start",
     justifyContent: "space-between",
-    paddingHorizontal: 16,
+    paddingHorizontal: WA_CELL_PADDING,
     paddingVertical: 12,
-    minHeight: 48,
     gap: 8,
   },
-  expenseDescription: { fontSize: 15, fontWeight: "500" },
-  expenseAmount: { fontSize: 13, marginTop: 2 },
+  expenseText: { flex: 1, minWidth: 0 },
+  expenseDescription: { fontSize: WA_TYPE_SUBTITLE, fontWeight: WA_WEIGHT_SEMIBOLD },
+  expenseAmount: { fontSize: WA_TYPE_FOOTNOTE, marginTop: 2 },
   expenseNote: { fontSize: 12, lineHeight: 16, marginTop: 6 },
 });
