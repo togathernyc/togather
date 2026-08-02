@@ -19,6 +19,16 @@ test.describe("Run sheet expandable rows (web)", () => {
     page,
   }) => {
     await page.goto("/ui-test/run-sheet-expand");
+    // Expo's dev error overlay is an absolutely-positioned `#error-overlay`
+    // that swallows pointer events for the whole page. Every `ui-test` route
+    // mounts the app root, whose Convex client is pointed at the stub
+    // `EXPO_PUBLIC_CONVEX_URL` this suite sets, so a failed connection can raise
+    // it — unrelated to anything under test here, but it makes the chevron
+    // unclickable. Hide it rather than let it intercept clicks; a genuine app
+    // error still fails the assertions below.
+    await page.addStyleTag({
+      content: "#error-overlay { display: none !important; }",
+    });
     await page
       .getByTestId("run-sheet-expand-harness")
       .waitFor({ state: "visible", timeout: 30000 });
