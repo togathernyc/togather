@@ -30,7 +30,7 @@
  * layer in `functions/finance/jobs.ts`.
  */
 
-import { v } from "convex/values";
+import { v, ConvexError } from "convex/values";
 import {
   query,
   action,
@@ -46,6 +46,7 @@ import { isCommunityAdmin } from "../../lib/permissions";
 import { postLedgerEntry } from "../../lib/finance/ledger";
 import { logFinanceAudit } from "../../lib/finance/audit";
 import { buildDonationReceiptEmail } from "../../lib/finance/receipts";
+import { computeCoverFeesCents, COVER_FEE_TOLERANCE_CENTS } from "../../lib/finance/fees";
 import { getResendClient } from "../../lib/resend";
 import { now, getDisplayName } from "../../lib/utils";
 import {
@@ -364,31 +365,61 @@ export const getGivingContext = query({
 // ============================================================================
 
 /**
- * Validates the donor-chosen amount is within Stripe/our own bounds and
- * normalizes `coverFeesCents` to a non-negative integer. Pure (no `ctx`) so
- * it's trivial to unit test directly, but only called from
+ * Validates the donor-chosen amount is within Stripe/our own bounds and that
+ * `coverFeesCents` is a fee we'd actually have quoted for that amount. Pure (no
+ * `ctx`) so it's trivial to unit test directly, but only called from
  * `prepareDonationIntent` — the ONE place that gates every donation-creating
  * action, per the ADR-032 rule that money-initiating actions share one
  * validation path rather than duplicating checks per Stripe surface.
+ *
+ * The fee check is a bound, not a nicety: the card is charged
+ * `amountCents + feeCoverCents`, so a fee field that only had to be
+ * non-negative made `MAX_DONATION_CENTS` a fiction — any total was reachable by
+ * putting the money in the fee. Ceiling the fee at the server's own gross-up
+ * caps the actual charge at
+ * `MAX_DONATION_CENTS + computeCoverFeesCents(MAX_DONATION_CENTS) + COVER_FEE_TOLERANCE_CENTS`.
  */
 function validateDonationAmount(
   amountCents: number,
   coverFeesCents: number | undefined,
-): { feeCoverCents: number } {
+): { amountCents: number; feeCoverCents: number } {
   if (
     !Number.isInteger(amountCents) ||
     amountCents < MIN_DONATION_CENTS ||
     amountCents > MAX_DONATION_CENTS
   ) {
-    throw new Error(
+    throw new ConvexError(
       `Donation amount must be between $${MIN_DONATION_CENTS / 100} and $${MAX_DONATION_CENTS / 100}`,
     );
   }
   const feeCoverCents = coverFeesCents ?? 0;
   if (!Number.isInteger(feeCoverCents) || feeCoverCents < 0) {
-    throw new Error("Invalid fee-cover amount");
+    throw new ConvexError("Invalid fee-cover amount");
   }
-  return { feeCoverCents };
+  // The bound is deliberately ONE-SIDED — a ceiling, not a match. Only an
+  // over-large fee moves money it shouldn't: the card is charged
+  // `amountCents + feeCoverCents`, so it's the upper edge that keeps
+  // MAX_DONATION_CENTS honest. A fee *below* the quote just under-covers the
+  // fund, which is what every client did before this gross-up landed and is
+  // the donor's own money either way.
+  //
+  // That asymmetry is also what makes this safe to ship: the pre-gross-up
+  // estimate diverges from this one by more than the tolerance from $12.93 up,
+  // so a symmetric match would have rejected every fee-covered mid-size gift
+  // from a donor still on the old JS bundle for the whole length of the OTA
+  // rollout. The tolerance absorbs rounding drift on the high side only.
+  const expectedFeeCents = computeCoverFeesCents(amountCents);
+  if (feeCoverCents > expectedFeeCents + COVER_FEE_TOLERANCE_CENTS) {
+    // Logged with the numbers because the donor-facing copy deliberately has
+    // none: a spike here is how we'd notice the two fee implementations drifting.
+    console.warn(
+      `[finance] fee-cover above the quoted fee — amount=${amountCents} submitted=${feeCoverCents} expected=${expectedFeeCents}`,
+    );
+    throw new ConvexError(
+      "We couldn't confirm the processing fee for this gift. Please reopen the give screen and try again.",
+    );
+  }
+  return { amountCents, feeCoverCents };
 }
 
 /**
@@ -411,7 +442,10 @@ export const prepareDonationIntent = internalQuery({
     const userId = await requireAuth(ctx, args.token);
     await requireGroupGivingEnabled(ctx); // Gate donation creation at the source.
 
-    const { feeCoverCents } = validateDonationAmount(args.amountCents, args.coverFeesCents);
+    const { amountCents, feeCoverCents } = validateDonationAmount(
+      args.amountCents,
+      args.coverFeesCents,
+    );
 
     const fund = await ctx.db.get(args.fundId);
     if (!fund) {
@@ -449,6 +483,12 @@ export const prepareDonationIntent = internalQuery({
       communityName: communityFinance.legalName ?? community?.name ?? "",
       fundName: fund.name,
       stripeConnectedAccountId: communityFinance.stripeConnectedAccountId,
+      // BOTH halves of the validated pair come back, and the actions build the
+      // Stripe charge from these — never from their own `args`. Handing back
+      // only the fee would leave the amount side of the cap resting on the
+      // caller's discipline, which is the opposite of what a single
+      // "everything money-initiating goes through here" seam is for.
+      amountCents,
       feeCoverCents,
     };
   },
@@ -510,7 +550,7 @@ export const createDonationIntent = action({
     // per the acquiring topology in ADR-032 §1.
     const paymentIntent = await stripe.paymentIntents.create(
       {
-        amount: args.amountCents + context.feeCoverCents,
+        amount: context.amountCents + context.feeCoverCents,
         currency: "usd",
         automatic_payment_methods: { enabled: true },
         metadata: {
@@ -681,7 +721,7 @@ export const createDonationCheckoutSession = action({
       apiVersion: "2026-02-25.clover",
     });
 
-    const totalCents = args.amountCents + context.feeCoverCents;
+    const totalCents = context.amountCents + context.feeCoverCents;
     const { successUrl, cancelUrl } = buildGiveReturnUrls({
       groupId: context.groupId,
       totalCents,
