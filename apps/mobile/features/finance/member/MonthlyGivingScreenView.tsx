@@ -420,8 +420,48 @@ function AmountEditor({
   );
 }
 
+/**
+ * What the donor sees when Stripe's Billing Portal hands them back inside its
+ * auth-less in-app browser (`?portal_return=1` with no stored token — see
+ * `MonthlyGivingScreen`). There is no session in that browser, so every query
+ * behind the manage screen skips and its skeleton never fills; this is the
+ * terminal notice that replaces it, the same shape as `GiveCancelledNotice`.
+ *
+ * It deliberately does NOT claim the card was changed — the donor may have hit
+ * the portal's own "Return" link without touching anything, and this screen has
+ * no way to know. It says where the truth will show up instead.
+ */
+export function MonthlyGivingPortalReturnNotice() {
+  const { colors } = useTheme();
+  const insets = useSafeAreaInsets();
+  return (
+    <View
+      style={[
+        styles.screen,
+        styles.notice,
+        { backgroundColor: colors.backgroundGrouped, paddingTop: insets.top },
+      ]}
+      testID="monthly-portal-return-notice"
+    >
+      <Ionicons name="card-outline" size={44} color={colors.textSecondary} />
+      <Text style={[styles.noticeTitle, { color: colors.text }]}>Back to the app</Text>
+      <Text style={[styles.noticeCopy, { color: colors.textSecondary }]}>
+        You can close this window. Any change you made shows up in the app on its own.
+      </Text>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   screen: { flex: 1 },
+  notice: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 32,
+    gap: 10,
+  },
+  noticeTitle: { fontSize: 20, fontWeight: WA_WEIGHT_SEMIBOLD },
+  noticeCopy: { fontSize: WA_TYPE_SUBTITLE, textAlign: "center" },
   loadingContainer: { padding: WA_GROUP_MARGIN },
   loadingBlock: { marginBottom: 16 },
   emptyState: { flex: 1, justifyContent: "center" },

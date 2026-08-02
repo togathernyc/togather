@@ -18,16 +18,37 @@
  *     pattern the give sheet uses for Checkout. Nothing here waits on it: the
  *     donor returns to a screen whose queries are live, so a replaced card
  *     shows up on its own when Stripe's webhook lands.
+ *  3. **Stripe's portal returns HERE, and on native that return lands in the
+ *     auth-less in-app browser** — the web app cold-boots with no session,
+ *     every `useAuthenticatedQuery` skips, and the skeleton would never fill.
+ *     `buildRecurringManageUrl` tags that return with `?portal_return=1`, which
+ *     is what lets this screen show a terminal "you can close this window"
+ *     notice there instead. Same trick as the give sheet's `?giving=cancelled`.
+ *
+ * Errors come through `errorMessage`, not `formatError`: a `ConvexError` carries
+ * its text on `.data`, and in PRODUCTION `.message` is only
+ * "[CONVEX A(…)] [Request ID: …] Server Error". Parsing the message would turn
+ * every real rejection this screen can hit — the fee ceiling, the amount
+ * bounds, "this gift is still being set up" — into one generic "please try
+ * again", which is the one thing a donor can't act on.
  */
 import React, { useState } from "react";
 import { Platform } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import * as WebBrowser from "expo-web-browser";
-import { useAuthenticatedQuery, useAuthenticatedAction, api } from "@services/api/convex";
+import {
+  useAuthenticatedQuery,
+  useAuthenticatedAction,
+  useStoredAuthToken,
+  api,
+} from "@services/api/convex";
 import type { Id } from "@services/api/convex";
-import { formatError } from "@/utils/error-handling";
+import { errorMessage } from "@/utils/error-handling";
 import { confirmAsync } from "@/utils/platformAlert";
-import { MonthlyGivingScreenView } from "./MonthlyGivingScreenView";
+import {
+  MonthlyGivingScreenView,
+  MonthlyGivingPortalReturnNotice,
+} from "./MonthlyGivingScreenView";
 import { estimateCoverFeesCents, resolveGiveAmountCents } from "./amount";
 
 /** Opens a URL in the platform's browser sheet — same helper shape as
@@ -41,9 +62,10 @@ async function openHostedUrl(url: string): Promise<void> {
 }
 
 export function MonthlyGivingScreen() {
-  const params = useLocalSearchParams<{ group_id: string }>();
+  const params = useLocalSearchParams<{ group_id: string; portal_return?: string }>();
   const groupId = params.group_id;
   const router = useRouter();
+  const token = useStoredAuthToken();
 
   // The give context is only here for the fund id and the preset chips — this
   // screen never starts a gift, so nothing else on it is used.
@@ -76,6 +98,20 @@ export function MonthlyGivingScreen() {
   const [canceling, setCanceling] = useState(false);
   const [updatingCard, setUpdatingCard] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Stripe's Billing Portal return, landing in the auth-less in-app browser.
+  // Placed after every hook so the hook order never changes; the queries above
+  // already skip without a token, so nothing is in flight behind it.
+  //
+  // NOTE: `useStoredAuthToken` starts at `null` and resolves from storage a
+  // frame or two later, so a signed-in donor returning on WEB (where the app
+  // cold-boots on this URL) sees this notice briefly before the manage screen
+  // takes over. That's the same deliberate trade `GiveScreen` makes for
+  // `?giving=cancelled`: gating on `Platform.OS` instead would hand the native
+  // in-app browser the permanent skeleton this exists to kill.
+  if (params.portal_return === "1" && !token) {
+    return <MonthlyGivingPortalReturnNotice />;
+  }
 
   // `context === null` means giving isn't set up for this group at all, which
   // for this screen is the same answer as "you have no monthly gift here" —
@@ -130,7 +166,7 @@ export function MonthlyGivingScreen() {
       });
       setEditing(false);
     } catch (err) {
-      setError(formatError(err, "Couldn't change this amount. Please try again."));
+      setError(errorMessage(err, "Couldn't change this amount. Please try again."));
     } finally {
       setSaving(false);
     }
@@ -146,7 +182,7 @@ export function MonthlyGivingScreen() {
       });
       await openHostedUrl(url);
     } catch (err) {
-      setError(formatError(err, "Couldn't open the payment page. Please try again."));
+      setError(errorMessage(err, "Couldn't open the payment page. Please try again."));
     } finally {
       setUpdatingCard(false);
     }
@@ -173,7 +209,7 @@ export function MonthlyGivingScreen() {
       // behind it are live, so nothing here has to invalidate anything.
       goToFund();
     } catch (err) {
-      setError(formatError(err, "Couldn't stop this monthly gift. Please try again."));
+      setError(errorMessage(err, "Couldn't stop this monthly gift. Please try again."));
       setCanceling(false);
     }
   };

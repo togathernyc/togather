@@ -38,6 +38,7 @@ jest.mock("@services/api/convex", () => ({
   },
   useAuthenticatedQuery: jest.fn(),
   useAuthenticatedAction: jest.fn(),
+  useStoredAuthToken: jest.fn(),
 }));
 
 jest.mock("expo-router", () => ({
@@ -91,10 +92,13 @@ jest.mock("../MonthlyGivingScreenView", () => {
         </Pressable>
       </>
     ),
+    MonthlyGivingPortalReturnNotice: () => <Text testID="mg-portal-notice">close me</Text>,
   };
 });
 
-const { useAuthenticatedAction } = jest.requireMock("@services/api/convex");
+const { useAuthenticatedAction, useStoredAuthToken } = jest.requireMock(
+  "@services/api/convex",
+);
 const { useRouter } = jest.requireMock("expo-router");
 
 const mockBack = jest.fn();
@@ -131,6 +135,7 @@ describe("MonthlyGivingScreen", () => {
     jest.clearAllMocks();
     recurring = activeRow;
     (useLocalSearchParams as jest.Mock).mockReturnValue({ group_id: "group_1" });
+    (useStoredAuthToken as jest.Mock).mockReturnValue("token_abc");
     (useRouter as jest.Mock).mockReturnValue({
       back: mockBack,
       replace: mockReplace,
@@ -248,6 +253,70 @@ describe("MonthlyGivingScreen", () => {
 
     expect(getByTestId("mg-editing").props.children).toBe("true");
     expect(getByTestId("mg-error").props.children).toMatch(/must be between/);
+  });
+
+  // The shape a rejection ACTUALLY has in production: Convex puts the
+  // `ConvexError` payload on `.data` and reduces `.message` to an opaque
+  // "[CONVEX A(...)] ... Server Error". A message-parsing formatter would swap
+  // the fee ceiling — the one rejection the donor can act on — for a generic
+  // "please try again", so the reason has to come off `.data`.
+  it("surfaces the server's reason from a production-shaped ConvexError", async () => {
+    mockUpdateAmount.mockRejectedValue(
+      Object.assign(
+        new Error(
+          "[CONVEX A(functions/finance/giving:updateRecurringAmount)] [Request ID: abc] Server Error",
+        ),
+        { data: "Fee cover can't be more than the gift itself." },
+      ),
+    );
+    const { getByTestId } = render(<MonthlyGivingScreen />);
+    act(() => {
+      fireEvent.press(getByTestId("mg-start-edit"));
+    });
+    act(() => {
+      fireEvent.press(getByTestId("mg-type-50"));
+    });
+    await act(async () => {
+      fireEvent.press(getByTestId("mg-save"));
+    });
+
+    expect(getByTestId("mg-error").props.children).toBe(
+      "Fee cover can't be more than the gift itself.",
+    );
+  });
+
+  // Stripe's Billing Portal returns to this route, and on native that return
+  // lands in the portal's own auth-less in-app browser: no session, every
+  // query skips, and the skeleton would never fill.
+  describe("returning from Stripe's Billing Portal", () => {
+    it("shows a terminal close-this-window notice when there is no session", () => {
+      (useLocalSearchParams as jest.Mock).mockReturnValue({
+        group_id: "group_1",
+        portal_return: "1",
+      });
+      (useStoredAuthToken as jest.Mock).mockReturnValue(null);
+      const { getByTestId, queryByTestId } = render(<MonthlyGivingScreen />);
+      expect(getByTestId("mg-portal-notice")).toBeTruthy();
+      expect(queryByTestId("mg-recurring")).toBeNull();
+    });
+
+    it("renders the real manage screen when the donor IS signed in", () => {
+      (useLocalSearchParams as jest.Mock).mockReturnValue({
+        group_id: "group_1",
+        portal_return: "1",
+      });
+      const { getByTestId, queryByTestId } = render(<MonthlyGivingScreen />);
+      expect(queryByTestId("mg-portal-notice")).toBeNull();
+      expect(getByTestId("mg-recurring").props.children).toBe("active");
+    });
+
+    // Without the flag a signed-out visitor is just an ordinary unauthenticated
+    // hit on the route, not someone stuck in Stripe's browser.
+    it("does not hijack an ordinary signed-out visit to the route", () => {
+      (useStoredAuthToken as jest.Mock).mockReturnValue(null);
+      const { queryByTestId } = render(<MonthlyGivingScreen />);
+      expect(queryByTestId("mg-portal-notice")).toBeNull();
+    });
   });
 
   describe("stopping the gift", () => {

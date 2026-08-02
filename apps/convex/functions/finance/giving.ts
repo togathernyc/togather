@@ -1542,9 +1542,17 @@ export const sendDonationReceipt = internalAction({
 // ============================================================================
 
 /** The dedicated manage screen for a monthly gift — where the Stripe Billing
- * Portal returns the donor after a card update. */
+ * Portal returns the donor after a card update.
+ *
+ * `portal_return=1` is not decoration. On native the portal opens in an
+ * auth-less in-app browser, so this URL loads the WEB app with no session and
+ * every authenticated query on the manage screen skips — a skeleton that never
+ * fills. The flag is how that screen tells "came back from Stripe with no
+ * session" (show a terminal "you can close this window" notice) apart from
+ * "signed in, auth still restoring" (keep the skeleton). Same shape as
+ * `?giving=cancelled` on the give sheet. */
 function buildRecurringManageUrl(groupId: string): string {
-  return `${DOMAIN_CONFIG.appUrl}/groups/${encodeURIComponent(groupId)}/monthly-giving`;
+  return `${DOMAIN_CONFIG.appUrl}/groups/${encodeURIComponent(groupId)}/monthly-giving?portal_return=1`;
 }
 
 /** Copy the donor actually reads when they already give monthly to this fund. */
