@@ -373,8 +373,10 @@ there is a real window — donor on Stripe's hosted page — in which the row
 exists and the subscription id does not; it is the only handle binding the
 Checkout return and its webhook back to the row, hence
 `by_checkoutSessionId`. Indexes are deliberately five and no more:
-`by_stripeSubscriptionId` (webhook entry), `by_donor_fund` (enforces one
-active monthly gift per donor per fund), `by_fund`, `by_donor`,
+`by_stripeSubscriptionId` (webhook entry), `by_donor_fund` (the lookup the
+create path checks to keep one active monthly gift per donor per fund —
+Convex has no unique constraint, so that rule is enforced in code, not by the
+index), `by_fund`, `by_donor`,
 `by_checkoutSessionId`. `donations.recurringId` — reserved since the original
 schema and never written — is where a charge points back at its subscription.
 
@@ -406,6 +408,24 @@ canceled. The predicate lives in `lib/finance/webhookRouting.ts`
 (`isConnectEvent`) so the rule is testable without the signature-verified
 route. `invoice.paid` needs no such branch — billing never claimed it, so it
 already falls through to the finance dispatcher.
+
+Two boundaries of this foundation are worth stating plainly, because both are
+"correct today, wrong the moment the next PR lands":
+
+- **Routed is not yet handled.** `handleFinanceStripeEvent` has no case for
+  `customer.subscription.updated/deleted` or `invoice.payment_failed` yet, so
+  today a Connect-flagged one is routed away from billing and then returns
+  silently from the dispatcher's `default`. That is the intended landing — the
+  point of this PR is that these events stop corrupting SaaS billing, not that
+  they do anything yet. The subscription-handler PR adds the cases.
+- **`checkout.session.completed` is deliberately NOT gated.** It stays on the
+  billing path regardless of `event.account`, which is safe only while nothing
+  opens a Checkout Session on a connected account (one-off giving uses
+  PaymentIntents, and the Connect destination doesn't subscribe to the event).
+  The PR that adds recurring-giving Checkout must gate this case too:
+  otherwise a donation session completes with `event.account` set and donor
+  metadata, `handleCheckoutCompleted` rejects the missing required
+  `communityId`, and the route 500s into an endless Stripe retry loop.
 
 ## Open questions
 

@@ -3955,7 +3955,12 @@ export default defineSchema({
     // The `recurringDonations` row this gift was billed under, when it came
     // from a monthly subscription rather than a one-off gift. Reserved: no
     // code writes it yet — the `invoice.paid` handler that records a monthly
-    // charge as a donation is the PR that starts stamping it.
+    // charge as a donation is the PR that starts stamping it, and it will
+    // store that row's `_id` stringified. NOTE: the type stays `v.string()`
+    // rather than `v.id("recurringDonations")` because the field predates the
+    // table and re-typing an existing validator is not an additive schema
+    // change; readers must `ctx.db.get(recurringId as Id<"recurringDonations">)`
+    // and cannot rely on Convex to type- or existence-check the reference.
     recurringId: v.optional(v.string()),
     receiptEmailStatus: v.string(), // "pending" | "sent" | "failed" — Resend receipt from the church's name/EIN
     // The Stripe payout this donation was matched into by planAllocations
@@ -4004,8 +4009,11 @@ export default defineSchema({
    * the same account one-off donations charge on.
    *
    * `communityId` is denormalized from the fund at write time, following
-   * `ledgerEntries`' precedent, so donor- and community-scoped queries don't
-   * have to fan out over funds first.
+   * `ledgerEntries`' precedent, so a row carries its community without a
+   * lookup through `funds`. NOTE: there is deliberately no `by_community`
+   * index yet — nothing queries this table community-wide, and an index costs
+   * write throughput on every subscription event. The first community-scoped
+   * read must add one rather than filter the table.
    */
   recurringDonations: defineTable({
     fundId: v.id("funds"),
@@ -4040,12 +4048,22 @@ export default defineSchema({
   })
     // Webhook entry point: Connect subscription/invoice events identify
     // themselves by subscription id and nothing else.
+    //
+    // CAUTION: the field is optional, so every `pending` row shares the same
+    // missing value on this index. `q.eq("stripeSubscriptionId", undefined)`
+    // matches all of them, which means a lookup with an absent id would
+    // return an arbitrary stranger's pending subscription. Every reader MUST
+    // guard on a non-empty id before querying this index.
     .index("by_stripeSubscriptionId", ["stripeSubscriptionId"])
-    // One active monthly gift per donor per fund — this index is what the
-    // create path checks before starting a second Checkout.
+    // One active monthly gift per donor per fund. Convex has no unique
+    // constraint — this index is only the lookup the create path checks
+    // before starting a second Checkout; the rule lives in that code.
     .index("by_donor_fund", ["donorUserId", "fundId"])
     .index("by_fund", ["fundId"]) // Fund's recurring-giving view
-    .index("by_donor", ["donorUserId"]) // Donor's "my giving" management list
+    // Donor's "my giving" management list. Not redundant with by_donor_fund
+    // despite the shared prefix: this one orders a donor's subscriptions by
+    // _creationTime, where by_donor_fund orders by fundId first.
+    .index("by_donor", ["donorUserId"])
     // Resolves the Checkout return/webhook before stripeSubscriptionId exists.
     .index("by_checkoutSessionId", ["checkoutSessionId"]),
 

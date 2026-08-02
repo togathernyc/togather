@@ -19,27 +19,48 @@
  */
 
 import { convexTest } from "convex-test";
-import { expect, test, describe, beforeAll } from "vitest";
+import { expect, test, describe, beforeAll, afterAll } from "vitest";
 import schema from "../schema";
 import { modules } from "../test.setup";
 import { isConnectEvent } from "../lib/finance/webhookRouting";
 
 const WEBHOOK_SECRET = "whsec_test_routing_secret";
 
+const priorWebhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+
 beforeAll(() => {
   process.env.STRIPE_WEBHOOK_SECRET = WEBHOOK_SECRET;
+});
+
+afterAll(() => {
+  // Restore rather than leak — these tests share the process with every other
+  // suite, and a stray STRIPE_WEBHOOK_SECRET changes how other webhook tests
+  // verify signatures.
+  if (priorWebhookSecret === undefined) {
+    delete process.env.STRIPE_WEBHOOK_SECRET;
+  } else {
+    process.env.STRIPE_WEBHOOK_SECRET = priorWebhookSecret;
+  }
 });
 
 /**
  * Build the `stripe-signature` header the route verifies (HMAC-SHA256 over
  * `{timestamp}.{payload}`, same construction as verifyStripeSignature).
+ *
+ * `secret` and `timestamp` are overridable so the signature-enforcement tests
+ * below can produce headers the route must REJECT.
  */
-async function signedHeader(payload: string): Promise<string> {
-  const timestamp = Math.floor(Date.now() / 1000);
+async function signedHeader(
+  payload: string,
+  {
+    secret = WEBHOOK_SECRET,
+    timestamp = Math.floor(Date.now() / 1000),
+  }: { secret?: string; timestamp?: number } = {},
+): Promise<string> {
   const encoder = new TextEncoder();
   const key = await crypto.subtle.importKey(
     "raw",
-    encoder.encode(WEBHOOK_SECRET),
+    encoder.encode(secret),
     { name: "HMAC", hash: "SHA-256" },
     false,
     ["sign"],
@@ -68,6 +89,23 @@ async function postEvent(
     },
     body,
   });
+}
+
+/**
+ * Post with a caller-supplied `stripe-signature` (or none at all), for the
+ * tests that assert the route REJECTS bad signatures.
+ */
+async function postRaw(
+  t: ReturnType<typeof convexTest>,
+  event: Record<string, unknown>,
+  signature: string | null,
+): Promise<Response> {
+  const body = JSON.stringify(event);
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (signature !== null) headers["stripe-signature"] = signature;
+  return await t.fetch("/stripe-webhook", { method: "POST", headers, body });
 }
 
 async function seedSubscribedCommunity(t: ReturnType<typeof convexTest>) {
@@ -204,6 +242,17 @@ describe("/stripe-webhook routes shared event types by event.account", () => {
     // Guard against over-broad routing: only the three ambiguous cases check
     // event.account. A Connect-flagged checkout.session.completed must still
     // reach billing exactly as before.
+    //
+    // This asserts TODAY's behavior, and today it is safe: nothing creates a
+    // Checkout Session on a connected account (one-off giving uses
+    // PaymentIntents), and the Connect event destination does not subscribe
+    // to checkout.session.completed at all. It stops being safe the moment
+    // recurring giving opens Checkout on the connected account — that session
+    // completes with `event.account` set and donor metadata, and billing's
+    // handleCheckoutCompleted requires `communityId: v.string()`, so it would
+    // throw -> 500 -> Stripe retries forever. The PR that adds the
+    // subscription Checkout action MUST gate this case on isConnectEvent too
+    // and flip this assertion.
     const t = convexTest(schema, modules);
     const communityId = await seedSubscribedCommunity(t);
     await t.run(async (ctx) => {
@@ -226,6 +275,102 @@ describe("/stripe-webhook routes shared event types by event.account", () => {
     });
 
     expect(response.status).toBe(200);
+    expect(await subscriptionStatusOf(t, communityId)).toBe("active");
+  });
+
+  test("invoice.paid falls through to the finance dispatcher and no-ops", async () => {
+    // The PR claim being pinned: billing never owned invoice.paid, so it hits
+    // the `default:` arm and reaches handleFinanceStripeEvent, which returns
+    // silently for event types group giving doesn't own yet. 200, and billing
+    // state untouched — with or without event.account.
+    const t = convexTest(schema, modules);
+    const communityId = await seedSubscribedCommunity(t);
+
+    for (const account of [undefined, "acct_connected_123"]) {
+      const response = await postEvent(t, {
+        type: "invoice.paid",
+        ...(account ? { account } : {}),
+        data: { object: { customer: "cus_platform_123", id: "in_123" } },
+      });
+
+      expect(response.status).toBe(200);
+      expect(await subscriptionStatusOf(t, communityId)).toBe("active");
+    }
+  });
+});
+
+// ============================================================================
+// Signature verification — the routing tests above are only meaningful if the
+// route they drive actually rejects unsigned/forged bodies. Without these, a
+// verifyStripeSignature weakened to always-true would leave every test above
+// green while making `event.account` attacker-controlled.
+// ============================================================================
+
+describe("/stripe-webhook rejects anything it cannot verify", () => {
+  const event = {
+    type: "customer.subscription.deleted",
+    data: { object: { id: "sub_platform_123", status: "canceled" } },
+  };
+
+  test("400s when the stripe-signature header is missing", async () => {
+    const t = convexTest(schema, modules);
+    const communityId = await seedSubscribedCommunity(t);
+
+    const response = await postRaw(t, event, null);
+
+    expect(response.status).toBe(400);
+    expect(await subscriptionStatusOf(t, communityId)).toBe("active");
+  });
+
+  test("400s when the signature was made with the wrong secret", async () => {
+    const t = convexTest(schema, modules);
+    const communityId = await seedSubscribedCommunity(t);
+    const body = JSON.stringify(event);
+
+    const response = await postRaw(
+      t,
+      event,
+      await signedHeader(body, { secret: "whsec_not_the_real_secret" }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(await subscriptionStatusOf(t, communityId)).toBe("active");
+  });
+
+  test("400s on a validly-signed but stale payload (replay window)", async () => {
+    const t = convexTest(schema, modules);
+    const communityId = await seedSubscribedCommunity(t);
+    const body = JSON.stringify(event);
+
+    // Correct HMAC, timestamp 10 minutes old — outside the route's 300s
+    // tolerance.
+    const response = await postRaw(
+      t,
+      event,
+      await signedHeader(body, {
+        timestamp: Math.floor(Date.now() / 1000) - 600,
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(await subscriptionStatusOf(t, communityId)).toBe("active");
+  });
+
+  test("400s when the signed body is tampered with after signing", async () => {
+    const t = convexTest(schema, modules);
+    const communityId = await seedSubscribedCommunity(t);
+
+    // Sign the honest body, then send one with `account` injected — the exact
+    // forgery the routing predicate would be vulnerable to if the signature
+    // covered anything less than the whole body.
+    const signature = await signedHeader(JSON.stringify(event));
+    const response = await postRaw(
+      t,
+      { ...event, account: "acct_attacker" },
+      signature,
+    );
+
+    expect(response.status).toBe(400);
     expect(await subscriptionStatusOf(t, communityId)).toBe("active");
   });
 });
