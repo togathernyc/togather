@@ -32,9 +32,11 @@ export function FundScreen() {
     fundId ? { fundId } : "skip",
   );
 
-  // Manager+ (or leader/community admin) viewers get a "Manage" link to the
-  // leader giving hub (approvals + roles) — the only nav entry point into it
-  // besides deep links, since the per-group toolbar config is out of scope.
+  // Manager+ (or leader/community admin) viewers get the "Fund settings" cell
+  // linking to the leader giving hub (approvals + roles) — the only nav entry
+  // point into it besides deep links, since the per-group toolbar config is
+  // out of scope. Passing `onManagePress` IS the gate: `FundScreenView`
+  // renders the whole "Fund" card only when it's set.
   const myRole = useAuthenticatedQuery(
     api.functions.finance.roles.getMyFundRole,
     fundId ? { fundId } : "skip",

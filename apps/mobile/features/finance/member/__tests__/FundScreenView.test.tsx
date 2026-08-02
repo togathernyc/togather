@@ -24,7 +24,12 @@ jest.mock("@hooks/useTheme", () => ({
       link: "#06f",
       destructive: "#c00",
       iconSecondary: "#999",
+      separator: "#e0e0e0",
+      backgroundGrouped: "#F2F2F2",
+      surfaceGrouped: "#FFFFFF",
+      buttonPrimaryText: "#fff",
     },
+    isDark: false,
   }),
 }));
 
@@ -179,7 +184,7 @@ describe("FundScreenView", () => {
     expect(screen.queryByText(/card fees/)).toBeNull();
   });
 
-  it("labels activity kinds and formats signed amounts, showing donor names when present", () => {
+  it("titles an activity row with the donor and captions it with kind + date", () => {
     render(
       <FundScreenView
         overview={baseOverview}
@@ -189,12 +194,26 @@ describe("FundScreenView", () => {
         onGetReimbursedPress={noop}
       />,
     );
-    expect(screen.getByText("Donation")).toBeTruthy();
-    expect(screen.getByText(formatSignedCents(5000, "credit"))).toBeTruthy();
     expect(screen.getByText("Jane Smith")).toBeTruthy();
-
-    expect(screen.getByText("Card purchase")).toBeTruthy();
+    expect(screen.getByText(/^Donation · /)).toBeTruthy();
+    expect(screen.getByText(formatSignedCents(5000, "credit"))).toBeTruthy();
     expect(screen.getByText(formatSignedCents(1200, "debit"))).toBeTruthy();
+  });
+
+  // An anonymized debit has no name to lead with, so the kind has to serve as
+  // the title — otherwise the row opens with a blank line.
+  it("falls back to the ledger kind as the title when there's no donor name", () => {
+    render(
+      <FundScreenView
+        overview={baseOverview}
+        myExpenses={baseExpenses}
+        onBack={noop}
+        onGivePress={noop}
+        onGetReimbursedPress={noop}
+      />,
+    );
+    expect(screen.getByText("Card purchase")).toBeTruthy();
+    expect(screen.getByText(/^Card purchase · /)).toBeTruthy();
   });
 
   it("hides donor names when the overview omits them (viewer isn't manager+)", () => {
@@ -227,6 +246,64 @@ describe("FundScreenView", () => {
     );
     expect(screen.getByText("Snacks")).toBeTruthy();
     expect(screen.getByText("Pending")).toBeTruthy();
+  });
+
+  it("offers 'Get reimbursed' as a cell in the reimbursements card, not in the hero", () => {
+    const onGetReimbursedPress = jest.fn();
+    render(
+      <FundScreenView
+        overview={baseOverview}
+        myExpenses={baseExpenses}
+        onBack={noop}
+        onGivePress={noop}
+        onGetReimbursedPress={onGetReimbursedPress}
+      />,
+    );
+    fireEvent.press(screen.getByText("Get reimbursed"));
+    expect(onGetReimbursedPress).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("Spent for the group? Send the receipt.")).toBeTruthy();
+  });
+
+  it("says so plainly when the viewer has no reimbursement requests", () => {
+    render(
+      <FundScreenView
+        overview={baseOverview}
+        myExpenses={[]}
+        onBack={noop}
+        onGivePress={noop}
+        onGetReimbursedPress={noop}
+      />,
+    );
+    expect(screen.getByText("No requests yet")).toBeTruthy();
+  });
+
+  // `onManagePress` IS the permission gate — a member without it must not see
+  // the leader hub exists at all.
+  describe("Fund settings", () => {
+    const renderWithManage = (onManagePress?: () => void) =>
+      render(
+        <FundScreenView
+          overview={baseOverview}
+          myExpenses={baseExpenses}
+          onBack={noop}
+          onGivePress={noop}
+          onGetReimbursedPress={noop}
+          onManagePress={onManagePress}
+        />,
+      );
+
+    it("is hidden for a viewer who can't manage the fund", () => {
+      renderWithManage(undefined);
+      expect(screen.queryByText("Fund settings")).toBeNull();
+    });
+
+    it("opens the leader hub for a manager", () => {
+      const onManagePress = jest.fn();
+      renderWithManage(onManagePress);
+      expect(screen.getByText("Leaders only")).toBeTruthy();
+      fireEvent.press(screen.getByText("Fund settings"));
+      expect(onManagePress).toHaveBeenCalledTimes(1);
+    });
   });
 
   // An approved reimbursement is NOT money in flight: the ACH payout is still
@@ -282,7 +359,7 @@ describe("FundScreenView", () => {
     });
   });
 
-  it("fires onGivePress from the header Give button", () => {
+  it("fires onGivePress from the hero's single primary pill", () => {
     const onGivePress = jest.fn();
     render(
       <FundScreenView
