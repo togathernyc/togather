@@ -24,6 +24,8 @@ import { modules } from "../test.setup";
 import type { Id } from "../_generated/dataModel";
 import { generateTokens } from "../lib/auth";
 import { buildDonationReceiptEmail } from "../lib/finance/receipts";
+import { buildGiveReturnUrls } from "../functions/finance/giving";
+import { DOMAIN_CONFIG } from "@togather/shared/config";
 
 process.env.JWT_SECRET = "test-jwt-secret-for-unit-tests-minimum-32-chars";
 
@@ -597,7 +599,7 @@ describe("prepareDonationIntent", () => {
     ).rejects.toThrow("Invalid fee-cover amount");
   });
 
-  test("returns the connected-account context, fund name, and groupId for a valid request", async () => {
+  test("returns the connected-account context, fund/community names, and groupId for a valid request", async () => {
     const t = convexTest(schema, modules);
     const s = await seedGivingFixture(t);
 
@@ -612,6 +614,9 @@ describe("prepareDonationIntent", () => {
       userId: s.donorUserId,
       communityId: s.communityId,
       groupId: s.groupId,
+      // The legal name the receipt is issued under wins over the community's
+      // display name ("Test Church"), matching getGivingContext.
+      communityName: "Test Church Inc.",
       fundName: "Young Adults Fund",
       stripeConnectedAccountId: "acct_test123",
       feeCoverCents: 60,
@@ -637,6 +642,154 @@ describe("prepareDonationIntent", () => {
         amountCents: 1000,
       }),
     ).rejects.toThrow();
+  });
+});
+
+// ============================================================================
+// buildGiveReturnUrls — the Checkout success/cancel URLs. Asserted on the
+// pure builder rather than through the Stripe-calling action, per this file's
+// header convention.
+// ============================================================================
+
+describe("buildGiveReturnUrls", () => {
+  test("sends a completed gift to the give-success screen with everything it renders from", async () => {
+    const { successUrl } = buildGiveReturnUrls({
+      groupId: "abc123",
+      totalCents: 2650, // $25 gift + $1.50 fee cover — the total actually charged
+      fundName: "Young Adults Fund",
+      communityName: "Test Church Inc.",
+    });
+
+    expect(successUrl).toBe(
+      `${DOMAIN_CONFIG.appUrl}/groups/abc123/give-success` +
+        `?session_id={CHECKOUT_SESSION_ID}` +
+        `&amount=2650` +
+        `&fund=Young%20Adults%20Fund` +
+        `&community=Test%20Church%20Inc.`,
+    );
+    // Stripe substitutes this placeholder itself — percent-encoding the
+    // braces would leave the literal string in the redirect.
+    expect(successUrl).toContain("session_id={CHECKOUT_SESSION_ID}");
+    // The old return URL was the PUBLIC share page, which handles none of
+    // these params.
+    expect(successUrl).not.toContain("/g/");
+  });
+
+  test("escapes fund and community names that contain URL-significant characters", async () => {
+    const { successUrl } = buildGiveReturnUrls({
+      groupId: "g1",
+      totalCents: 100,
+      fundName: "Youth & Kids?",
+      communityName: "St. Mary's Church + Center",
+    });
+
+    expect(successUrl).toContain("&fund=Youth%20%26%20Kids%3F");
+    expect(successUrl).toContain("&community=St.%20Mary's%20Church%20%2B%20Center");
+  });
+
+  test("sends a cancelled gift back to the give screen, not the public share page", async () => {
+    const { cancelUrl } = buildGiveReturnUrls({
+      groupId: "abc123",
+      totalCents: 1000,
+      fundName: "Fund",
+      communityName: "Church",
+    });
+
+    expect(cancelUrl).toBe(
+      `${DOMAIN_CONFIG.appUrl}/groups/abc123/give?giving=cancelled`,
+    );
+  });
+});
+
+// ============================================================================
+// getCheckoutSessionStatus — what the native waiting screen subscribes to so
+// it can dismiss the in-app browser once the webhook records the gift.
+// ============================================================================
+
+describe("getCheckoutSessionStatus", () => {
+  /** Simulates the webhook's write for `paymentIntentId`. */
+  async function simulateWebhook(
+    t: ReturnType<typeof convexTest>,
+    s: GivingFixture,
+    paymentIntentId: string,
+    donorUserId = s.donorUserId,
+  ) {
+    await t.mutation(internal.functions.finance.giving.recordDonationSucceeded, {
+      paymentIntentId,
+      fundId: s.fundId,
+      donorUserId,
+      amountCents: 2500,
+      feeCoverCents: 150,
+      communityId: s.communityId,
+    });
+  }
+
+  test("is pending before the webhook lands, complete after", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seedGivingFixture(t);
+    const token = await tokenFor(s.donorUserId);
+
+    expect(
+      await t.query(api.functions.finance.giving.getCheckoutSessionStatus, {
+        token,
+        sessionId: "pi_waiting_1",
+      }),
+    ).toEqual({ status: "pending" });
+
+    await simulateWebhook(t, s, "pi_waiting_1");
+
+    expect(
+      await t.query(api.functions.finance.giving.getCheckoutSessionStatus, {
+        token,
+        sessionId: "pi_waiting_1",
+      }),
+    ).toEqual({
+      status: "complete",
+      amountCents: 2650, // gift + fee cover — the total charged
+      fundName: "Young Adults Fund",
+      communityName: "Test Church Inc.",
+    });
+  });
+
+  test("is pending for an unauthenticated caller, even once the gift is recorded", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seedGivingFixture(t);
+    await simulateWebhook(t, s, "pi_anon_1");
+
+    expect(
+      await t.query(api.functions.finance.giving.getCheckoutSessionStatus, {
+        sessionId: "pi_anon_1",
+      }),
+    ).toEqual({ status: "pending" });
+  });
+
+  test("never reveals another donor's gift", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seedGivingFixture(t);
+    // The gift belongs to memberUserId; donorUserId goes fishing for it.
+    await simulateWebhook(t, s, "pi_someone_else", s.memberUserId);
+
+    expect(
+      await t.query(api.functions.finance.giving.getCheckoutSessionStatus, {
+        token: await tokenFor(s.donorUserId),
+        sessionId: "pi_someone_else",
+      }),
+    ).toEqual({ status: "pending" });
+  });
+
+  // Documents the known limitation: nothing stores a Checkout Session id, so
+  // only the PaymentIntent id createDonationCheckoutSession returns resolves.
+  test("is pending for a raw Checkout Session id", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seedGivingFixture(t);
+    await simulateWebhook(t, s, "pi_cs_case");
+
+    expect(
+      await t.query(api.functions.finance.giving.getCheckoutSessionStatus, {
+        token: await tokenFor(s.donorUserId),
+        sessionId: "cs_test_abc123",
+      }),
+    ).toEqual({ status: "pending" });
   });
 });
 

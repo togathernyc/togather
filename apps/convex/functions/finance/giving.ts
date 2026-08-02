@@ -9,7 +9,9 @@
  *      decision — zero native dependencies, ships via OTA, Apple Pay works in
  *      the browser sheet) for the donor to complete in-browser.
  *      `createDonationIntent` is the not-yet-used native-payment-sheet
- *      alternative kept for ADR-032's still-open question.
+ *      alternative kept for ADR-032's still-open question. While the donor is
+ *      in that browser sheet the app watches `getCheckoutSessionStatus` to
+ *      know when to close it.
  *   2. The Stripe webhook layer (functions/finance/webhooks.ts) calls
  *      `recordDonationSucceeded` on `payment_intent.succeeded` — Checkout's
  *      `payment_intent_data.metadata` lands on that PaymentIntent exactly
@@ -38,7 +40,7 @@ import {
 } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
-import { requireAuth } from "../../lib/auth";
+import { getOptionalAuth, requireAuth } from "../../lib/auth";
 import { isActiveMember, hasFundRole } from "../../lib/helpers";
 import { isCommunityAdmin } from "../../lib/permissions";
 import { postLedgerEntry } from "../../lib/finance/ledger";
@@ -433,16 +435,18 @@ export const prepareDonationIntent = internalQuery({
       throw new Error("Giving isn't set up for this community yet");
     }
 
-    // The group's shortId powers the Checkout return URL: /g/<shortId> is
-    // environment-aware via DOMAIN_CONFIG AND already claimed by the Android
-    // App Link intent filters (app.config.js), unlike /groups/... paths.
-    const group = fund.groupId ? await ctx.db.get(fund.groupId) : null;
+    // The donor-facing community name, resolved the same way the give sheet
+    // resolves it (getGivingContext's `communityLegalName`): the legal name
+    // the receipt is issued under, falling back to the community's display
+    // name. It goes in the Checkout return URL so the give-success screen can
+    // say who the gift went to without a round trip.
+    const community = await ctx.db.get(fund.communityId);
 
     return {
       userId,
       communityId: fund.communityId,
       groupId: fund.groupId,
-      groupShortId: group?.shortId,
+      communityName: communityFinance.legalName ?? community?.name ?? "",
       fundName: fund.name,
       stripeConnectedAccountId: communityFinance.stripeConnectedAccountId,
       feeCoverCents,
@@ -550,30 +554,49 @@ export const createDonationIntent = action({
 // ============================================================================
 
 /**
- * The https link the Checkout session redirects back to on completion/
+ * The https links the Checkout session redirects back to on completion /
  * cancellation — NOT the custom "togather://" scheme (Stripe requires
- * https). Built from DOMAIN_CONFIG so staging redirects stay on
- * staging.togather.nyc, and preferring the /g/<shortId> share link because
- * that path is claimed by BOTH the iOS associated domains and the Android
- * App Link intent filters (app.config.js) — /groups/... paths are not
- * Android-claimed, so they'd strand Android donors in the browser. Convex
- * reactivity — not the redirect itself — refreshes the fund screen once
- * the donation lands.
+ * https).
+ *
+ * Both live on `DOMAIN_CONFIG.appUrl`, the origin the Expo web app is served
+ * from (staging.togather.nyc on staging, togather.nyc in production). Unlike
+ * a group's `shortId` — which the previous /g/<shortId> return URL depended
+ * on and which not every group has — that origin is a constant, so there is
+ * no degraded branch to reason about.
+ *
+ * Two consequences worth knowing:
+ *  - `/groups/...` is NOT in the Android App Link intent filters
+ *    (apps/mobile/app.config.js only claims /e/, /g/, /c/, /a/, /nearme,
+ *    /onboarding/go-live), so an Android donor completing Checkout lands on
+ *    the WEB give-success screen rather than being handed back to the app.
+ *    That's exactly what `getCheckoutSessionStatus` is for: the native
+ *    waiting screen watches for the donation and dismisses the in-app
+ *    browser itself, independent of any deep link.
+ *  - `{CHECKOUT_SESSION_ID}` is Stripe's own literal template placeholder —
+ *    it must reach Stripe unencoded, which is why the query string is built
+ *    by hand instead of with URLSearchParams (which would percent-encode the
+ *    braces).
+ *
+ * Amount/fund/community ride along in the URL because the success screen is
+ * reached by a plain browser redirect: it renders the confirmation from the
+ * params alone, with no session and no query of its own.
  */
-function checkoutReturnUrl(
-  groupShortId: string | undefined,
-  groupId: string,
-): string {
-  if (groupShortId) {
-    return DOMAIN_CONFIG.groupShareUrl(groupShortId);
-  }
-  // Fallback for groups without a shortId: environment-correct, reopens the
-  // app on iOS; Android lands on web (acceptable degradation, logged so we
-  // can see if it ever actually happens).
-  console.warn(
-    `[finance] checkoutReturnUrl: group ${groupId} has no shortId — Android return degrades to browser`,
-  );
-  return `${DOMAIN_CONFIG.appUrl}/groups/${groupId}/fund`;
+export function buildGiveReturnUrls(params: {
+  groupId: string;
+  /** Integer cents the Checkout session actually charges — gift + fee cover. */
+  totalCents: number;
+  fundName: string;
+  communityName: string;
+}): { successUrl: string; cancelUrl: string } {
+  const groupUrl = `${DOMAIN_CONFIG.appUrl}/groups/${params.groupId}`;
+  return {
+    successUrl:
+      `${groupUrl}/give-success?session_id={CHECKOUT_SESSION_ID}` +
+      `&amount=${params.totalCents}` +
+      `&fund=${encodeURIComponent(params.fundName)}` +
+      `&community=${encodeURIComponent(params.communityName)}`,
+    cancelUrl: `${groupUrl}/give?giving=cancelled`,
+  };
 }
 
 /**
@@ -598,7 +621,14 @@ export const createDonationCheckoutSession = action({
     // action's doc comment.
     idempotencyNonce: v.optional(v.string()),
   },
-  handler: async (ctx, args): Promise<{ url: string; sessionId: string }> => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    url: string;
+    sessionId: string;
+    paymentIntentId: string | null;
+  }> => {
     const context = await ctx.runQuery(
       internal.functions.finance.giving.prepareDonationIntent,
       {
@@ -609,9 +639,10 @@ export const createDonationCheckoutSession = action({
       },
     );
     if (!context.groupId) {
-      // The success/cancel universal links land on a group's fund screen
-      // (`/groups/[group_id]/fund`) — a community-wide general fund has no
-      // such screen yet, so hosted Checkout isn't wired for it.
+      // The success/cancel links are group-scoped routes
+      // (`/groups/[group_id]/give-success` and `.../give`) — a community-wide
+      // general fund has no such screen yet, so hosted Checkout isn't wired
+      // for it.
       throw new Error("Checkout isn't available for this fund yet");
     }
 
@@ -621,7 +652,12 @@ export const createDonationCheckoutSession = action({
     });
 
     const totalCents = args.amountCents + context.feeCoverCents;
-    const fundUrl = checkoutReturnUrl(context.groupShortId, context.groupId);
+    const { successUrl, cancelUrl } = buildGiveReturnUrls({
+      groupId: context.groupId,
+      totalCents,
+      fundName: context.fundName,
+      communityName: context.communityName,
+    });
 
     // Created ON the community's connected account (`stripeAccount`) — same
     // direct-charge topology as createDonationIntent, per ADR-032 §1.
@@ -638,8 +674,8 @@ export const createDonationCheckoutSession = action({
             quantity: 1,
           },
         ],
-        success_url: `${fundUrl}?giving=success`,
-        cancel_url: `${fundUrl}?giving=cancelled`,
+        success_url: successUrl,
+        cancel_url: cancelUrl,
         payment_intent_data: {
           description: `Donation — ${context.fundName}`,
           // Same shape recordDonationSucceeded/handleFinanceStripeEvent
@@ -670,7 +706,100 @@ export const createDonationCheckoutSession = action({
       throw new Error("Stripe did not return a Checkout URL");
     }
 
-    return { url: session.url, sessionId: session.id };
+    // Checkout creates the PaymentIntent up front for a `payment`-mode
+    // session, and that id is the ONLY thing this checkout attempt and the
+    // eventual `donations` row have in common (a donation stores
+    // `stripePaymentIntentId`; nothing anywhere stores a Checkout Session
+    // id). Handing it back is what lets the waiting screen poll
+    // `getCheckoutSessionStatus` — see that query's doc comment.
+    const paymentIntentId =
+      typeof session.payment_intent === "string"
+        ? session.payment_intent
+        : (session.payment_intent?.id ?? null);
+
+    return { url: session.url, sessionId: session.id, paymentIntentId };
+  },
+});
+
+// ============================================================================
+// getCheckoutSessionStatus — the native waiting screen's "did it land yet?"
+// ============================================================================
+
+/**
+ * Whether the donation for a checkout attempt has been recorded yet, so the
+ * mobile give flow can dismiss its in-app browser the moment the money lands
+ * instead of waiting on a deep link that Android never delivers (see
+ * `buildGiveReturnUrls`).
+ *
+ * `sessionId` is the checkout attempt's identifier as returned by
+ * `createDonationCheckoutSession` — pass its `paymentIntentId`.
+ *
+ * LIMITATION (deliberate, no schema change): nothing in the database records
+ * a Stripe *Checkout Session* id. The webhook path
+ * (`webhooks.ts` payment_intent.succeeded → `recordDonationSucceeded`) keys a
+ * donation solely by its PaymentIntent, so the PaymentIntent id is the only
+ * available join key. A raw `cs_...` Checkout Session id — what Stripe
+ * substitutes into the success URL's `session_id` param — will therefore
+ * never match and always reads "pending". The web give-success screen doesn't
+ * need it to: it renders from the URL params.
+ *
+ * Never throws and never reveals another donor's gift: no token, an
+ * unrecognized id, or a donation belonging to someone else all return the
+ * same `{ status: "pending" }`. A waiting screen that can't confirm is
+ * indistinguishable from one that hasn't been confirmed yet, which is the
+ * safe direction to fail.
+ */
+export const getCheckoutSessionStatus = query({
+  args: {
+    token: v.optional(v.string()),
+    sessionId: v.string(),
+  },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    status: "pending" | "complete";
+    amountCents?: number;
+    fundName?: string;
+    communityName?: string;
+  }> => {
+    const userId = await getOptionalAuth(ctx, args.token);
+    if (!userId) {
+      return { status: "pending" };
+    }
+
+    const donation = await ctx.db
+      .query("donations")
+      .withIndex("by_stripePaymentIntentId", (q) =>
+        q.eq("stripePaymentIntentId", args.sessionId),
+      )
+      .first();
+    if (!donation || donation.donorUserId !== userId) {
+      return { status: "pending" };
+    }
+
+    const fund = await ctx.db.get(donation.fundId);
+    const communityFinance = fund
+      ? await ctx.db
+          .query("communityFinance")
+          .withIndex("by_community", (q) =>
+            q.eq("communityId", fund.communityId),
+          )
+          .first()
+      : null;
+    const community = fund ? await ctx.db.get(fund.communityId) : null;
+
+    return {
+      status: "complete",
+      // The total the donor was actually charged — the gift plus whatever
+      // fee cover they opted into — matching the `amount` param the success
+      // URL carries.
+      amountCents: donation.amountCents + donation.feeCoverCents,
+      fundName: fund?.name,
+      // Same name the give sheet and the return URL use — see
+      // prepareDonationIntent.
+      communityName: communityFinance?.legalName ?? community?.name,
+    };
   },
 });
 
