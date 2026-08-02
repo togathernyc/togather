@@ -48,6 +48,38 @@ describe("parseGiveSuccessParams", () => {
     expect(parseGiveSuccessParams({}).fundLine).toBeNull();
   });
 
+  // The amount above the fund line is ONE MONTH's charge. Without "every
+  // month", the screen reads as a one-off for the same money.
+  describe("a monthly gift", () => {
+    it("says the gift repeats, and to where", () => {
+      expect(
+        parseGiveSuccessParams({ fund: "Young Adults", recurring: "1" }).fundLine,
+      ).toBe("every month to Young Adults");
+    });
+
+    it("still says it repeats when the fund name is missing", () => {
+      expect(parseGiveSuccessParams({ recurring: "1" }).fundLine).toBe("every month");
+    });
+
+    it("acknowledges the monthly commitment in the thank-you", () => {
+      expect(
+        parseGiveSuccessParams({ community: "First Church Inc.", recurring: "1" })
+          .thankYouLine,
+      ).toBe("First Church Inc. says thank you for giving monthly");
+      expect(parseGiveSuccessParams({ recurring: "1" }).thankYouLine).toBe(
+        "Thank you for giving monthly 🎉",
+      );
+    });
+
+    // Only the flag the backend and the native watcher actually set counts —
+    // anything else is a hand-typed URL and reads as a one-off.
+    it.each(["0", "true", "yes", ""])("ignores recurring=%p", (recurring) => {
+      expect(parseGiveSuccessParams({ fund: "Young Adults", recurring }).fundLine).toBe(
+        "to Young Adults",
+      );
+    });
+  });
+
   // expo-router hands repeated query keys back as an array.
   it("takes the first value when a param repeats", () => {
     expect(

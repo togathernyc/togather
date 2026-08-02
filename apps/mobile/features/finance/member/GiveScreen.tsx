@@ -24,8 +24,20 @@
  *     browser — where every `useAuthenticatedQuery` skips and the screen would
  *     sit on a skeleton forever. Unauthenticated + cancelled renders a static
  *     notice instead.
+ *
+ * MONTHLY gifts reuse all of it with one substitution. Subscription-mode
+ * Checkout has NO PaymentIntent, so there is nothing for
+ * `getCheckoutSessionStatus` to watch. Instead the waiting step subscribes to
+ * `getRecurringForFund` — a live (not polled) Convex query that returns only
+ * `active`/`past_due` rows — and advances when it hands back the very row this
+ * submission created. Stripe drives that flip in two beats:
+ * `checkout.session.completed` binds the subscription to the pending row, then
+ * `invoice.paid` activates it. Only `active` advances: `past_due` means the
+ * first invoice failed, and a thank-you screen for a declined card is a lie the
+ * donor's statement contradicts — they stay on the waiting step with Reopen and
+ * Cancel, exactly as a failed one-off does.
  */
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Platform } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import * as WebBrowser from "expo-web-browser";
@@ -37,7 +49,12 @@ import {
 } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 import { formatError } from "@/utils/error-handling";
-import { GiveScreenView, GiveCancelledNotice, type GiveStep } from "./GiveScreenView";
+import {
+  GiveScreenView,
+  GiveCancelledNotice,
+  type GiveStep,
+  type GiveFrequency,
+} from "./GiveScreenView";
 import { estimateCoverFeesCents, resolveGiveAmountCents } from "./amount";
 import { urlSafeName } from "./giveSuccessParams";
 import type { CheckoutSession } from "./types";
@@ -66,8 +83,12 @@ export function GiveScreen() {
   const createDonationCheckoutSession = useAuthenticatedAction(
     api.functions.finance.giving.createDonationCheckoutSession,
   );
+  const createRecurringDonationCheckoutSession = useAuthenticatedAction(
+    api.functions.finance.giving.createRecurringDonationCheckoutSession,
+  );
 
   const [step, setStep] = useState<GiveStep>("amount");
+  const [frequency, setFrequency] = useState<GiveFrequency>("once");
   const [selectedPresetCents, setSelectedPresetCents] = useState<number | null>(null);
   const [customAmountText, setCustomAmountText] = useState("");
   const [coverFees, setCoverFees] = useState(false);
@@ -96,53 +117,120 @@ export function GiveScreen() {
     watchedPaymentIntentId ? { paymentIntentId: watchedPaymentIntentId } : "skip",
   );
 
+  // The monthly equivalent. `getRecurringForFund` is donor-scoped and returns
+  // only a LIVE row, so "it came back non-null with our id" is precisely
+  // "Stripe bound the subscription and the first invoice was paid".
+  const watchedRecurringDonationId =
+    step === "confirmation" ? (checkoutSession?.recurringDonationId ?? null) : null;
+  const recurringStatus = useAuthenticatedQuery(
+    api.functions.finance.giving.getRecurringForFund,
+    watchedRecurringDonationId && context?.fundId
+      ? { fundId: context.fundId as Id<"funds"> }
+      : "skip",
+  );
+
   // Guards the redirect against a re-render firing it twice (the query stays
-  // "complete" once it flips, and `router.replace` isn't idempotent).
+  // "complete" once it flips, and `router.replace` isn't idempotent). Shared
+  // by both watchers — only one is ever live, and a single latch means neither
+  // can double-navigate the other.
   const advancedRef = useRef(false);
+
+  /**
+   * Hands the donor to the thank-you screen. Shared by both watchers so the
+   * one-off and monthly paths can never drift on the query string the
+   * zero-auth success screen renders from.
+   */
+  const goToThankYou = useCallback(
+    (gift: {
+      amountCents: number;
+      fund: string;
+      community: string;
+      recurring: boolean;
+    }) => {
+      // The browser sheet is a native-only surface; on web the donor is already
+      // ON Stripe's page and its own `success_url` navigation does this job.
+      // Dismissing is a courtesy, never a precondition for the thank-you: when
+      // nothing is open this throws on some platforms and rejects on others, and
+      // the `.then` wrapper swallows both.
+      if (Platform.OS !== "web") {
+        Promise.resolve()
+          .then(() => WebBrowser.dismissBrowser())
+          .catch(() => {});
+      }
+
+      // `urlSafeName`, not bare `encodeURIComponent`: it throws on an unpaired
+      // surrogate, and throwing here — after `advancedRef` has latched — costs
+      // the donor the thank-you screen with no retry. Same helper shape the
+      // backend uses to build Stripe's success_url.
+      const query =
+        `?amount=${gift.amountCents}` +
+        `&fund=${urlSafeName(gift.fund)}` +
+        `&community=${urlSafeName(gift.community)}` +
+        // Matches `buildGiveReturnUrls`' own flag, so a monthly gift reads the
+        // same whether the donor came back through Stripe's redirect or
+        // through this watcher.
+        (gift.recurring ? "&recurring=1" : "");
+      router.replace(`/groups/${groupId}/give-success${query}` as any);
+    },
+    [groupId, router],
+  );
 
   useEffect(() => {
     if (checkoutStatus?.status !== "complete") return;
     if (advancedRef.current) return;
     advancedRef.current = true;
 
-    // The browser sheet is a native-only surface; on web the donor is already
-    // ON Stripe's page and its own `success_url` navigation does this job.
-    // Dismissing is a courtesy, never a precondition for the thank-you: when
-    // nothing is open this throws on some platforms and rejects on others, and
-    // the `.then` wrapper swallows both.
-    if (Platform.OS !== "web") {
-      Promise.resolve()
-        .then(() => WebBrowser.dismissBrowser())
-        .catch(() => {});
-    }
-
     // The query's own values win over local state: they're what was actually
     // charged and recorded, where the local total is only what was requested.
     const giftCents = resolveGiveAmountCents(selectedPresetCents, customAmountText) ?? 0;
     const localTotalCents =
       giftCents + (coverFees ? estimateCoverFeesCents(giftCents) : 0);
-    const amountCents = checkoutStatus.amountCents ?? localTotalCents;
-    const fund = checkoutStatus.fundName ?? context?.fundName ?? "";
-    const community = checkoutStatus.communityName ?? context?.communityLegalName ?? "";
-
-    // `urlSafeName`, not bare `encodeURIComponent`: it throws on an unpaired
-    // surrogate, and throwing here — after `advancedRef` has latched — costs
-    // the donor the thank-you screen with no retry. Same helper shape the
-    // backend uses to build Stripe's success_url.
-    const query =
-      `?amount=${amountCents}` +
-      `&fund=${urlSafeName(fund)}` +
-      `&community=${urlSafeName(community)}`;
-    router.replace(`/groups/${groupId}/give-success${query}` as any);
+    goToThankYou({
+      amountCents: checkoutStatus.amountCents ?? localTotalCents,
+      fund: checkoutStatus.fundName ?? context?.fundName ?? "",
+      community: checkoutStatus.communityName ?? context?.communityLegalName ?? "",
+      recurring: false,
+    });
   }, [
     checkoutStatus,
     context?.fundName,
     context?.communityLegalName,
     coverFees,
     customAmountText,
-    groupId,
-    router,
+    goToThankYou,
     selectedPresetCents,
+  ]);
+
+  // The monthly watcher. Two guards beyond "a row came back":
+  //
+  //  - the id must be THIS submission's, so a row created in another tab (or
+  //    an unrelated live gift the donor somehow has) can't fake a thank-you;
+  //  - the status must be `active`, not merely live. `past_due` means the very
+  //    first invoice failed, and thanking someone for a declined card is the
+  //    one screen that would stop them from fixing it.
+  useEffect(() => {
+    if (!watchedRecurringDonationId) return;
+    if (!recurringStatus || recurringStatus.id !== watchedRecurringDonationId) return;
+    if (recurringStatus.status !== "active") return;
+    if (advancedRef.current) return;
+    advancedRef.current = true;
+
+    // Server truth again: the row holds the validated gift/fee split, so the
+    // amount shown is what the subscription actually bills.
+    goToThankYou({
+      amountCents: recurringStatus.amountCents + recurringStatus.feeCoverCents,
+      fund: recurringStatus.fundName || (context?.fundName ?? ""),
+      // The recurring row carries no community name — the give context is the
+      // only place this screen has one, and it's the same community either way.
+      community: context?.communityLegalName ?? "",
+      recurring: true,
+    });
+  }, [
+    context?.communityLegalName,
+    context?.fundName,
+    goToThankYou,
+    recurringStatus,
+    watchedRecurringDonationId,
   ]);
 
   // Stripe's cancel_url inside the auth-less in-app browser. Placed after every
@@ -176,6 +264,18 @@ export function GiveScreen() {
     }
   };
 
+  const handleSelectFrequency = (next: GiveFrequency) => {
+    setFrequency(next);
+    // A rejected monthly submission left an error the donor can't act on once
+    // they've switched back to a one-off (and vice versa).
+    setError(null);
+  };
+
+  const handleManageRecurring = () => {
+    if (!groupId) return;
+    router.push(`/groups/${groupId}/monthly-giving` as any);
+  };
+
   const handleSelectPreset = (cents: number) => {
     setSelectedPresetCents((current) => (current === cents ? null : cents));
     setCustomAmountText("");
@@ -190,6 +290,10 @@ export function GiveScreen() {
 
   const handleContinue = async () => {
     if (!context) return;
+    // One active monthly per fund is enforced server-side; the view swaps the
+    // CTA for a "you already give $X/month" notice, and this is the matching
+    // guard for anything that reaches the handler anyway.
+    if (frequency === "monthly" && context.existingRecurring) return;
     const amountCents = resolveGiveAmountCents(selectedPresetCents, customAmountText);
     if (!amountCents) return;
 
@@ -197,12 +301,22 @@ export function GiveScreen() {
     setError(null);
     try {
       const coverFeesCents = coverFees ? estimateCoverFeesCents(amountCents) : 0;
-      const result = await createDonationCheckoutSession({
+      const args = {
         fundId: context.fundId as Id<"funds">,
         amountCents,
         coverFeesCents,
         idempotencyNonce: idempotencyNonceRef.current,
-      });
+      };
+      // Subscription-mode Checkout returns no PaymentIntent, so the monthly
+      // result is normalised into the same shape with the recurring row id in
+      // place of it — that id is what the waiting step watches.
+      const result: CheckoutSession =
+        frequency === "monthly"
+          ? {
+              ...(await createRecurringDonationCheckoutSession(args)),
+              paymentIntentId: null,
+            }
+          : await createDonationCheckoutSession(args);
       setCheckoutSession(result);
       // Rotate the nonce now that this submission has its session: a failed
       // call keeps the old nonce (retry = same idempotency key = no double
@@ -240,20 +354,29 @@ export function GiveScreen() {
     <GiveScreenView
       context={context}
       step={step}
+      frequency={frequency}
       selectedPresetCents={selectedPresetCents}
       customAmountText={customAmountText}
       coverFees={coverFees}
       submitting={submitting}
       error={error}
       checkoutSession={checkoutSession}
-      canAutoAdvance={checkoutSession?.paymentIntentId != null}
+      // Whichever join key this gift's path actually has. Monthly gets the
+      // recurring row id; a one-off gets its PaymentIntent. Neither present
+      // means nothing is watching, and the waiting step offers its way out.
+      canAutoAdvance={
+        checkoutSession?.paymentIntentId != null ||
+        checkoutSession?.recurringDonationId != null
+      }
       onBack={handleBack}
+      onSelectFrequency={handleSelectFrequency}
       onSelectPreset={handleSelectPreset}
       onCustomAmountChange={handleCustomAmountChange}
       onToggleCoverFees={setCoverFees}
       onContinue={handleContinue}
       onReopenCheckout={handleReopenCheckout}
       onFinishManually={handleFinishManually}
+      onManageRecurringPress={handleManageRecurring}
     />
   );
 }
