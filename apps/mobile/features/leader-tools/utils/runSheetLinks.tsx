@@ -16,6 +16,7 @@ import {
   TextInput,
   Pressable,
   Linking,
+  Platform,
   StyleSheet,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
@@ -61,6 +62,20 @@ export function SelectableText({
   children: string;
   style?: object;
 }) {
+  // Web: react-native-web renders a multiline TextInput as a `<textarea>` and
+  // ignores `scrollEnabled={false}`, so it stays at its default two-row height
+  // and clips everything below — expanding a run sheet row revealed no more
+  // text than its two-line collapsed preview ("the dropdown arrows don't
+  // expand"). DOM text is already selectable, and `<Text>` grows with its
+  // content, so plain selectable Text is both correct and simpler here.
+  if (Platform.OS === "web") {
+    return (
+      <Text selectable style={style}>
+        {children}
+      </Text>
+    );
+  }
+
   return (
     <TextInput
       value={children}
