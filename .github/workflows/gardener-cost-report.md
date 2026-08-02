@@ -104,6 +104,12 @@ tools:
     # Every `gh run list` / `gh api` here was dead on arrival; the watchdog
     # proved it the hard way in run 30697357668. GitHub reads go through the
     # `github` CLI shim gh-aw mounts on PATH.
+    #
+    # This entry is DECORATIVE. `tools.bash` is inert on engine:codex (it never
+    # reaches the lock file and the agent runs with
+    # --dangerously-bypass-approvals-and-sandbox). What actually mounts the shim
+    # is the `github:` toolsets line above — do not remove that one thinking this
+    # one is doing the work.
     - "github *"
     - "cat *"
     - "head -n * *"
@@ -154,18 +160,28 @@ the `schedule:` block in each `.lock.yml`; that is the authority, not this table
 > `mcp__github__list_issues` returns `unsupported call`. Do not repeat it.
 >
 > **What works** is the `github` CLI shim gh-aw mounts on `PATH`, which proxies
-> to the same read-only GitHub MCP server:
+> to the same read-only GitHub MCP server. Two calling forms — **use the first**:
 >
 > ```bash
-> github --help                       # 28 read commands
+> # VERIFIED form — a JSON object on stdin, with `.` as the argument. The only
+> # form observed returning `MCP tools/call: status=200`. Start here.
+> printf '%s' '{"owner":"togathernyc","repo":"togather","method":"list_workflow_runs","resource_id":"gardener-docs-drift.lock.yml","per_page":100}' \
+>   | github actions_list .
+>
+> # Documented form — named parameters. What `--help` advertises, but unproven
+> # against this shim. Only try this if the stdin form errors.
 > github actions_list --owner togathernyc --repo togather \
 >   --method list_workflow_runs --resource_id gardener-docs-drift.lock.yml
 > ```
 >
-> If a command errors, try a JSON object on stdin with `.` as the argument
-> (`printf '%s' '{"owner":…}' | github actions_list .`) — that form is verified
-> working. If both fail, say so in the report and move on. **You have a budget;
-> spend it on the report, not on rediscovering the tooling.**
+> `github --help` lists all 28 read commands. The examples in the phases below
+> use the named-parameter form because it reads more clearly — **translate each
+> into the stdin form when you run it**; every parameter is a JSON key of the
+> same name.
+>
+> If the first form errors, use the second rather than exploring. If both fail,
+> say so in the report and move on. **You have a budget; spend it on the report,
+> not on rediscovering the tooling.**
 
 ## Phase 1 — Collect the runs
 
@@ -285,13 +301,15 @@ parentheses)
 | Docs Drift | 200 AIC ($2.00) | 200 AIC ($2.00) |
 | CI Doctor | 200 AIC ($2.00) | 400 AIC ($4.00) |
 | Cost Report | 200 AIC ($2.00) | 200 AIC ($2.00) |
-| Watchdog (repo) | 200 AIC ($2.00) | 400 AIC ($4.00) |
-| **Repo-wide daily ceiling** | | **1400 AIC ($14.00)** |
+| Watchdog (repo) | 200 AIC ($2.00) | 800 AIC ($8.00) |
+| **Repo-wide daily ceiling** | | **1800 AIC ($18.00)** |
 
-Note for the watchdog row: its per-run cap was raised 50 -> 200 on 2026-08-01
-after run 30697357668 hit `403 Maximum AI credits exceeded (50.469 / 50)`. Two
-full-price sweeps now exhaust the 400 daily cap, so flag it if you ever see a
-third sweep skipped in a day — that means something is making them expensive.
+Note for the watchdog row: its caps were raised on 2026-08-01 after run
+30697357668 hit `403 Maximum AI credits exceeded (50.469 / 50)`. The daily cap is
+deliberately per-run × cadence (4 runs × 200 = 800) so that no sweep is ever
+skipped for budget. **If you see fewer than 4 watchdog runs on a day, say so** —
+that means the guardrail is trimming its cadence, which would make it silently
+less frequent than the docs claim.
 
 <Flag explicitly if any run got within 80% of its per-run cap, or if any daily
 guardrail actually tripped — a tripped guardrail means a gardener was skipped

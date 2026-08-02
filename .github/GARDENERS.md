@@ -44,7 +44,7 @@ in `gh aw list`.
 | **Docs Drift** | `gardener-docs-drift.md` | Diffs the last week of merged changes against `docs/` and the `apps/web` onboarding guides | `codex` → **Ollama** · `glm-5.2` | Weekly · **Thu 09:15 ET** | 200 AIC | 200 AIC | 1 issue, `[gardener:docs-drift]` |
 | **CI Doctor** | `gardener-ci-doctor.md` | Diagnoses `CI` failures on `main`, grouped by failure signature; plus a weekly roll-up | **`claude`** · default | On CI failure (main) **+** weekly · **Mon 09:15 ET** | 200 AIC ($2.00) | 400 AIC ($4.00) | ≤2 issues, `[gardener:ci-doctor]` |
 | **Cost Report** | `gardener-cost-report.md` | The visibility surface — keeps one standing issue with a per-gardener cost & activity table | `codex` → **Ollama** · `glm-5.2` | Weekly · **Fri 09:15 ET** | 200 AIC | 200 AIC | 1 standing issue, `[gardeners]` |
-| **Watchdog (repo)** | `watchdog-repo.md` | Sweeps for stuck claims, failing gardeners, and green agent PRs nobody has reviewed — see [Watchdog](#watchdog) | `codex` → **Ollama** · `glm-5.2` | **Every 6h** (00/06/12/18 ET) | 200 AIC | 400 AIC | 1 issue/day, `[watchdog]` |
+| **Watchdog (repo)** | `watchdog-repo.md` | Sweeps for stuck claims, failing gardeners, and green agent PRs nobody has reviewed — see [Watchdog](#watchdog) | `codex` → **Ollama** · `glm-5.2` | **Every 6h** (00/06/12/18 ET) | 200 AIC | 800 AIC | 1 issue/day, `[watchdog]` |
 
 Three gardeners run on an open model through the owner's Ollama Cloud
 subscription; **CI Doctor deliberately does not.** It reads noisy CI logs and
@@ -181,8 +181,10 @@ python3 -c "import re,sys; s=open(sys.argv[1]).read(); \
 > gap. Do not treat it as a live control until `grep` says otherwise. This looks
 > like an upstream bug and is worth reporting to github/gh-aw.
 
-The five daily caps sum to 1400 AIC = **$14/day repo-wide** (the repo watchdog
-added the fifth, raised to 400 after it exhausted 200 in a single day). The guardrail is enforced per workflow per triggering
+The five daily caps sum to 1800 AIC = **$18/day repo-wide**. The watchdog's 800
+is the outlier and is deliberate: a daily cap must be per-run × cadence (4 runs ×
+200), or the pre-flight guardrail starts skipping later runs and the workflow
+quietly runs less often than its schedule claims. The guardrail is enforced per workflow per triggering
 user, not globally — that $12 is an arithmetic budget across the five, not one
 number GitHub enforces.
 
@@ -1027,6 +1029,14 @@ to the request cap in the first place.
 > actually steers these agents. Do not rely on it as a security boundary —
 > the real boundaries are the egress firewall, the read-only `permissions:`, and
 > safe-outputs.
+>
+> Corollary worth knowing before you delete a line: the `github` shim is mounted
+> by **`tools.github: toolsets:`**, not by the `- "github *"` bash entry. The
+> bash entry is decorative; the toolsets line is load-bearing.
+
+(For contrast, `engine: claude` **does** enforce its allowlist — `Bash(` entries:
+**0** across all four codex locks, **44** in `gardener-ci-doctor.lock.yml`, which
+is also the only one without `--dangerously-bypass-approvals-and-sandbox`.)
 
 > [!NOTE]
 > **The "Invalid or Unsupported Model" banner on issue #715 is a

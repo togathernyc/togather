@@ -37,8 +37,16 @@ tracker-id: togather-watchdog-repo
 # wrong on this provider: Ollama does no prompt caching, so every turn re-bills
 # the entire conversation so far and cumulative input grows quadratically with
 # turn count. A 25-turn run is not a quarter of a 30-turn run, it is most of one.
+#
+# The DAILY cap has to be per-run × cadence, not something smaller. At every 6h
+# that is 4 runs, so a 400 ceiling makes the sustainable per-run budget 100 — and
+# the failing run reached 50.7 credits *before starting a single sweep*, so a
+# complete run plausibly clears 100. Runs 3 and 4 would then be skipped by the
+# pre-flight guardrail and the watchdog would quietly become twice-daily while
+# the docs still claimed every 6h. Silent halving is exactly the failure this
+# thing exists to catch, so: 4 runs × 200 = 800.
 max-ai-credits: 200        # ~$2.00 per run
-max-daily-ai-credits: 400  # ~$4.00 / 24h — 4 sweeps, only one of which normally finds anything
+max-daily-ai-credits: 800  # ~$8.00 / 24h — 4 runs × 200, so no sweep is ever skipped for budget
 max-turns: 25
 # NOT a cache guard on this provider — Ollama does no prompt caching, so every
 # request counts as a "consecutive miss" and this is really a request counter.
@@ -132,6 +140,12 @@ tools:
     # `gh issue list` in the old allowlist was dead on arrival, and the agent
     # burned its whole budget in run 30697357668 discovering that. GitHub reads
     # go through the `github` CLI shim gh-aw mounts on PATH. See the prompt.
+    #
+    # This entry is DECORATIVE. `tools.bash` is inert on engine:codex (it never
+    # reaches the lock file and the agent runs with
+    # --dangerously-bypass-approvals-and-sandbox). What actually mounts the shim
+    # is the `github:` toolsets line above — do not remove that one thinking this
+    # one is doing the work.
     - "github *"
     - "date *"
     - "jq *"
@@ -177,17 +191,23 @@ github list_issues --help
 ```
 
 The commands you need are `list_issues`, `list_pull_requests`, `issue_read`,
-`pull_request_read` and `actions_list`. Two calling forms:
+`pull_request_read` and `actions_list`. Two calling forms — **use the first one**:
 
 ```bash
-# Documented form — named parameters:
-github list_issues --owner togathernyc --repo togather --state open
-
-# Verified form — a JSON object on stdin, with `.` as the argument.
-# This is the one observed returning `MCP tools/call: status=200`:
+# VERIFIED form — a JSON object on stdin, with `.` as the argument.
+# This is the only form observed returning `MCP tools/call: status=200`.
+# Start here for every command.
 printf '%s' '{"owner":"togathernyc","repo":"togather","state":"open","labels":"agent:in-progress","perPage":50}' \
   | github list_issues .
+
+# Documented form — named parameters. What `--help` advertises, but unproven
+# against this shim. Only try this if the stdin form errors.
+github list_issues --owner togathernyc --repo togather --state open
 ```
+
+The examples throughout the sweeps below are written in the named-parameter form
+because it reads more clearly — **translate each one into the stdin form when you
+run it.** Every parameter maps to a JSON key of the same name.
 
 If the first form errors, use the second rather than exploring. **You have a
 budget; spend it on the sweeps, not on rediscovering the tooling.** If both forms
