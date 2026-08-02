@@ -121,7 +121,14 @@ export function MonthlyGivingScreen() {
     context === undefined ? undefined : context === null ? null : recurring;
 
   const goToFund = () => {
-    if (router.canGoBack()) {
+    // A `portal_return=1` arrival is a cold boot on this URL, and `canGoBack()`
+    // is NOT a reliable "there's something behind me" there: the root layout
+    // pins `(tabs)` as `initialRouteName`, so even a fresh deep link has a
+    // frame under it — popping would drop the donor on the tab bar instead of
+    // the fund they were managing. Same distinction give-success draws with
+    // `session_id`. Every other arrival really did come from the fund (or the
+    // give sheet), where popping is what avoids stacking a second copy.
+    if (params.portal_return !== "1" && router.canGoBack()) {
       router.back();
       return;
     }

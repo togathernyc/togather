@@ -317,6 +317,23 @@ describe("MonthlyGivingScreen", () => {
       const { queryByTestId } = render(<MonthlyGivingScreen />);
       expect(queryByTestId("mg-portal-notice")).toBeNull();
     });
+
+    // `canGoBack()` is true even on a cold deep link, because the root layout
+    // pins `(tabs)` as its initial route — so popping would land the donor on
+    // the tab bar rather than the fund they were managing.
+    it("replaces to the fund rather than popping to the tab frame", async () => {
+      (useLocalSearchParams as jest.Mock).mockReturnValue({
+        group_id: "group_1",
+        portal_return: "1",
+      });
+      const { getByTestId } = render(<MonthlyGivingScreen />);
+      await act(async () => {
+        fireEvent.press(getByTestId("mg-cancel"));
+      });
+
+      expect(mockBack).not.toHaveBeenCalled();
+      expect(mockReplace).toHaveBeenCalledWith("/groups/group_1/fund");
+    });
   });
 
   describe("stopping the gift", () => {

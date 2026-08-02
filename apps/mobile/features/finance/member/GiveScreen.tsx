@@ -86,11 +86,6 @@ export function GiveScreen() {
   const createRecurringDonationCheckoutSession = useAuthenticatedAction(
     api.functions.finance.giving.createRecurringDonationCheckoutSession,
   );
-  // Only ever called on the row THIS screen just created and the donor then
-  // walked away from — see `handleBack`.
-  const cancelRecurringDonation = useAuthenticatedAction(
-    api.functions.finance.giving.cancelRecurringDonation,
-  );
 
   const [step, setStep] = useState<GiveStep>("amount");
   const [frequency, setFrequency] = useState<GiveFrequency>("once");
@@ -251,43 +246,15 @@ export function GiveScreen() {
     return <GiveCancelledNotice />;
   }
 
-  const handleBack = async () => {
+  const handleBack = () => {
     if (step === "confirmation") {
       // Editing the gift after a session was created starts a NEW submission
       // — drop the stale session so "Reopen" can't relaunch the old amount.
       // (The nonce was already rotated when that session was created, so the
       // next Give gets a fresh idempotency key; reusing the old key with
       // different params would make Stripe reject the request.)
-      const abandonedRecurringId = checkoutSession?.recurringDonationId;
       setCheckoutSession(null);
       setStep("amount");
-
-      // A MONTHLY submission left a `pending` recurringDonations row on the
-      // server, and that row blocks a new monthly gift to this fund for the
-      // whole `PENDING_CHECKOUT_GRACE_MS` window (30 minutes) while its Stripe
-      // page stays live. Clearing local state alone would therefore turn
-      // "Cancel this gift" into "you may not give monthly for half an hour",
-      // with the reason ("a checkout is already in progress") describing a
-      // page the donor just walked away from. Release it: the action expires
-      // the Checkout Session and marks the row canceled.
-      //
-      // Awaited behind `submitting` rather than fired and forgotten, because
-      // the give CTA is disabled while submitting — that is what stops an
-      // immediate re-tap from racing its own release and hitting the block.
-      // Failures are swallowed: the donor lands exactly where an unreleased
-      // row would have left them, and the row's grace window still expires.
-      if (abandonedRecurringId) {
-        setSubmitting(true);
-        try {
-          await cancelRecurringDonation({
-            recurringDonationId: abandonedRecurringId as Id<"recurringDonations">,
-          });
-        } catch {
-          // Intentionally silent — nothing the donor can act on here.
-        } finally {
-          setSubmitting(false);
-        }
-      }
       return;
     }
     if (router.canGoBack()) {

@@ -20,7 +20,6 @@ const GET_RECURRING_FOR_FUND = "api.functions.finance.giving.getRecurringForFund
 const CREATE_ONE_OFF = "api.functions.finance.giving.createDonationCheckoutSession";
 const CREATE_RECURRING =
   "api.functions.finance.giving.createRecurringDonationCheckoutSession";
-const CANCEL_RECURRING = "api.functions.finance.giving.cancelRecurringDonation";
 
 jest.mock("@services/api/convex", () => ({
   api: {
@@ -35,8 +34,6 @@ jest.mock("@services/api/convex", () => ({
             "api.functions.finance.giving.createDonationCheckoutSession",
           createRecurringDonationCheckoutSession:
             "api.functions.finance.giving.createRecurringDonationCheckoutSession",
-          cancelRecurringDonation:
-            "api.functions.finance.giving.cancelRecurringDonation",
         },
       },
     },
@@ -99,7 +96,6 @@ const mockReplace = jest.fn();
 const mockPush = jest.fn();
 const mockCreateSession = jest.fn();
 const mockCreateRecurringSession = jest.fn();
-const mockCancelRecurring = jest.fn();
 
 let liveContext: Record<string, unknown> = {
   fundId: "fund_1",
@@ -187,12 +183,9 @@ describe("GiveScreen", () => {
       back: jest.fn(),
       canGoBack: () => true,
     });
-    (useAuthenticatedAction as jest.Mock).mockImplementation((fn: string) => {
-      if (fn === CREATE_RECURRING) return mockCreateRecurringSession;
-      if (fn === CANCEL_RECURRING) return mockCancelRecurring;
-      return mockCreateSession;
-    });
-    mockCancelRecurring.mockResolvedValue({ canceled: true });
+    (useAuthenticatedAction as jest.Mock).mockImplementation((fn: string) =>
+      fn === CREATE_RECURRING ? mockCreateRecurringSession : mockCreateSession,
+    );
     mockCreateSession.mockResolvedValue({
       url: "https://checkout.stripe.com/c/pay/cs_test_123",
       sessionId: "cs_test_123",
@@ -455,55 +448,6 @@ describe("GiveScreen", () => {
         "https://checkout.stripe.com/c/pay/cs_sub_123",
       );
       expect(WebBrowser.dismissBrowser).toHaveBeenCalled();
-    });
-
-    // Backing out of the waiting step leaves a `pending` recurringDonations
-    // row on the server, and that row blocks a new monthly gift to this fund
-    // for the whole 30-minute grace window while its Stripe page stays live.
-    // "Cancel this gift" that only cleared local state would therefore mean
-    // "you may not give monthly for half an hour".
-    describe("backing out of a monthly checkout", () => {
-      it("releases the pending row so the donor can immediately try again", async () => {
-        const { getByTestId } = render(<GiveScreen />);
-        await pressGiveMonthly(getByTestId);
-        expect(getByTestId("give-step").props.children).toBe("confirmation");
-
-        await act(async () => {
-          fireEvent.press(getByTestId("give-back"));
-        });
-
-        expect(mockCancelRecurring).toHaveBeenCalledWith({
-          recurringDonationId: "rec_1",
-        });
-        expect(getByTestId("give-step").props.children).toBe("amount");
-      });
-
-      // A one-off has no server-side row to release — cancelling something
-      // there would be cancelling a stranger's gift or nothing at all.
-      it("touches nothing on the server backing out of a one-off", async () => {
-        const { getByTestId } = render(<GiveScreen />);
-        await pressGive(getByTestId);
-
-        await act(async () => {
-          fireEvent.press(getByTestId("give-back"));
-        });
-
-        expect(mockCancelRecurring).not.toHaveBeenCalled();
-      });
-
-      // The release is a courtesy, not a precondition: a donor who is already
-      // walking away must still get back to the amount step.
-      it("still goes back when the release fails", async () => {
-        mockCancelRecurring.mockRejectedValue(new Error("network"));
-        const { getByTestId } = render(<GiveScreen />);
-        await pressGiveMonthly(getByTestId);
-
-        await act(async () => {
-          fireEvent.press(getByTestId("give-back"));
-        });
-
-        expect(getByTestId("give-step").props.children).toBe("amount");
-      });
     });
 
     // One active monthly per fund is a backend rule; the container refuses
