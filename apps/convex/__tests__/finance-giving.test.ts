@@ -777,6 +777,44 @@ describe("getCheckoutSessionStatus", () => {
     ).toEqual({ status: "pending" });
   });
 
+  // `donations.donorUserId` is optional — a guest gift has no donor at all.
+  // `undefined !== userId` must keep that gift invisible rather than matching
+  // any authenticated caller who guesses the PaymentIntent id.
+  test("never reveals an anonymous gift, which has no donor to match against", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seedGivingFixture(t);
+    await t.mutation(internal.functions.finance.giving.recordDonationSucceeded, {
+      paymentIntentId: "pi_guest_gift",
+      fundId: s.fundId,
+      // No donorUserId: an anonymous/guest gift.
+      amountCents: 2500,
+      feeCoverCents: 150,
+      communityId: s.communityId,
+    });
+
+    expect(
+      await t.query(api.functions.finance.giving.getCheckoutSessionStatus, {
+        token: await tokenFor(s.donorUserId),
+        sessionId: "pi_guest_gift",
+      }),
+    ).toEqual({ status: "pending" });
+  });
+
+  // A garbage/forged token must be indistinguishable from no token at all —
+  // getOptionalAuth returns null rather than throwing.
+  test("is pending for a malformed token instead of throwing", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seedGivingFixture(t);
+    await simulateWebhook(t, s, "pi_bad_token");
+
+    expect(
+      await t.query(api.functions.finance.giving.getCheckoutSessionStatus, {
+        token: "not.a.jwt",
+        sessionId: "pi_bad_token",
+      }),
+    ).toEqual({ status: "pending" });
+  });
+
   // Documents the known limitation: nothing stores a Checkout Session id, so
   // only the PaymentIntent id createDonationCheckoutSession returns resolves.
   test("is pending for a raw Checkout Session id", async () => {
