@@ -273,6 +273,8 @@ export function ImageViewer({
       if (event.pointerType === 'mouse') event.preventDefault();
       // Second press of a double-click: drop the close the first one queued.
       cancelPendingClose();
+      // Never stack drags: if a previous one somehow never ended, drop it.
+      detachDrag?.();
 
       const rect = stageNode.getBoundingClientRect();
       const start = transformRef.current;
@@ -285,6 +287,13 @@ export function ImageViewer({
 
       const handlePointerMove = (moveEvent: PointerEvent) => {
         if (moveEvent.pointerId !== pointerId) return;
+        // Safety net for a mouse released outside the browser viewport: the
+        // pointerup never reaches us, but the first move back inside reports
+        // no pressed button. End the drag there instead of resuming it.
+        if (moveEvent.pointerType === 'mouse' && moveEvent.buttons === 0) {
+          handlePointerUp(moveEvent);
+          return;
+        }
         lastX = moveEvent.clientX;
         lastY = moveEvent.clientY;
         const dx = lastX - startX;
@@ -321,15 +330,28 @@ export function ImageViewer({
         }
       };
 
+      // Drag abandoned (window lost focus): stop tracking, keep the transform.
+      const handleWindowBlur = () => detachDrag?.();
+
       detachDrag = () => {
         window.removeEventListener('pointermove', handlePointerMove);
         window.removeEventListener('pointerup', handlePointerUp);
         window.removeEventListener('pointercancel', handlePointerUp);
+        window.removeEventListener('blur', handleWindowBlur);
+        // Capture may already be gone (implicitly released on pointerup).
+        if (stageNode.hasPointerCapture?.(pointerId)) {
+          stageNode.releasePointerCapture(pointerId);
+        }
         detachDrag = null;
       };
+      // Pointer capture keeps move/up events coming while the cursor is
+      // outside the stage — and lets the browser deliver the release.
+      stageNode.setPointerCapture?.(pointerId);
       window.addEventListener('pointermove', handlePointerMove);
       window.addEventListener('pointerup', handlePointerUp);
       window.addEventListener('pointercancel', handlePointerUp);
+      // Alt-tabbing away mid-drag: end the drag rather than leave it live.
+      window.addEventListener('blur', handleWindowBlur);
     };
 
     const handleDoubleClick = (event: MouseEvent) => {
