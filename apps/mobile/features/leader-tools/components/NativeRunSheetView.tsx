@@ -425,6 +425,11 @@ export function PlanRunSheet({
     [effItems],
   );
 
+  // Owned here, above the loading/empty early returns below, so a transient
+  // `items === undefined` doesn't wipe what the user has expanded — see the
+  // hook's note.
+  const expansion = useRunSheetExpansion(groupId);
+
   // Live "current item": match the item whose computed [start, start +
   // durationSec) window contains `now` (ticked above). Because `clockTimes` is
   // anchored to the active/selected service, this highlights the right rows on
@@ -570,7 +575,7 @@ export function PlanRunSheet({
             hasAnyViewerRole={hasAnyViewerRole}
             mineHasContent={mineHasContent}
             currentItemId={currentItemId}
-            groupId={groupId}
+            expansion={expansion}
           />
         </>
       )}
@@ -578,39 +583,31 @@ export function PlanRunSheet({
   );
 }
 
-/**
- * The run sheet's item list: segment labels, collapsible headers and expandable
- * rows, plus the "Mine" empty state.
- *
- * Split out of `PlanRunSheet` so the expand/collapse behaviour can be rendered
- * from fixtures without a Convex backend (`/ui-test/run-sheet-expand`, driven by
- * `tests/e2e/run-sheet-expand.spec.ts`) — the data-fetching wrapper stays above.
- */
-export function RunSheetItemList({
-  itemsBySegment,
-  clockTimes,
-  peopleByRole,
-  viewMode,
-  viewerRoleIds,
-  hasAnyViewerRole,
-  mineHasContent,
-  currentItemId,
-  groupId,
-}: {
-  itemsBySegment: Record<Segment, RunSheetItem[]>;
-  clockTimes: Record<string, number | null>;
-  peopleByRole: Record<string, string[]>;
-  viewMode: ViewMode;
-  viewerRoleIds: Set<string>;
-  hasAnyViewerRole: boolean;
-  mineHasContent: boolean;
-  currentItemId: string | null;
-  /** Scopes the persisted collapsed-header state. */
-  groupId: Id<"groups">;
-}) {
-  const { colors, isDark } = useTheme();
+export type RunSheetExpansion = {
+  /** Item ids whose description/notes are revealed. */
+  expandedItemIds: Set<string>;
+  toggleItemExpanded: (itemId: string) => void;
+  /** Header ids whose following rows are hidden. */
+  collapsedHeaders: Set<string>;
+  toggleHeaderCollapsed: (headerId: string) => void;
+};
 
-  // Expandable rows: which items have their description/notes revealed.
+/**
+ * Which run sheet rows are expanded, and which section headers are collapsed.
+ *
+ * This MUST be owned by the data-fetching wrapper, not by `RunSheetItemList` —
+ * the list only renders once items have arrived, so holding the state there
+ * would tie it to the list's mount. Any bounce back to the loading branch (an
+ * offline→online flip or an auth-token refresh both return the Convex query to
+ * `undefined` for a beat) would then unmount it and silently collapse every row
+ * the user had opened. Owning it above the loading branch also means the
+ * AsyncStorage restore below starts in parallel with the query, while the
+ * spinner is up, instead of racing the user's first tap on a live list.
+ *
+ * Collapsed headers are persisted per group under a native-specific key so they
+ * never collide with the PCO viewer's collapse state.
+ */
+export function useRunSheetExpansion(groupId: Id<"groups">): RunSheetExpansion {
   const [expandedItemIds, setExpandedItemIds] = useState<Set<string>>(
     () => new Set(),
   );
@@ -623,9 +620,6 @@ export function RunSheetItemList({
     });
   }, []);
 
-  // Collapsible sections: header ids whose following items are hidden.
-  // Persisted to AsyncStorage per group (native-specific key so it never
-  // collides with the PCO viewer's collapse state) and restored on reopen.
   const [collapsedHeaders, setCollapsedHeaders] = useState<Set<string>>(
     () => new Set(),
   );
@@ -667,6 +661,53 @@ export function RunSheetItemList({
       JSON.stringify(Array.from(collapsedHeaders)),
     ).catch((err) => console.error("Failed to save collapsed state:", err));
   }, [collapsedHeaders, collapsedHeadersLoaded, collapsedStorageKey]);
+
+  return {
+    expandedItemIds,
+    toggleItemExpanded,
+    collapsedHeaders,
+    toggleHeaderCollapsed,
+  };
+}
+
+/**
+ * The run sheet's item list: segment labels, collapsible headers and expandable
+ * rows, plus the "Mine" empty state. Presentational — its expand/collapse state
+ * comes in from `useRunSheetExpansion`.
+ *
+ * Split out of `PlanRunSheet` so the expand/collapse behaviour can be rendered
+ * from fixtures without a Convex backend (`/ui-test/run-sheet-expand`, driven by
+ * `tests/e2e/run-sheet-expand.spec.ts`) — the data-fetching wrapper stays above.
+ */
+export function RunSheetItemList({
+  itemsBySegment,
+  clockTimes,
+  peopleByRole,
+  viewMode,
+  viewerRoleIds,
+  hasAnyViewerRole,
+  mineHasContent,
+  currentItemId,
+  expansion,
+}: {
+  itemsBySegment: Record<Segment, RunSheetItem[]>;
+  clockTimes: Record<string, number | null>;
+  peopleByRole: Record<string, string[]>;
+  viewMode: ViewMode;
+  viewerRoleIds: Set<string>;
+  hasAnyViewerRole: boolean;
+  mineHasContent: boolean;
+  currentItemId: string | null;
+  /** From `useRunSheetExpansion`, owned by the caller — see that hook's note. */
+  expansion: RunSheetExpansion;
+}) {
+  const { colors, isDark } = useTheme();
+  const {
+    expandedItemIds,
+    toggleItemExpanded,
+    collapsedHeaders,
+    toggleHeaderCollapsed,
+  } = expansion;
 
   if (viewMode === "mine" && !mineHasContent) {
     return (

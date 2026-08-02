@@ -13,9 +13,13 @@ import { View, Text, StyleSheet, ScrollView } from "react-native";
 import { useTheme } from "@hooks/useTheme";
 import {
   RunSheetItemList,
+  useRunSheetExpansion,
   type RunSheetItem,
   type Segment,
 } from "@features/leader-tools/components/NativeRunSheetView";
+
+/** Namespaced so the harness's persisted collapse state can't hit a real group. */
+const HARNESS_GROUP_ID = "ui-test-run-sheet-expand" as never;
 
 const NOTE_TEXT =
   "hello there i am a test comment hello there i am a test comment hello there i am a test comment";
@@ -74,6 +78,9 @@ const CLOCK_TIMES: Record<string, number | null> = Object.fromEntries(
 
 export default function RunSheetExpandHarness() {
   const { colors } = useTheme();
+  // Same hook the real screen uses, on a harness-only group id so its persisted
+  // collapsed-header key can't collide with a real group's.
+  const expansion = useRunSheetExpansion(HARNESS_GROUP_ID);
   return (
     <ScrollView
       testID="run-sheet-expand-harness"
@@ -92,7 +99,7 @@ export default function RunSheetExpandHarness() {
         hasAnyViewerRole={false}
         mineHasContent
         currentItemId={null}
-        groupId={"harness-group" as never}
+        expansion={expansion}
       />
       <View style={styles.spacer} />
     </ScrollView>
