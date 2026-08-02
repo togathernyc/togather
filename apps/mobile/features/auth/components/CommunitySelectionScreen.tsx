@@ -88,6 +88,7 @@ export function CommunitySelectionScreen() {
   };
 
   const [isContinuingWithout, setIsContinuingWithout] = useState(false);
+  const [isCreatingCommunity, setIsCreatingCommunity] = useState(false);
 
   // Parse communities from params
   const [userCommunities, setUserCommunities] = useState<Community[]>([]);
@@ -332,37 +333,49 @@ export function CommunitySelectionScreen() {
     }
   };
 
+  /**
+   * Create the pending new user's account and leave them signed in.
+   *
+   * In the new-user flow this screen is reached with only phone/OTP/profile
+   * params — the account does not exist and no tokens are stored yet. Every
+   * action that navigates away from here MUST run this first, or the next
+   * screen sees a tokenless session and treats the user as signed out.
+   * `signIn` both stores the tokens and updates AuthProvider state, the same
+   * pattern the login flow uses.
+   */
+  const registerAndSignInNewUser = async () => {
+    // Convert birthday from MM/DD/YYYY to YYYY-MM-DD
+    let formattedBirthday = profileData.birthday;
+    if (formattedBirthday.includes("/")) {
+      const [month, day, year] = formattedBirthday.split("/");
+      formattedBirthday = `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+    }
+
+    const registrationResult = await convex.action(api.functions.auth.registration.registerNewUser, {
+      phone,
+      countryCode,
+      firstName: profileData.firstName,
+      lastName: profileData.lastName,
+      email: profileData.email || undefined,
+      otp,
+      phoneVerificationToken: phoneVerificationToken || undefined,
+      dateOfBirth: formattedBirthday || undefined,
+    });
+
+    await signIn(registrationResult.user.id, {
+      accessToken: registrationResult.access_token,
+      refreshToken: registrationResult.refresh_token,
+    });
+  };
+
   const performNewUserRegistration = async (community: Community | CommunitySearchResult) => {
     const communityId = community.id;
     setSelectingCommunityId(communityId);
     setError("");
 
     try {
-      // Convert birthday from MM/DD/YYYY to YYYY-MM-DD
-      let formattedBirthday = profileData.birthday;
-      if (formattedBirthday.includes("/")) {
-        const [month, day, year] = formattedBirthday.split("/");
-        formattedBirthday = `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
-      }
-
       // Step 1: Register new user via Convex
-      const registrationResult = await convex.action(api.functions.auth.registration.registerNewUser, {
-        phone,
-        countryCode,
-        firstName: profileData.firstName,
-        lastName: profileData.lastName,
-        email: profileData.email || undefined,
-        otp,
-        phoneVerificationToken: phoneVerificationToken || undefined,
-        dateOfBirth: formattedBirthday || undefined,
-      });
-
-      // Use signIn to properly set auth state (same pattern as login flow)
-      // This stores tokens AND sets the token state in AuthProvider
-      await signIn(registrationResult.user.id, {
-        accessToken: registrationResult.access_token,
-        refreshToken: registrationResult.refresh_token,
-      });
+      await registerAndSignInNewUser();
 
       // Step 2: Select/join the community (adds user to community)
       // Uses authenticated user session from Convex Auth
@@ -448,35 +461,44 @@ export function CommunitySelectionScreen() {
     }
   };
 
+  /**
+   * Open the demo-community wizard (/onboarding/demo).
+   *
+   * The wizard is auth-gated — demos belong to a signed-in user so teammates
+   * can rejoin with the demo code. A new user reaching this screen mid-signup
+   * has no account yet, so navigating straight there showed them the wizard's
+   * "Sign in first" gate and dropped them back on the landing screen with
+   * their phone/OTP params gone, which reads as being signed out. Register
+   * them here first, exactly like joining a community or continuing without
+   * one does.
+   */
+  const handleCreateCommunity = async () => {
+    // Already signed in (returning here after registration included) — the
+    // wizard has a session, just go.
+    if (!isNewUserFlow || isAuthenticated) {
+      router.push("/onboarding/demo");
+      return;
+    }
+
+    setIsCreatingCommunity(true);
+    setError("");
+    try {
+      await registerAndSignInNewUser();
+      router.push("/onboarding/demo");
+    } catch (err: any) {
+      console.error("Failed to start community creation:", err);
+      setError(err?.message || "Something went wrong. Please try again.");
+    } finally {
+      setIsCreatingCommunity(false);
+    }
+  };
+
   const handleContinueWithoutCommunity = async () => {
     setIsContinuingWithout(true);
     try {
       // For new users, we need to register them first without a community
       if (isNewUserFlow) {
-        // Convert birthday from MM/DD/YYYY to YYYY-MM-DD
-        let formattedBirthday = profileData.birthday;
-        if (formattedBirthday.includes("/")) {
-          const [month, day, year] = formattedBirthday.split("/");
-          formattedBirthday = `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
-        }
-
-        // Register without selecting a community via Convex
-        const registrationResult = await convex.action(api.functions.auth.registration.registerNewUser, {
-          phone,
-          countryCode,
-          firstName: profileData.firstName,
-          lastName: profileData.lastName,
-          email: profileData.email || undefined,
-          otp,
-          phoneVerificationToken: phoneVerificationToken || undefined,
-          dateOfBirth: formattedBirthday || undefined,
-        });
-
-        // Use signIn to properly set auth state (same pattern as login flow)
-        await signIn(registrationResult.user.id, {
-          accessToken: registrationResult.access_token,
-          refreshToken: registrationResult.refresh_token,
-        });
+        await registerAndSignInNewUser();
       } else {
         // For existing users, clear the active community in the database
         await clearActiveCommunity({});
@@ -644,9 +666,14 @@ export function CommunitySelectionScreen() {
               seeded demo as admin, then go live from inside the app. */}
           <TouchableOpacity
             style={[styles.createCommunityButton, { backgroundColor: colors.surfaceSecondary }]}
-            onPress={() => router.push("/onboarding/demo")}
+            onPress={handleCreateCommunity}
+            disabled={isCreatingCommunity || isContinuingWithout || selectingCommunityId !== null}
           >
-            <Text style={[styles.createCommunityButtonText, { color: colors.text }]}>Create a Community</Text>
+            {isCreatingCommunity ? (
+              <ActivityIndicator size="small" color={colors.text} />
+            ) : (
+              <Text style={[styles.createCommunityButtonText, { color: colors.text }]}>Create a Community</Text>
+            )}
           </TouchableOpacity>
 
           <TouchableOpacity
