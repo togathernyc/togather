@@ -7,13 +7,15 @@
  * Layout mirrors the ask: one section per plan the user is serving (a volunteer
  * can be on two campuses the same morning), and inside each plan a horizontally
  * scrolling row of TEAM columns. Each column header is the team name; under it a
- * card per confirmed volunteer showing their name + the role they fill. Tapping
- * a card opens an action sheet to message them in Togather (a same-day DM, which
- * the serving inbox surfaces) or text their number.
+ * card per volunteer showing their name + the role they fill; people who haven't
+ * accepted yet get an "Unconfirmed" pill. Tapping a card opens an action sheet to
+ * message them in Togather (a same-day DM, which the serving inbox surfaces) or
+ * text their number.
  *
  * Data comes from `scheduling.serving.getServingTeamRoster`, which already scopes
- * to the user's eligible serving plans and confirmed assignments — so this screen
- * is purely presentational over that shape.
+ * to the user's eligible serving plans and their non-declined assignments
+ * (unconfirmed included, declined hidden) — so this screen is purely
+ * presentational over that shape.
  */
 import React, { useMemo, useState } from "react";
 import {
