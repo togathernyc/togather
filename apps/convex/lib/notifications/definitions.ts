@@ -1,5 +1,6 @@
 import type { NotificationDefinition } from './types';
 import { escapeHtml } from './emailTemplates';
+import { truncateWithEllipsis } from '../textPreview';
 
 // ============================================================================
 // Data Types
@@ -416,9 +417,7 @@ export const mention: NotificationDefinition<MessageData> = {
         <h1 class="heading">${escapeHtml(ctx.data.senderName)} mentioned you</h1>
         <p class="text">${greeting}</p>
         <p class="text">${escapeHtml(ctx.data.senderName)} mentioned you in ${escapeHtml(ctx.data.groupName)}:</p>
-        <p class="text" style="background-color: #f5f5f5; padding: 16px; border-radius: 8px; font-style: italic;">
-          "${escapeHtml(ctx.data.messagePreview)}"
-        </p>
+        <p class="text" style="background-color: #f5f5f5; padding: 16px; border-radius: 8px; font-style: italic; white-space: pre-wrap;">"${escapeHtml(ctx.data.messagePreview)}"</p>
       `),
       };
     },
@@ -606,7 +605,7 @@ export const contentReport: NotificationDefinition<ContentReportData> = {
   formatters: {
     push: (ctx) => ({
       title: 'Content Reported',
-      body: `${ctx.data.reporterName} reported: "${ctx.data.messagePreview.slice(0, 50)}..."`,
+      body: `${ctx.data.reporterName} reported: "${truncateWithEllipsis(ctx.data.messagePreview, 50)}"`,
       data: {
         type: 'content_report',
         communityId: ctx.data.communityId,
