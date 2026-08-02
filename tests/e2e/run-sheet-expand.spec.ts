@@ -52,8 +52,14 @@ test.describe("Run sheet expandable rows (web)", () => {
     const expandedHeight = await row.evaluate((el) => el.clientHeight);
     expect(expandedHeight).toBeGreaterThan(collapsedHeight);
 
-    // And it collapses again.
+    // And it collapses again. Re-measured rather than pinned to the exact
+    // pixel height captured above: the row's height is
+    // `max(title line box, chevron line box)`, and the Ionicons web font lands
+    // asynchronously, so a measurement taken before it resolves can be ~1px off
+    // the settled value.
     await row.getByRole("button", { name: /Long note/ }).click();
-    await expect(row).toHaveJSProperty("clientHeight", collapsedHeight);
+    await expect
+      .poll(() => row.evaluate((el) => el.clientHeight))
+      .toBeLessThan(expandedHeight);
   });
 });
