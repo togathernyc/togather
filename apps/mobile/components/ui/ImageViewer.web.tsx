@@ -231,6 +231,21 @@ export function ImageViewer({
     [applyTransform, stageGeometry],
   );
 
+  // Re-apply the pan limits to the current transform. Needed whenever the
+  // bounds themselves change rather than the transform: the stage resizes, or
+  // the intrinsic image size arrives after the user has already zoomed.
+  const reclamp = useCallback(() => {
+    applyTransform(
+      clampTransform(transformRef.current, stageGeometry().stage, naturalSizeRef.current),
+    );
+  }, [applyTransform, stageGeometry]);
+
+  useEffect(() => {
+    if (!stageNode) return;
+    window.addEventListener('resize', reclamp);
+    return () => window.removeEventListener('resize', reclamp);
+  }, [stageNode, reclamp]);
+
   // Reset zoom and load state whenever the displayed image changes — a slide
   // change, or the same index now pointing at a different URL — so nothing is
   // inherited from the previous one, and learn its intrinsic size for clamping.
@@ -245,7 +260,11 @@ export function ImageViewer({
     Image.getSize(
       imageUrl,
       (width, height) => {
-        if (!cancelled) naturalSizeRef.current = { width, height };
+        if (cancelled) return;
+        naturalSizeRef.current = { width, height };
+        // Anything zoomed or panned before this arrived was clamped against
+        // the stage box — tighten it now that the real bounds are known.
+        reclamp();
       },
       // Size unknown: clamping falls back to the stage box.
       () => {},
@@ -253,7 +272,7 @@ export function ImageViewer({
     return () => {
       cancelled = true;
     };
-  }, [imageUrl, applyTransform]);
+  }, [imageUrl, applyTransform, reclamp]);
 
   useEffect(() => {
     if (visible) {
