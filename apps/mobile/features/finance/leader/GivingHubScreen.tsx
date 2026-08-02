@@ -1,14 +1,19 @@
 /**
- * GivingHubScreen — data wrapper for the leader/admin group-giving hub
+ * GivingHubScreen — data wrapper for the leader/admin "Fund settings" hub
  * (ADR-032 §2 CTA, §4 approvals queue; group-fund cards phase). Resolves the
- * group's fund, the viewer's fund role, the fund overview (balance +
- * month-to-date), the card list, and the pending-expense queue, then hands
- * plain props to the presentational GivingHubView.
+ * group's fund, the viewer's fund role, the fund overview (balance), the card
+ * list, and the pending-expense queue, then hands plain props to the
+ * presentational GivingHubView.
+ *
+ * WhatsApp-shell restyle: this wrapper owns the screen chrome — the
+ * `bg.grouped` canvas with a top safe-area inset and a `WaSubScreenHeader`
+ * titled "Fund settings" (the `GroupInfoScreen` pattern), replacing the
+ * bespoke "Giving" bar this screen used to draw. The entry points that route
+ * here (e.g. Group info's "Leader tools › Giving" row) keep their own labels.
  */
 import React, { useMemo, useState } from "react";
-import { View, StyleSheet, TouchableOpacity, Text, Share, Platform, ActionSheetIOS, Alert } from "react-native";
+import { View, StyleSheet, Share, Platform, ActionSheetIOS, Alert } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Clipboard from "expo-clipboard";
 import { DOMAIN_CONFIG } from "@togather/shared";
@@ -18,11 +23,11 @@ import type { Id } from "@services/api/convex";
 import { useTheme } from "@hooks/useTheme";
 import { DragHandle } from "@components/ui/DragHandle";
 import { ToastManager } from "@components/ui";
+import { WaSubScreenHeader } from "@components/wa";
 import { useMembersPage } from "@features/leader-tools/hooks/useMembersPage";
 import { formatError } from "@/utils/error-handling";
 import { GivingHubView, type GivingHubState } from "./GivingHubView";
-import { SubmitReimbursementSheet } from "../member/SubmitReimbursementSheet";
-import type { FundCard, GivingExpense, GivingHubActivityEntry, GivingHubBalanceSummary } from "./types";
+import type { FundCard, GivingExpense, GivingHubBalanceSummary } from "./types";
 
 export function GivingHubScreen() {
   const { colors } = useTheme();
@@ -36,7 +41,6 @@ export function GivingHubScreen() {
 
   const [processingExpenseId, setProcessingExpenseId] = useState<string | null>(null);
   const [isEnablingGiving, setIsEnablingGiving] = useState(false);
-  const [showReimbursement, setShowReimbursement] = useState(false);
 
   const givingContext = useAuthenticatedQuery(
     api.functions.finance.giving.getGivingContext,
@@ -97,18 +101,6 @@ export function GivingHubScreen() {
       monthSpentCents: overview.monthToDate.spentCents,
       monthFeesCents: overview.monthToDate.feesCents ?? 0,
     };
-  }, [overview]);
-
-  const activity: GivingHubActivityEntry[] | undefined = useMemo(() => {
-    if (!overview) return undefined;
-    return overview.activity.map((entry: any) => ({
-      id: String(entry.id),
-      kind: entry.kind,
-      amountCents: entry.amountCents,
-      direction: entry.direction,
-      createdAt: entry.createdAt,
-      donorName: entry.donorName ?? null,
-    }));
   }, [overview]);
 
   const canApprove =
@@ -191,52 +183,40 @@ export function GivingHubScreen() {
   return (
     <>
       <DragHandle />
-      <View style={[styles.header, { paddingTop: insets.top + 8, backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
-        <TouchableOpacity style={styles.backButton} onPress={handleBack} testID="back-button">
-          <Ionicons name="arrow-back" size={24} color={colors.text} />
-        </TouchableOpacity>
-        <View style={styles.headerContent}>
-          <Text style={[styles.headerTitle, { color: colors.text }]}>Giving</Text>
-          <Text style={[styles.headerSubtitle, { color: colors.textSecondary }]} numberOfLines={1}>
-            {group?.name || "Group"}
-          </Text>
-        </View>
-      </View>
+      <View
+        style={[
+          styles.screen,
+          { backgroundColor: colors.backgroundGrouped, paddingTop: insets.top },
+        ]}
+      >
+        {/* Floating back circle + centered 17pt title over the grouped-gray
+            canvas — no bar fill, no hairline (WA-VISUAL-DELTAS.md S1.1). */}
+        <WaSubScreenHeader title="Fund settings" onBack={handleBack} />
 
-      <GivingHubView
-        state={state}
-        groupName={group?.name || "this group"}
-        givingLive={!!givingContext?.givingLive}
-        balance={balance}
-        cards={cards}
-        isLoadingCards={fundId != null && cardsRaw === undefined}
-        canManageCards={canManageCards}
-        expenses={expenses}
-        isLoadingExpenses={fundId != null && expensesRaw === undefined}
-        canApprove={!!canApprove}
-        currentUserId={user?.id ?? null}
-        processingExpenseId={processingExpenseId}
-        onApprove={handleApprove}
-        onDeny={handleDeny}
-        activity={activity}
-        onEnableGiving={handleEnableGiving}
-        isEnablingGiving={isEnablingGiving}
-        onViewRoles={() => router.push(`/(user)/leader-tools/${groupId}/giving/roles`)}
-        onGivePress={() => router.push(`/groups/${groupId}/give` as any)}
-        onReimbursePress={() => setShowReimbursement(true)}
-        onCreateCardPress={() => router.push(`/(user)/leader-tools/${groupId}/giving/cards/new` as any)}
-        onSharePress={group?.shortId ? handleShareFund : undefined}
-        onViewCard={(cardId) => router.push(`/(user)/leader-tools/${groupId}/giving/cards/${cardId}` as any)}
-        onViewAllActivity={() => router.push(`/groups/${groupId}/fund` as any)}
-      />
-
-      {fundId && (
-        <SubmitReimbursementSheet
-          visible={showReimbursement}
-          fundId={fundId}
-          onClose={() => setShowReimbursement(false)}
+        <GivingHubView
+          state={state}
+          groupName={group?.name || "this group"}
+          givingLive={!!givingContext?.givingLive}
+          balance={balance}
+          cards={cards}
+          isLoadingCards={fundId != null && cardsRaw === undefined}
+          canManageCards={canManageCards}
+          expenses={expenses}
+          isLoadingExpenses={fundId != null && expensesRaw === undefined}
+          canApprove={!!canApprove}
+          currentUserId={user?.id ?? null}
+          processingExpenseId={processingExpenseId}
+          onApprove={handleApprove}
+          onDeny={handleDeny}
+          onEnableGiving={handleEnableGiving}
+          isEnablingGiving={isEnablingGiving}
+          onViewRoles={() => router.push(`/(user)/leader-tools/${groupId}/giving/roles`)}
+          onCreateCardPress={() => router.push(`/(user)/leader-tools/${groupId}/giving/cards/new` as any)}
+          onSharePress={group?.shortId ? handleShareFund : undefined}
+          onViewCard={(cardId) => router.push(`/(user)/leader-tools/${groupId}/giving/cards/${cardId}` as any)}
+          onViewAllActivity={() => router.push(`/groups/${groupId}/fund` as any)}
         />
-      )}
+      </View>
     </>
   );
 }
@@ -279,25 +259,7 @@ function toFundCard(raw: any): FundCard {
 }
 
 const styles = StyleSheet.create({
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    padding: 16,
-    borderBottomWidth: 1,
-  },
-  backButton: {
-    marginRight: 12,
-    padding: 4,
-  },
-  headerContent: {
+  screen: {
     flex: 1,
-  },
-  headerTitle: {
-    fontSize: 20,
-    fontWeight: "bold",
-  },
-  headerSubtitle: {
-    fontSize: 14,
-    marginTop: 2,
   },
 });

@@ -227,6 +227,11 @@ function RowContainer({
       testID={testID}
       onPress={onPress}
       disabled={disabled}
+      // A tappable row IS a button to a screen reader. Hand-rolled cells this
+      // component replaced set the role explicitly; bare `Pressable` does not,
+      // so without this every navigational/action cell announces as plain text.
+      accessibilityRole="button"
+      accessibilityState={{ disabled: !!disabled }}
       style={({ pressed }) => [pressed && { backgroundColor: pressHighlight }]}
     >
       {children}
