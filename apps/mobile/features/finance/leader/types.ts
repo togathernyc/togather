@@ -181,12 +181,8 @@ export interface GivingHubBalanceSummary {
   monthFeesCents: number;
 }
 
-/** A single "Recent activity" row — mirrors `getFundOverview`'s `activity` entries. */
-export interface GivingHubActivityEntry {
-  id: string;
-  kind: string;
-  amountCents: number;
-  direction: "credit" | "debit";
-  createdAt: number;
-  donorName?: string | null;
-}
+// NOTE: `GivingHubActivityEntry` was dropped with the giving hub's inline
+// recent-activity list — the WA "Fund settings" hub links out to the member
+// fund screen ("View all transactions") instead of rendering ledger rows, and
+// that screen has its own row type. Re-add here only if a leader surface
+// renders `getFundOverview().activity` again.

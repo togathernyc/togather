@@ -22,21 +22,8 @@ export function formatEinInput(text: string): string {
   return `${digits.slice(0, 2)}-${digits.slice(2)}`;
 }
 
-/** Mirrors `ledgerEntries.kind` in apps/convex/schema.ts (also duplicated in
- * `../member/labels.ts` — kept local rather than cross-imported so each
- * finance surface's View stays self-contained). */
-const LEDGER_KIND_LABELS: Record<string, string> = {
-  donation: "Donation",
-  allocation: "Allocation",
-  card_capture: "Card purchase",
-  refund: "Refund",
-  reimbursement: "Reimbursement",
-  transfer: "Transfer",
-  sweep: "Sweep",
-  fee: "Fee",
-};
-
-/** "Donation" / "Card purchase" / "Reimbursement" / ... for activity rows. */
-export function formatLedgerKind(kind: string): string {
-  return LEDGER_KIND_LABELS[kind] ?? kind;
-}
+// NOTE: the leader copy of `formatLedgerKind` / `LEDGER_KIND_LABELS` was
+// dropped with the giving hub's inline recent-activity list (that list now
+// lives only on the member fund screen). `../member/labels.ts` still owns the
+// one remaining copy — re-add here only if a leader surface renders ledger
+// rows again.
