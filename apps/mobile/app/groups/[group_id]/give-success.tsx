@@ -46,6 +46,7 @@ export default function GiveSuccessScreen() {
     amount?: string;
     fund?: string;
     community?: string;
+    session_id?: string;
   }>();
 
   const reduceMotion = useReduceMotion();
@@ -53,17 +54,26 @@ export default function GiveSuccessScreen() {
   const groupId = params.group_id;
   const token = useStoredAuthToken();
 
+  // `session_id` is Stripe's, and only Stripe's: `buildGiveReturnUrls` puts it
+  // on the success_url, while the native auto-advance builds its own query
+  // (amount/fund/community) and never adds one. It is therefore the one
+  // reliable "did the browser redirect me here" signal — `canGoBack()` is NOT,
+  // because the root layout pins `(tabs)` as `initialRouteName`, so even a cold
+  // deep link has a frame underneath it.
+  const cameFromStripeRedirect = !!params.session_id;
+
   const goToFund = React.useCallback(() => {
-    // The native flow arrived as fund → give → (replaced) give-success, so the
-    // fund is still one frame down: pop back to it rather than pushing a second
-    // copy, which would leave Back revealing an identical fund screen. A cold
-    // web boot on Stripe's success_url has no stack, and gets a replace.
-    if (router.canGoBack()) {
+    // Native arrived as fund → give → (replaced) give-success, so the fund is
+    // one frame down: pop to it rather than stacking a second copy, which would
+    // leave Back revealing an identical fund screen. The redirect's stack is
+    // just `(tabs)` under this route, where popping would drop the donor on the
+    // tab bar instead — that one replaces.
+    if (!cameFromStripeRedirect && router.canGoBack()) {
       router.back();
       return;
     }
     router.replace(`/groups/${groupId}/fund` as any);
-  }, [router, groupId]);
+  }, [router, groupId, cameFromStripeRedirect]);
 
   useEffect(() => {
     // No token means this is Stripe's in-app browser, which has its own

@@ -88,13 +88,36 @@ describe("GiveSuccessScreen", () => {
     expect(mockReplace).not.toHaveBeenCalled();
   });
 
-  it("replaces into the fund when there is no stack (a cold web boot on success_url)", () => {
+  it("replaces into the fund when there is no stack at all", () => {
     canGoBack = false;
     render(<GiveSuccessScreen />);
     act(() => {
       jest.advanceTimersByTime(4000);
     });
     expect(mockReplace).toHaveBeenCalledWith("/groups/group_1/fund");
+  });
+
+  // The root layout pins `(tabs)` as initialRouteName, so a cold deep link
+  // DOES have a frame underneath — popping would drop the donor on the tab bar.
+  // `session_id` is on Stripe's success_url and nothing else.
+  it("replaces after Stripe's redirect even though the tab bar is poppable", () => {
+    setParams({ amount: "5000", session_id: "cs_test_123" });
+    canGoBack = true;
+    render(<GiveSuccessScreen />);
+    act(() => {
+      jest.advanceTimersByTime(4000);
+    });
+    expect(mockReplace).toHaveBeenCalledWith("/groups/group_1/fund");
+    expect(mockBack).not.toHaveBeenCalled();
+  });
+
+  it("pops, not replaces, when the native flow routed here (no session_id)", () => {
+    render(<GiveSuccessScreen />);
+    act(() => {
+      jest.advanceTimersByTime(4000);
+    });
+    expect(mockBack).toHaveBeenCalledTimes(1);
+    expect(mockReplace).not.toHaveBeenCalled();
   });
 
   it("does not navigate before the auto-return delay is up", () => {
