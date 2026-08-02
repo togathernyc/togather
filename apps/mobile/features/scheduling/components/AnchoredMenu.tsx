@@ -9,10 +9,11 @@
  *
  * It renders inside a transparent `Modal` so it overlays the app and is never
  * clipped by the table card's `overflow: "hidden"`, yet a full-screen
- * transparent backdrop dismisses it on an outside press. The menu box is
- * absolutely positioned at the anchor's measured window rect (below by default,
- * flipped above when near the viewport bottom) and caps its height with an
- * internal scroll so long Team / Role lists stay usable.
+ * transparent backdrop — a sibling behind the menu, never its parent (see the
+ * render note) — dismisses it on an outside press. The menu box is absolutely
+ * positioned at the anchor's measured window rect (below by default, flipped
+ * above when near the viewport bottom) and caps its height with an internal
+ * scroll so long Team / Role lists stay usable.
  *
  * The caller measures its anchor with `ref.measureInWindow` (see `measureAnchor`)
  * and passes the resulting `AnchorRect`. Selection semantics mirror the old
@@ -29,7 +30,6 @@ import {
   ScrollView,
   Platform,
   useWindowDimensions,
-  type GestureResponderEvent,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "@hooks/useTheme";
@@ -123,9 +123,26 @@ export function AnchoredMenu({
 
   return (
     <RNModal transparent visible animationType="fade" onRequestClose={onClose}>
-      <Pressable style={styles.backdrop} onPress={onClose}>
+      {/*
+       * Backdrop and menu are SIBLINGS, not nested — the menu must not live
+       * inside the backdrop Pressable. An earlier version nested them and
+       * relied on `e.stopPropagation()` to keep an option press from bubbling
+       * to the backdrop's `onClose`. On react-native-web that RN
+       * `stopPropagation` does not reliably map to DOM event propagation, so
+       * every option click bubbled up and closed the menu instead of
+       * selecting — the dropdown looked dead on desktop web. Mirroring the
+       * sibling-backdrop layout of `CustomModal` (an absolute-fill backdrop
+       * behind an absolutely-positioned menu) makes option presses land
+       * directly on the rows and outside presses hit the backdrop, with no
+       * propagation trickery on any platform.
+       */}
+      <View style={styles.root}>
         <Pressable
-          onPress={(e: GestureResponderEvent) => e.stopPropagation()}
+          testID="anchored-menu-backdrop"
+          style={styles.backdrop}
+          onPress={onClose}
+        />
+        <View
           style={[
             styles.menu,
             positionStyle,
@@ -216,14 +233,17 @@ export function AnchoredMenu({
               })
             )}
           </ScrollView>
-        </Pressable>
-      </Pressable>
+        </View>
+      </View>
     </RNModal>
   );
 }
 
 const styles = StyleSheet.create({
-  backdrop: { flex: 1 },
+  root: { flex: 1 },
+  // Absolute-fill sibling behind the menu (not a parent of it) so an outside
+  // press dismisses without swallowing option presses. See render note.
+  backdrop: { ...StyleSheet.absoluteFillObject },
   menu: {
     position: "absolute",
     borderWidth: StyleSheet.hairlineWidth,
