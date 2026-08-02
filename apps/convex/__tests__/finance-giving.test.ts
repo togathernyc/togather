@@ -407,6 +407,9 @@ describe("getGivingContext", () => {
       communityLegalName: "Test Church Inc.",
       suggestedAmountsCents: [1000, 5000, 10000],
       givingLive: true,
+      // No monthly gift to this fund — see finance-recurring-giving.test.ts
+      // for the populated case.
+      existingRecurring: null,
     });
 
     await t.run(async (ctx) => {
