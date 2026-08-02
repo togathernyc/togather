@@ -140,6 +140,12 @@ export function GiveScreen() {
   // Stripe's cancel_url inside the auth-less in-app browser. Placed after every
   // hook so the hook order never changes; the queries above already skip
   // without a token, so nothing is in flight behind this.
+  //
+  // NOTE: `useStoredAuthToken` starts at `null` and resolves from storage a
+  // frame or two later, so a signed-in donor cancelling on WEB (where the app
+  // cold-boots on this URL) sees this notice briefly before the give form
+  // takes over. That's the deliberate trade: gating it on `Platform.OS` would
+  // hand a signed-out web visitor the permanent skeleton this exists to kill.
   if (params.giving === "cancelled" && !token) {
     return <GiveCancelledNotice />;
   }
