@@ -1821,3 +1821,230 @@ describe("leader/co-lead DM notifications", () => {
     expect(emailFrom(fetchMock)).toBeUndefined();
   });
 });
+
+// ============================================================================
+// Issue #661 — full message in previews & notifications
+// ============================================================================
+//
+// The message body used to be sliced to 100 chars before it reached ANY
+// notification surface, so the "would like to chat" email quoted a half-word
+// with no "…". Emails now get the whole message (1000-char safety cap); the
+// push gets a 200-char, always-ellipsized excerpt.
+
+describe("full message in previews & notifications (#661)", () => {
+  /** Longer than the old 100-char cut, shorter than the new caps. */
+  const LONG_MESSAGE =
+    "Hi there, I have been going through a really hard week at work. " +
+    "Please keep me in prayers, I will be back next week for sure.";
+
+  test("chat-request email quotes the whole message, not the first 100 chars", async () => {
+    process.env.RESEND_API_KEY = "test-resend-key";
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const { userId, user2Id, communityId } = await seedTestData(t);
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue({ ok: true, json: async () => ({ data: [{ id: "x" }] }) });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await enableRecipientNotifications(t, user2Id, "recipient@example.com", "full-661");
+    const channelId = await seedDmRequest(t, {
+      communityId,
+      senderId: userId,
+      recipientId: user2Id,
+    });
+
+    await fireDmMessage(t, {
+      channelId,
+      senderId: userId,
+      content: LONG_MESSAGE,
+      senderName: "Test User",
+    });
+
+    expect(LONG_MESSAGE.length).toBeGreaterThan(100);
+    const email = emailFrom(fetchMock);
+    expect(email?.html).toContain("Please keep me in prayers");
+    expect(email?.html).toContain(LONG_MESSAGE);
+    // Nothing was shortened, so no ellipsis was appended to the quote.
+    expect(email?.html).not.toContain(`${LONG_MESSAGE}…`);
+  });
+
+  test("email caps a runaway message at ~1000 chars and ends in an ellipsis", async () => {
+    process.env.RESEND_API_KEY = "test-resend-key";
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const { userId, user2Id, communityId } = await seedTestData(t);
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue({ ok: true, json: async () => ({ data: [{ id: "x" }] }) });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await enableRecipientNotifications(t, user2Id, "recipient@example.com", "cap-661");
+    const channelId = await seedDmRequest(t, {
+      communityId,
+      senderId: userId,
+      recipientId: user2Id,
+    });
+
+    await fireDmMessage(t, {
+      channelId,
+      senderId: userId,
+      content: "A".repeat(1500),
+      senderName: "Test User",
+    });
+
+    const email = emailFrom(fetchMock);
+    expect(email?.html).toContain(`${"A".repeat(999)}…`);
+    expect(email?.html).not.toContain("A".repeat(1001));
+  });
+
+  test("push body shows ~200 chars and always ends in an ellipsis when shortened", async () => {
+    process.env.RESEND_API_KEY = "test-resend-key";
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const { userId, user2Id, communityId } = await seedTestData(t);
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue({ ok: true, json: async () => ({ data: [{ id: "x" }] }) });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await enableRecipientNotifications(t, user2Id, "recipient@example.com", "push-661");
+    const channelId = await seedDmRequest(t, {
+      communityId,
+      senderId: userId,
+      recipientId: user2Id,
+    });
+
+    await fireDmMessage(t, {
+      channelId,
+      senderId: userId,
+      content: "B".repeat(500),
+      senderName: "Test User",
+    });
+
+    const push = pushFrom(fetchMock);
+    // "would like to chat: " prefix + a 200-char ellipsized excerpt.
+    expect(push?.body).toBe(`would like to chat: ${"B".repeat(199)}…`);
+  });
+
+  test("group push carries the short excerpt while the mention email carries the full body", async () => {
+    process.env.RESEND_API_KEY = "test-resend-key";
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const { userId, user2Id, channelId } = await seedTestData(t);
+    const now = Date.now();
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue({ ok: true, json: async () => ({ data: [{ id: "x" }] }) });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await enableRecipientNotifications(t, user2Id, "mentioned@example.com", "mention-661");
+    await t.run(async (ctx) => {
+      await ctx.db.insert("chatReadState", {
+        channelId,
+        userId: user2Id,
+        lastReadAt: now,
+        unreadCount: 0,
+      });
+    });
+
+    const essay = "C".repeat(400);
+    const messageId = await t.run(async (ctx) => {
+      return await ctx.db.insert("chatMessages", {
+        channelId,
+        senderId: userId,
+        content: essay,
+        contentType: "text",
+        createdAt: now,
+        isDeleted: false,
+        senderName: "Test User",
+        mentionedUserIds: [user2Id],
+      });
+    });
+
+    await t.mutation(internal.functions.messaging.events.onMessageSent, {
+      messageId,
+      channelId,
+      senderId: userId,
+    });
+    vi.runAllTimers();
+    await t.finishInProgressScheduledFunctions();
+
+    // Push: 200-char ellipsized excerpt under the "Group: Channel" line.
+    const push = pushFrom(fetchMock);
+    expect(push?.body).toBe(`Test Group: General\n${"C".repeat(199)}…`);
+
+    // Email: the full 400-char body, still HTML-escaped by the template.
+    const email = emailFrom(fetchMock);
+    expect(email?.html).toContain(essay);
+  });
+
+  test("emails keep escaping the longer body", async () => {
+    process.env.RESEND_API_KEY = "test-resend-key";
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const { userId, user2Id, communityId } = await seedTestData(t);
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue({ ok: true, json: async () => ({ data: [{ id: "x" }] }) });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await enableRecipientNotifications(t, user2Id, "recipient@example.com", "escape-661");
+    const channelId = await seedDmRequest(t, {
+      communityId,
+      senderId: userId,
+      recipientId: user2Id,
+    });
+
+    await fireDmMessage(t, {
+      channelId,
+      senderId: userId,
+      content: `${"D".repeat(120)}<script>alert(1)</script>`,
+      senderName: "Test User",
+    });
+
+    const email = emailFrom(fetchMock);
+    expect(email?.html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+    expect(email?.html).not.toContain("<script>alert(1)</script>");
+  });
+
+  test("an emoji at the push cut boundary is not split", async () => {
+    process.env.RESEND_API_KEY = "test-resend-key";
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const { userId, user2Id, communityId } = await seedTestData(t);
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue({ ok: true, json: async () => ({ data: [{ id: "x" }] }) });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await enableRecipientNotifications(t, user2Id, "recipient@example.com", "emoji-661");
+    const channelId = await seedDmRequest(t, {
+      communityId,
+      senderId: userId,
+      recipientId: user2Id,
+    });
+
+    // 🙏 is a surrogate pair. Land it exactly across the 199-char cut so a
+    // naive slice would keep only its high surrogate and render "�".
+    await fireDmMessage(t, {
+      channelId,
+      senderId: userId,
+      content: `${"E".repeat(198)}🙏${"F".repeat(50)}`,
+      senderName: "Test User",
+    });
+
+    const push = pushFrom(fetchMock);
+    expect(push?.body).toBe(`would like to chat: ${"E".repeat(198)}…`);
+    // No lone surrogate anywhere in the body.
+    expect(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(String(push?.body))).toBe(
+      false,
+    );
+  });
+});

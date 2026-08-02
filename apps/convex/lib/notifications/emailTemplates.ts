@@ -69,6 +69,20 @@ export const baseStyles = {
     border-top: 1px solid #e6ebf1;
     margin: 20px 0;
   `,
+  /**
+   * The quoted message body inside a `messageBox`. `white-space: pre-wrap`
+   * is load-bearing now that emails carry the *whole* message: without it a
+   * multi-paragraph message collapses into one run-on blob. Interpolate the
+   * escaped text with NO surrounding whitespace — `pre-wrap` would render the
+   * template literal's own newlines and indentation too.
+   */
+  quote: `
+    color: #1a1a1a;
+    font-size: 15px;
+    line-height: 24px;
+    margin: 0;
+    white-space: pre-wrap;
+  `,
   footer: `
     text-align: center;
     color: #8898aa;
@@ -195,9 +209,7 @@ export function chatRequestEmail(data: {
     <p style="${baseStyles.text}">${greeting}</p>
     <h1 style="${baseStyles.heading}">${escapeHtml(data.senderName)} ${channelLine}</h1>
     <div style="${baseStyles.messageBox}">
-      <p style="color: #1a1a1a; font-size: 15px; line-height: 24px; margin: 0;">
-        "${escapeHtml(data.messagePreview)}"
-      </p>
+      <p style="${baseStyles.quote}">"${escapeHtml(data.messagePreview)}"</p>
     </div>
     <p style="${baseStyles.text}">
       Open Togather to accept the chat, reply, or block. Until you accept,
@@ -238,9 +250,7 @@ export function leaderDmEmail(data: {
     <h1 style="${baseStyles.heading}">${heading}</h1>
     <p style="${baseStyles.text}">${escapeHtml(data.bodyLine)}</p>
     <div style="${baseStyles.messageBox}">
-      <p style="color: #1a1a1a; font-size: 15px; line-height: 24px; margin: 0;">
-        "${escapeHtml(data.messagePreview)}"
-      </p>
+      <p style="${baseStyles.quote}">"${escapeHtml(data.messagePreview)}"</p>
     </div>
     <p style="${baseStyles.text}">
       It's already in your inbox — no request to accept. Open Togather to reply.

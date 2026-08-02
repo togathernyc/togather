@@ -24,12 +24,24 @@ import {
   getLeaderDmRelationship,
   type LeaderDmRelationship,
 } from "../../lib/leaderDm";
+import { truncateWithEllipsis } from "../../lib/textPreview";
 
 // ============================================================================
 // Constants
 // ============================================================================
 
-const MAX_PREVIEW_LENGTH = 100;
+/**
+ * Emails have no space limit, so the quote box shows the whole message — this
+ * is only a runaway-length guard for a pasted essay, and it ellipsizes when hit.
+ */
+const MAX_EMAIL_PREVIEW_LENGTH = 1000;
+
+/**
+ * Push bodies are clipped again by iOS/Android on the lock screen, but we stop
+ * being the thing that cuts the message short: a generous cap that always ends
+ * in "…" so a shortened push reads as an intentional preview.
+ */
+const MAX_PUSH_PREVIEW_LENGTH = 200;
 
 /**
  * First-message notification copy per leadership relationship. The push keeps
@@ -149,9 +161,15 @@ export const onMessageSent = internalMutation({
       }
     }
 
-    // Generate preview for notifications (but don't update channel - sendMessage already does it
-    // with smart previews like "Sent a photo" or "Sent X files")
-    const preview = message.content.slice(0, MAX_PREVIEW_LENGTH);
+    // Generate previews for notifications (but don't update channel - sendMessage
+    // already does it with smart previews like "Sent a photo" or "Sent X files").
+    // Two sizes: `preview` is the email-grade body (effectively the whole
+    // message), `pushPreview` is the shortened, always-ellipsized push body.
+    const preview = truncateWithEllipsis(
+      message.content,
+      MAX_EMAIL_PREVIEW_LENGTH,
+    );
+    const pushPreview = truncateWithEllipsis(preview, MAX_PUSH_PREVIEW_LENGTH);
 
     // Get all channel members (except sender if there is one). Muted members
     // stay in this list so their unread bookkeeping keeps running — mute
@@ -332,6 +350,7 @@ export const onMessageSent = internalMutation({
             messageId: args.messageId,
             senderName,
             messagePreview: preview,
+            messagePushPreview: pushPreview,
             senderAvatarUrl,
             groupId: bucket.groupId,
             groupName: bucket.groupName,
@@ -473,6 +492,7 @@ export const onMessageSent = internalMutation({
           messageId: args.messageId,
           senderName,
           messagePreview: preview,
+          messagePushPreview: pushPreview,
           senderAvatarUrl,
           groupId: group?._id,
           groupName: group?.name || channel?.name || 'Group Chat',
@@ -498,7 +518,10 @@ export const sendMessageNotifications = internalAction({
     channelId: v.id("chatChannels"),
     messageId: v.id("chatMessages"),
     senderName: v.string(),
+    /** Email-grade body: effectively the whole message (1000-char safety cap). */
     messagePreview: v.string(),
+    /** Push-grade body: shortened + always ellipsized. Falls back to the above. */
+    messagePushPreview: v.optional(v.string()),
     senderAvatarUrl: v.optional(v.string()),
     groupId: v.optional(v.id("groups")),
     groupName: v.string(),
@@ -544,6 +567,7 @@ export const sendMessageNotifications = internalAction({
           senderName: args.senderName,
           senderAvatarUrl: args.senderAvatarUrl,
           messagePreview: args.messagePreview,
+          messagePushPreview: args.messagePushPreview,
           groupId: args.groupId,
           groupName: args.groupName,
           channelId: args.channelId,
@@ -567,6 +591,7 @@ export const sendMessageNotifications = internalAction({
           senderName: args.senderName,
           senderAvatarUrl: args.senderAvatarUrl,
           messagePreview: args.messagePreview,
+          messagePushPreview: args.messagePushPreview,
           groupId: args.groupId,
           groupName: args.groupName,
           channelId: args.channelId,
@@ -589,10 +614,10 @@ export const sendMessageNotifications = internalAction({
 
 /**
  * Truncate a string to `max` chars, suffixing "…" if truncation occurred.
+ * Character-safe, so a cut at an emoji boundary never leaves a broken glyph.
  */
 function truncateForBody(text: string, max: number): string {
-  if (text.length <= max) return text;
-  return text.slice(0, Math.max(0, max - 1)) + "…";
+  return truncateWithEllipsis(text, max);
 }
 
 /**
@@ -651,10 +676,13 @@ export const sendAdHocMessageNotifications = internalAction({
       `[sendAdHocMessageNotifications] channelId=${args.channelId}, pending=${args.pendingRecipients.length}, accepted=${args.acceptedRecipients.length}`,
     );
 
-    // Truncate the body's message excerpt. Match the previous fanout's
-    // ~120-char ceiling so iOS/Android push surfaces don't ellipsize twice.
-    const MAX_BODY_PREVIEW = 120;
-    const previewBody = truncateForBody(args.messagePreview, MAX_BODY_PREVIEW);
+    // Truncate the *push* body's message excerpt. The email below deliberately
+    // uses the untruncated `args.messagePreview` — emails have room for the
+    // whole message; only the push needs a ceiling (and the OS clips it again).
+    const previewBody = truncateForBody(
+      args.messagePreview,
+      MAX_PUSH_PREVIEW_LENGTH,
+    );
 
     // Resolve channel + non-sender accepted member names so group_dms can
     // render "<sender> in <channelName | first-two-others>" titles when

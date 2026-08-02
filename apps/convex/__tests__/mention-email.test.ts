@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { mentionEmail } from "../lib/notifications/emailTemplates";
+import {
+  chatRequestEmail,
+  leaderDmEmail,
+  mentionEmail,
+} from "../lib/notifications/emailTemplates";
 
 describe("mentionEmail", () => {
   it("renders sender, group, and message preview", () => {
@@ -39,6 +43,41 @@ describe("mentionEmail", () => {
     expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
     expect(html).toContain("&quot;quoted&quot; &amp; &lt;b&gt;bold&lt;/b&gt;");
     expect(html).toContain('Hi Jo &quot;J&quot;,');
+  });
+});
+
+/**
+ * The emails now quote the *whole* message, so the quote box has to keep the
+ * sender's line breaks — otherwise a multi-paragraph prayer request renders as
+ * one run-on blob. `white-space: pre-wrap` does that, which in turn means the
+ * escaped text must be interpolated with no surrounding template whitespace.
+ */
+describe("notification email quote boxes preserve line breaks", () => {
+  const multiline = "Line one.\n\nLine two.";
+
+  it.each([
+    [
+      "chatRequestEmail",
+      chatRequestEmail({
+        senderName: "Alice",
+        isGroupChat: false,
+        messagePreview: multiline,
+      }),
+    ],
+    [
+      "leaderDmEmail",
+      leaderDmEmail({
+        senderName: "Alice",
+        relationshipLabel: "group leader",
+        bodyLine: "She leads your group.",
+        messagePreview: multiline,
+      }),
+    ],
+  ])("%s sets pre-wrap and does not pad the quote", (_name, html) => {
+    expect(html).toContain("white-space: pre-wrap");
+    // The message sits flush against its quote marks — no stray newline or
+    // indentation that pre-wrap would render as blank space.
+    expect(html).toContain(`>"${multiline}"</p>`);
   });
 });
 
