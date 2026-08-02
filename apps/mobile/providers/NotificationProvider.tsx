@@ -179,10 +179,16 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   }, [isAuthenticated]);
 
-  // Use reactive query for unread count - only when we have a valid auth token
+  // Reactive unread count — gated on the auth lifecycle, not just on a token
+  // string existing. `authToken` is filled in asynchronously from AsyncStorage
+  // by the effect above, so a `.then(setAuthToken)` resolving after a logout
+  // could otherwise re-arm this query with a token the server has revoked.
+  // (The server also returns 0 for an unusable token rather than throwing —
+  // see functions/notifications/queries.ts — because convex/react re-throws
+  // query errors during render and crashes the app.)
   const unreadCountResult = useQuery(
     api.functions.notifications.queries.unreadCount,
-    authToken ? { token: authToken } : "skip"
+    isAuthenticated && authToken ? { token: authToken } : "skip"
   );
   const unreadCount = unreadCountResult?.unreadCount ?? 0;
 
