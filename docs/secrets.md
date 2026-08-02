@@ -234,6 +234,8 @@ The group giving feature (ADR-032) enables communities to accept donations via S
 1. **Events from: Your account** (billing — the pre-existing destination): `checkout.session.completed`, `customer.subscription.updated/deleted`, `invoice.payment_failed`. Its signing secret is `STRIPE_WEBHOOK_SECRET`.
 2. **Events from: Connected accounts** (group giving): `account.updated`, `payment_intent.succeeded`, `payout.paid`, `charge.refunded`, `charge.dispute.created`. Its signing secret is `STRIPE_CONNECT_WEBHOOK_SECRET`.
 
+**Recurring giving adds four more to destination 2** (ADR-032 addendum): `invoice.paid`, `invoice.payment_failed`, `customer.subscription.updated`, `customer.subscription.deleted`. A monthly donation is a Stripe Subscription on the *connected* account, so these arrive with `event.account` set and are routed to the finance handler rather than SaaS billing (`apps/convex/lib/finance/webhookRouting.ts`). Note the overlap with destination 1: the same three subscription/invoice event types are subscribed on **both** destinations, which is correct — the platform copies drive billing, the connected-account copies drive giving, and `event.account` is what separates them. Until this subscription is added, recurring gifts can be charged by Stripe while their status and donation rows silently never update, so it must be configured **before** recurring giving is switched on in an environment — not after.
+
 The endpoint verifies an incoming signature against either secret (`apps/convex/http.ts`).
 
 **Revoking `STRIPE_CONNECT_WEBHOOK_SECRET`**: the sync script deliberately skips
