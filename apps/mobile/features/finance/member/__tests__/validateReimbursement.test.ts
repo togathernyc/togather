@@ -88,10 +88,37 @@ describe("resolveGiveAmountCents", () => {
   });
 });
 
+/** What Stripe actually takes off a charge of `totalCents` (2.9% + 30c). */
+function stripeTakesCents(totalCents: number): number {
+  return Math.round(totalCents * 0.029 + 30);
+}
+
 describe("estimateCoverFeesCents", () => {
-  it("computes ~2.9% + 30 cents", () => {
-    // 5000 * 0.029 = 145, + 30 = 175
-    expect(estimateCoverFeesCents(5000)).toBe(175);
+  it("grosses up so the fund nets the full amount, not amount-minus-the-fee-on-the-fee", () => {
+    // Naive (fee on the base only) would be round(5000 * 0.029 + 30) = 175,
+    // which leaves the fund $49.95 on a $50 gift. The gross-up is
+    // (5000 + 30) / (1 - 0.029) - 5000 = 180.2c.
+    expect(estimateCoverFeesCents(5000)).toBe(180);
+  });
+
+  it.each([1000, 5000, 10000, 30000, 2_000_000])(
+    "leaves the fund with at least %i cents after Stripe's cut",
+    (amountCents) => {
+      const total = amountCents + estimateCoverFeesCents(amountCents);
+      const net = total - stripeTakesCents(total);
+      expect(net).toBeGreaterThanOrEqual(amountCents);
+      // …and never overshoots by more than a rounding cent.
+      expect(net).toBeLessThanOrEqual(amountCents + 1);
+    },
+  );
+
+  it("never decreases as the amount grows", () => {
+    let previous = 0;
+    for (let amountCents = 100; amountCents <= 2_000_000; amountCents += 997) {
+      const fee = estimateCoverFeesCents(amountCents);
+      expect(fee).toBeGreaterThanOrEqual(previous);
+      previous = fee;
+    }
   });
 
   it("returns 0 for a non-positive amount", () => {

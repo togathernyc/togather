@@ -28,10 +28,44 @@ export function parseDollarsToCents(
   return Math.round(dollars * 100);
 }
 
-/** Stripe's typical US card rate: 2.9% + 30 cents, rounded to the nearest cent. */
+/**
+ * Stripe's typical US card rate, charged on the amount that actually hits the
+ * card — 2.9% + 30 cents.
+ *
+ * NOTE: deliberately duplicated in `apps/convex/lib/finance/fees.ts`. There is
+ * no shared finance module in `packages/shared` to hold them, and inventing one
+ * for two constants isn't worth a new cross-app import path. The server
+ * re-derives the fee from its own copy and validates the client's number
+ * against it (±2c), so a drift between the two surfaces fails loudly at the
+ * donation-creation seam rather than silently shortchanging a fund.
+ */
+const STRIPE_FEE_RATE = 0.029;
+const STRIPE_FEE_FIXED_CENTS = 30;
+
+/** What Stripe takes off a charge of `totalCents`. */
+function stripeFeeCents(totalCents: number): number {
+  return Math.round(totalCents * STRIPE_FEE_RATE + STRIPE_FEE_FIXED_CENTS);
+}
+
+/**
+ * The cents to ADD to a gift so the fund still nets `amountCents` after
+ * Stripe's cut — the number behind the give sheet's "+$X so the fund gets the
+ * full $Y" toggle.
+ *
+ * Stripe's percentage applies to the whole charge, fee included, so charging
+ * `amount + fee(amount)` still leaves the fund short by the percentage of the
+ * fee. Solving `total - (total * rate + fixed) = amount` gives the closed form
+ * `total = (amount + fixed) / (1 - rate)`; the add-on is `total - amount`.
+ * Rounded to the nearest cent, then nudged up a cent in the rare case that
+ * rounding down would leave the fund a cent short — the toggle's promise is a
+ * floor, not an approximation.
+ */
 export function estimateCoverFeesCents(amountCents: number): number {
   if (!Number.isFinite(amountCents) || amountCents <= 0) return 0;
-  return Math.round(amountCents * 0.029 + 30);
+  const grossedUpTotal = (amountCents + STRIPE_FEE_FIXED_CENTS) / (1 - STRIPE_FEE_RATE);
+  const fee = Math.round(grossedUpTotal - amountCents);
+  const netToFund = amountCents + fee - stripeFeeCents(amountCents + fee);
+  return netToFund < amountCents ? fee + 1 : fee;
 }
 
 /**
