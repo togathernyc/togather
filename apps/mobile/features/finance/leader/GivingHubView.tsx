@@ -1,16 +1,39 @@
 /**
- * GivingHubView — presentational leader/admin surface for group giving
- * (ADR-032 §2 CTA, §4 approvals queue; group-fund cards phase). Plain props
- * only, no Convex — see GivingHubScreen.tsx for the data wrapper that
- * renders this.
+ * GivingHubView — presentational leader/admin "Fund settings" surface for
+ * group giving (ADR-032 §2 CTA, §4 approvals queue; group-fund cards phase).
+ * Plain props only, no Convex — see GivingHubScreen.tsx for the data wrapper
+ * that renders this and owns the `WaSubScreenHeader`.
  *
- * Sections mirror the approved mock: balance header + "Giving is live" chip,
- * month-to-date stat tiles, a quick-action row (Give / Reimburse / New card
- * / Share fund), a "Cards" inset group, a "Needs your approval" inset group
- * (folds in the pre-existing approve/deny flow), a "Recent activity" inset
- * group (ships today via `getFundOverview`), then a Roles cell.
+ * WhatsApp-shell restyle (approved giving-flow mock). Structure, top to
+ * bottom, on the `bg.grouped` canvas the screen wrapper paints:
+ *   1. Hero `WaInsetGroup` — fund name, large tabular balance, and the
+ *      "Giving is live" chip.
+ *   2. "Needs your approval" — the pre-existing approvals queue, re-laid as
+ *      WA cells with a `WaAvatar` initials disc per submitter.
+ *   3. "Cards" — one cell per fund card, plus the accent "Create a card"
+ *      action cell behind the unchanged `canManageCards` gate.
+ *   4. "People" — "Fund roles" and "Share fund" navigational cells.
+ *   5. "Activity" — a single accent "View all transactions" action cell.
+ *
+ * Built on `components/wa/*` (`WaInsetGroup`, `WaCell`, `WaAvatar`) with every
+ * measurement imported from `components/wa/metrics` per that module's own
+ * "import these instead of re-typing raw numbers" rule.
+ *
+ * Two rows are bespoke rather than literal `<WaCell>`s, following
+ * `GroupInfoScreen`'s `SettingsToggleRow` precedent — both are built to the
+ * same `WA_CELL_*` metrics so they sit in the same rhythm:
+ *   - `ApprovalRow` needs an avatar well, a trailing amount, a receipt
+ *     thumbnail, and an Approve/Deny button pair *below* the row; `WaCell` has
+ *     slots for none of that.
+ *   - The hero is a two-line centered block, not a row.
+ *
+ * Deliberately NOT carried over from the pre-restyle screen (the approved
+ * mock's structure is the six items above, and every one of these lives on the
+ * member fund screen that "View all transactions" opens):
+ *   - The Give / Reimburse quick-action tiles — `FundScreen` owns both.
+ *   - The month-to-date stat tiles and the inline recent-activity list.
  */
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -23,6 +46,7 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "@hooks/useTheme";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { waAccentPalette } from "@utils/waPalette";
 import { Badge, Button, EmptyState, Skeleton, ImageViewer } from "@components/ui";
 // NOTE: imported from the concrete file, not the "@components/ui" barrel.
 // Under this repo's current Jest/Babel setup, `CustomModal as Modal`
@@ -33,12 +57,25 @@ import { Badge, Button, EmptyState, Skeleton, ImageViewer } from "@components/ui
 // framework-level look since other barrel consumers of `Modal` likely hit
 // the same thing under test.
 import { CustomModal as Modal } from "@components/ui/Modal";
-import { formatCents, formatSignedCents } from "../format";
-import { formatLedgerKind } from "./utils";
+import { WaAvatar, WaCell, WaInsetGroup } from "@components/wa";
+import {
+  WA_CELL_ICON_LABEL_GAP,
+  WA_CELL_PADDING,
+  WA_CELL_TALL_MIN_HEIGHT,
+  WA_CHEVRON_SIZE,
+  WA_CHEVRON_GAP,
+  WA_GROUP_MARGIN,
+  WA_GROUP_SPACING,
+  WA_TYPE_FOOTNOTE,
+  WA_TYPE_ROW_TITLE,
+  WA_TYPE_SUBTITLE,
+  WA_WEIGHT_BOLD,
+  WA_WEIGHT_SEMIBOLD,
+} from "@components/wa/metrics";
+import { formatCents } from "../format";
 import type {
   FundCard,
   GivingExpense,
-  GivingHubActivityEntry,
   GivingHubBalanceSummary,
   CardStatus,
 } from "./types";
@@ -46,12 +83,19 @@ import { formatCardLimit } from "./types";
 
 export type GivingHubState = "loading" | "no-fund-admin" | "no-fund-member" | "ready";
 
+/** Avatar disc in an approval row — the cell-scale counterpart of the 56pt list avatar. */
+const APPROVAL_AVATAR_SIZE = 40;
+/** Hero balance type size — the mock's ~36pt, between WA's 34pt large title and its 28pt hero name. */
+const HERO_BALANCE_SIZE = 36;
+/** Hero fund-name type size — the mock's 13.5pt gray semibold eyebrow above the balance. */
+const HERO_FUND_NAME_SIZE = 13.5;
+
 export interface GivingHubViewProps {
   /** Which top-level state to render (fund resolution + gating). */
   state: GivingHubState;
   groupName: string;
   givingLive: boolean;
-  /** Balance header + month-to-date stats. `undefined` while loading. */
+  /** Hero fund name + balance. `undefined` while loading. */
   balance: GivingHubBalanceSummary | undefined;
 
   cards: FundCard[];
@@ -71,17 +115,12 @@ export interface GivingHubViewProps {
   onApprove: (expenseId: string) => void;
   onDeny: (expenseId: string, reason: string) => void;
 
-  /** Recent fund ledger activity — ships today via getFundOverview. */
-  activity: GivingHubActivityEntry[] | undefined;
-
   onEnableGiving: () => void;
   isEnablingGiving: boolean;
 
   onViewRoles: () => void;
-  onGivePress: () => void;
-  onReimbursePress: () => void;
   onCreateCardPress: () => void;
-  /** Undefined hides the "Share fund" tile (no shareable group link available). */
+  /** Undefined hides the "Share fund" cell (no shareable group link available). */
   onSharePress?: () => void;
   onViewCard: (cardId: string) => void;
   onViewAllActivity: () => void;
@@ -102,26 +141,27 @@ export function GivingHubView({
   processingExpenseId,
   onApprove,
   onDeny,
-  activity,
   onEnableGiving,
   isEnablingGiving,
   onViewRoles,
-  onGivePress,
-  onReimbursePress,
   onCreateCardPress,
   onSharePress,
   onViewCard,
   onViewAllActivity,
 }: GivingHubViewProps) {
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const { primaryColor } = useCommunityTheme();
+  const accent = useMemo(
+    () => waAccentPalette(primaryColor, isDark).accent,
+    [primaryColor, isDark],
+  );
   const [denyingExpenseId, setDenyingExpenseId] = useState<string | null>(null);
   const [denyReason, setDenyReason] = useState("");
   const [previewImages, setPreviewImages] = useState<string[] | null>(null);
 
   if (state === "loading") {
     return (
-      <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
+      <View style={styles.container}>
         <View style={styles.loadingPad}>
           <Skeleton width="60%" height={20} />
           <Skeleton width="100%" height={80} style={{ marginTop: 16 }} />
@@ -131,9 +171,11 @@ export function GivingHubView({
     );
   }
 
+  // Not-set-up states: same logic and copy as before the restyle, re-hosted on
+  // the grouped canvas the screen wrapper paints.
   if (state === "no-fund-admin") {
     return (
-      <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
+      <View style={styles.container}>
         <EmptyState
           icon="wallet-outline"
           title="Giving isn't set up for this group yet"
@@ -147,7 +189,7 @@ export function GivingHubView({
 
   if (state === "no-fund-member") {
     return (
-      <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
+      <View style={styles.container}>
         <EmptyState
           icon="wallet-outline"
           title="Giving isn't set up for this group yet"
@@ -157,313 +199,160 @@ export function GivingHubView({
     );
   }
 
-  const pendingTotalCents = expenses
-    .filter((e) => e.status === "pending")
-    .reduce((sum, e) => sum + e.amountCents, 0);
-
   return (
-    <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
+    <View style={styles.container}>
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        {/* BALANCE HEADER */}
+        {/* 1. HERO — fund name eyebrow, large tabular balance, live chip. */}
         {balance === undefined ? (
-          <Skeleton width="100%" height={120} borderRadius={20} />
+          <View style={styles.heroSkeleton}>
+            <Skeleton width="100%" height={120} borderRadius={24} />
+          </View>
         ) : (
-          <View style={styles.balance}>
-            <Text style={[styles.balanceAmount, { color: colors.text }]}>
-              {formatCents(balance.balanceCents)}
-            </Text>
-            <Text style={[styles.balanceFund, { color: colors.textSecondary }]}>
-              {balance.fundName} · Group fund
-            </Text>
-            {givingLive && (
-              <View style={[styles.liveChip, { backgroundColor: `${primaryColor}1a` }]}>
-                <Ionicons name="checkmark" size={13} color={primaryColor} />
-                <Text style={[styles.liveChipText, { color: primaryColor }]}>Giving is live</Text>
-              </View>
-            )}
-          </View>
+          <WaInsetGroup>
+            <View style={styles.hero}>
+              <Text style={[styles.heroFundName, { color: colors.textSecondary }]} numberOfLines={1}>
+                {balance.fundName}
+              </Text>
+              <Text style={[styles.heroBalance, { color: colors.text }]}>
+                {formatCents(balance.balanceCents)}
+              </Text>
+              {givingLive && (
+                <View style={[styles.liveChip, { backgroundColor: `${accent}1a` }]}>
+                  <View style={[styles.liveDot, { backgroundColor: accent }]} />
+                  <Text style={[styles.liveChipText, { color: accent }]}>Giving is live</Text>
+                </View>
+              )}
+            </View>
+          </WaInsetGroup>
         )}
 
-        {balance !== undefined && (
-          <View style={styles.statsRow}>
-            <StatTile
-              label="GIVEN THIS MONTH"
-              value={formatCents(balance.monthDonationsCents)}
-              sub={`${balance.monthDonationCount} ${balance.monthDonationCount === 1 ? "gift" : "gifts"}`}
-            />
-            <StatTile
-              label="SPENT THIS MONTH"
-              value={formatCents(balance.monthSpentCents)}
-              // Processing fees aren't spend, but hiding them makes "given"
-              // minus "spent" fail to reconcile against the balance above.
-              sub={
-                balance.monthFeesCents > 0
-                  ? `+ ${formatCents(balance.monthFeesCents)} fees`
-                  : undefined
-              }
-            />
-            <StatTile
-              label="PENDING"
-              value={formatCents(pendingTotalCents)}
-              sub={`${expenses.length} ${expenses.length === 1 ? "approval" : "approvals"}`}
-            />
-          </View>
-        )}
-
-        {/* QUICK ACTIONS */}
-        <View style={styles.actionsRow}>
-          <ActionTile icon="heart-outline" label="Give" onPress={onGivePress} testID="giving-hub-action-give" />
-          <ActionTile icon="receipt-outline" label="Reimburse" onPress={onReimbursePress} testID="giving-hub-action-reimburse" />
-          {canManageCards && (
-            <ActionTile icon="card-outline" label="New card" onPress={onCreateCardPress} testID="giving-hub-action-new-card" />
-          )}
-          {onSharePress && (
-            <ActionTile icon="share-outline" label="Share fund" onPress={onSharePress} testID="giving-hub-action-share" />
-          )}
-        </View>
-
-        {/* CARDS */}
-        <View>
-          <View style={styles.labelRow}>
-            <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>Cards</Text>
-          </View>
-          {isLoadingCards ? (
-            <Skeleton width="100%" height={80} borderRadius={16} />
+        {/* 2. NEEDS YOUR APPROVAL */}
+        <View style={styles.section}>
+          {isLoadingExpenses ? (
+            <Skeleton width="100%" height={80} borderRadius={24} style={styles.inlineSkeleton} />
           ) : (
-            <View style={[styles.group, { backgroundColor: colors.surface }]}>
-              {cards.length === 0 && !canManageCards ? (
+            <WaInsetGroup
+              header="Needs your approval"
+              separatorInset={WA_CELL_PADDING + APPROVAL_AVATAR_SIZE + WA_CELL_ICON_LABEL_GAP}
+            >
+              {expenses.length === 0 ? (
                 <View style={styles.emptyCell}>
-                  <Text style={{ color: colors.textSecondary }}>No cards yet</Text>
+                  <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+                    No pending approvals
+                  </Text>
                 </View>
               ) : (
-                cards.map((card, index) => (
-                  <TouchableOpacity
-                    key={card.id}
-                    style={[
-                      styles.cell,
-                      index > 0 && [styles.cellDivider, { borderTopColor: colors.border }],
-                    ]}
-                    onPress={() => onViewCard(card.id)}
-                    accessibilityRole="button"
-                    testID={`giving-hub-card-${card.id}`}
-                  >
-                    <Ionicons name="card-outline" size={20} color={colors.textSecondary} />
-                    <View style={styles.cellMain}>
-                      <Text style={[styles.cellTitle, { color: colors.text }]} numberOfLines={1}>
-                        {card.name} ·· {card.last4}
-                      </Text>
-                      <Text style={[styles.cellSub, { color: colors.textSecondary }]} numberOfLines={1}>
-                        {card.holderName} · {formatCardLimit(card.spendLimitCents, card.limitPeriod, formatCents)}
-                      </Text>
-                    </View>
-                    <CardStatusBadge status={card.status} />
-                    <Ionicons name="chevron-forward" size={17} color={colors.textTertiary} />
-                  </TouchableOpacity>
+                expenses.map((expense) => (
+                  <ApprovalRow
+                    key={expense.id}
+                    expense={expense}
+                    canApprove={canApprove}
+                    currentUserId={currentUserId}
+                    isProcessing={processingExpenseId === expense.id}
+                    onApprove={onApprove}
+                    onOpenDeny={(id) => {
+                      setDenyingExpenseId(id);
+                      setDenyReason("");
+                    }}
+                    onViewReceipt={(url) => setPreviewImages([url])}
+                  />
                 ))
               )}
-              {canManageCards && (
-                <TouchableOpacity
-                  style={[
-                    styles.cell,
-                    cards.length > 0 && [styles.cellDivider, { borderTopColor: colors.border }],
-                  ]}
-                  onPress={onCreateCardPress}
-                  accessibilityRole="button"
-                  testID="giving-hub-create-card"
-                >
-                  <Text style={[styles.actionCellText, { color: primaryColor }]}>
-                    Create a virtual card…
-                  </Text>
-                </TouchableOpacity>
-              )}
-            </View>
-          )}
-          <Text style={[styles.footerNote, { color: colors.textSecondary }]}>
-            Cards spend directly from this fund's bank account, and the bank declines anything over a card's
-            limit. Every charge lands in the fund's activity as soon as it settles.
-          </Text>
-        </View>
-
-        {/* NEEDS YOUR APPROVAL */}
-        <View>
-          <View style={styles.labelRow}>
-            <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>Needs your approval</Text>
-            <TouchableOpacity onPress={onViewAllActivity} testID="giving-hub-all-activity-link">
-              <Text style={[styles.labelLink, { color: primaryColor }]}>All activity</Text>
-            </TouchableOpacity>
-          </View>
-          {isLoadingExpenses ? (
-            <Skeleton width="100%" height={80} borderRadius={16} />
-          ) : expenses.length === 0 ? (
-            <View style={[styles.group, styles.emptyCell, { backgroundColor: colors.surface }]}>
-              <Text style={{ color: colors.textSecondary }}>No pending approvals</Text>
-            </View>
-          ) : (
-            <View style={[styles.group, { backgroundColor: colors.surface }]}>
-              {expenses.map((expense, index) => {
-                const isSelf = !!currentUserId && expense.submitter.id === currentUserId;
-                const needsSecondApproval = expense.status === "pending" && !!expense.approverId;
-                const canActOnRow = canApprove && expense.status === "pending" && !isSelf;
-                const isProcessing = processingExpenseId === expense.id;
-                const receiptMissing = expense.kind === "card_charge" && !expense.receiptUrl;
-
-                return (
-                  <View
-                    key={expense.id}
-                    style={[
-                      styles.expenseCell,
-                      index > 0 && [styles.cellDivider, { borderTopColor: colors.border }],
-                    ]}
-                    testID={`expense-row-${expense.id}`}
-                  >
-                    <View style={styles.cell}>
-                      <Ionicons
-                        name={expense.kind === "card_charge" ? "card-outline" : "receipt-outline"}
-                        size={20}
-                        color={colors.textSecondary}
-                      />
-                      <View style={styles.cellMain}>
-                        <Text style={[styles.cellTitle, { color: colors.text }]} numberOfLines={1}>
-                          {expense.description}
-                        </Text>
-                        <Text style={[styles.cellSub, { color: colors.textSecondary }]} numberOfLines={1}>
-                          {expense.kind === "card_charge" ? "Card charge" : "Reimbursement"} ·{" "}
-                          {expense.submitter.displayName ||
-                            `${expense.submitter.firstName ?? ""} ${expense.submitter.lastName ?? ""}`.trim() ||
-                            "Unknown"}
-                          {receiptMissing ? " · " : ""}
-                          {receiptMissing && (
-                            <Text style={{ color: colors.destructive, fontWeight: "700" }}>receipt missing</Text>
-                          )}
-                        </Text>
-                      </View>
-                      <Text style={[styles.expenseAmount, { color: colors.text }]}>
-                        {formatCents(expense.amountCents)}
-                      </Text>
-                    </View>
-
-                    <View style={styles.expenseMeta}>
-                      {needsSecondApproval && (
-                        <Badge variant="warning" size="small">1 of 2 approvals</Badge>
-                      )}
-                      {expense.receiptUrl ? (
-                        <TouchableOpacity
-                          onPress={() => setPreviewImages([expense.receiptUrl as string])}
-                          style={styles.receiptThumbWrap}
-                          accessibilityRole="button"
-                          accessibilityLabel="View receipt"
-                          testID={`expense-receipt-${expense.id}`}
-                        >
-                          <Image source={{ uri: expense.receiptUrl }} style={styles.receiptThumb} />
-                        </TouchableOpacity>
-                      ) : null}
-                    </View>
-
-                    {canActOnRow && (
-                      <View style={styles.expenseActions}>
-                        <Button
-                          variant="secondary"
-                          onPress={() => {
-                            setDenyingExpenseId(expense.id);
-                            setDenyReason("");
-                          }}
-                          disabled={isProcessing}
-                          style={styles.actionButton}
-                        >
-                          Deny
-                        </Button>
-                        <Button
-                          variant="primary"
-                          onPress={() => onApprove(expense.id)}
-                          loading={isProcessing}
-                          style={styles.actionButton}
-                        >
-                          Approve
-                        </Button>
-                      </View>
-                    )}
-                    {isSelf && expense.status === "pending" && (
-                      <Text style={[styles.selfNote, { color: colors.textTertiary }]}>
-                        You can't approve your own request.
-                      </Text>
-                    )}
-                  </View>
-                );
-              })}
-            </View>
+            </WaInsetGroup>
           )}
         </View>
 
-        {/* RECENT ACTIVITY */}
-        <View>
-          <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>Recent activity</Text>
-          {activity === undefined ? (
-            <Skeleton width="100%" height={80} borderRadius={16} />
-          ) : activity.length === 0 ? (
-            <View style={[styles.group, styles.emptyCell, { backgroundColor: colors.surface }]}>
-              <Text style={{ color: colors.textSecondary }}>No activity yet</Text>
-            </View>
+        {/* 3. CARDS */}
+        <View style={styles.section}>
+          {isLoadingCards ? (
+            <Skeleton width="100%" height={80} borderRadius={24} style={styles.inlineSkeleton} />
           ) : (
-            <View style={[styles.group, { backgroundColor: colors.surface }]}>
-              {activity.map((entry, index) => (
-                <View
-                  key={entry.id}
-                  style={[
-                    styles.cell,
-                    index > 0 && [styles.cellDivider, { borderTopColor: colors.border }],
-                  ]}
-                >
-                  <Ionicons name={activityIcon(entry.kind)} size={20} color={colors.textSecondary} />
-                  <View style={styles.cellMain}>
-                    <Text style={[styles.cellTitle, { color: colors.text }]} numberOfLines={1}>
-                      {formatLedgerKind(entry.kind)}
-                      {entry.donorName ? ` · ${entry.donorName}` : ""}
-                    </Text>
-                    <Text style={[styles.cellSub, { color: colors.textSecondary }]}>
-                      {formatDate(entry.createdAt)}
-                    </Text>
-                  </View>
-                  <Text
-                    style={[
-                      styles.expenseAmount,
-                      { color: entry.direction === "credit" ? colors.success : colors.text },
-                    ]}
-                  >
-                    {formatSignedCents(entry.amountCents, entry.direction)}
-                  </Text>
+            <WaInsetGroup
+              header="Cards"
+              footer="Cards spend directly from this fund's bank account, and the bank declines anything over a card's limit. Every charge lands in the fund's activity as soon as it settles."
+            >
+              {cards.length === 0 && !canManageCards ? (
+                <View key="cards-empty" style={styles.emptyCell}>
+                  <Text style={[styles.emptyText, { color: colors.textSecondary }]}>No cards yet</Text>
                 </View>
+              ) : null}
+
+              {cards.map((card) => (
+                <WaCell
+                  key={card.id}
+                  icon="card-outline"
+                  title={`${card.name} ·· ${card.last4}`}
+                  description={`${card.holderName} · ${formatCardLimit(
+                    card.spendLimitCents,
+                    card.limitPeriod,
+                    formatCents,
+                  )}`}
+                  onPress={() => onViewCard(card.id)}
+                  testID={`giving-hub-card-${card.id}`}
+                  trailingAccessory={
+                    <View style={styles.cardTrailing}>
+                      <CardStatusBadge status={card.status} />
+                      <Ionicons
+                        name="chevron-forward"
+                        size={WA_CHEVRON_SIZE}
+                        color={colors.textTertiary}
+                      />
+                    </View>
+                  }
+                />
               ))}
-              <TouchableOpacity
-                style={[styles.cell, styles.cellDivider, { borderTopColor: colors.border }]}
-                onPress={onViewAllActivity}
-                accessibilityRole="button"
-                testID="giving-hub-see-all-transactions"
-              >
-                <Text style={[styles.actionCellText, { color: primaryColor }]}>
-                  See all transactions…
-                </Text>
-              </TouchableOpacity>
-            </View>
+
+              {canManageCards ? (
+                <WaCell
+                  key="create-card"
+                  variant="action"
+                  accent={accent}
+                  title="Create a card"
+                  onPress={onCreateCardPress}
+                  testID="giving-hub-create-card"
+                />
+              ) : null}
+            </WaInsetGroup>
           )}
-          <Text style={[styles.footerNote, { color: colors.textSecondary }]}>
-            Card charges sync automatically from the bank. Balance reconciles nightly against the fund's account.
-          </Text>
         </View>
 
-        {/* ROLES */}
-        <View style={[styles.group, { backgroundColor: colors.surface }]}>
-          <TouchableOpacity
-            style={styles.cell}
-            onPress={onViewRoles}
-            accessibilityRole="button"
-            testID="giving-hub-roles-link"
+        {/* 4. PEOPLE */}
+        <View style={styles.section}>
+          <WaInsetGroup header="People">
+            <WaCell
+              icon="key-outline"
+              title="Fund roles"
+              description="Who can manage, approve, spend"
+              onPress={onViewRoles}
+              testID="giving-hub-roles-link"
+            />
+            {onSharePress ? (
+              <WaCell
+                key="share-fund"
+                icon="link-outline"
+                title="Share fund"
+                description="Invite people to give"
+                onPress={onSharePress}
+                testID="giving-hub-action-share"
+              />
+            ) : null}
+          </WaInsetGroup>
+        </View>
+
+        {/* 5. ACTIVITY */}
+        <View style={styles.section}>
+          <WaInsetGroup
+            header="Activity"
+            footer="Card charges sync automatically from the bank. Balance reconciles nightly against the fund's account."
           >
-            <Ionicons name="people-outline" size={20} color={colors.textSecondary} />
-            <View style={styles.cellMain}>
-              <Text style={[styles.cellTitle, { color: colors.text }]}>Roles</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={17} color={colors.textTertiary} />
-          </TouchableOpacity>
+            <WaCell
+              variant="action"
+              accent={accent}
+              title="View all transactions"
+              onPress={onViewAllActivity}
+              testID="giving-hub-see-all-transactions"
+            />
+          </WaInsetGroup>
         </View>
       </ScrollView>
 
@@ -503,39 +392,111 @@ export function GivingHubView({
   );
 }
 
-function StatTile({ label, value, sub }: { label: string; value: string; sub?: string }) {
-  const { colors } = useTheme();
-  return (
-    <View style={[styles.statTile, { backgroundColor: colors.surface }]}>
-      <Text style={[styles.statLabel, { color: colors.textSecondary }]}>{label}</Text>
-      <Text style={[styles.statValue, { color: colors.text }]}>{value}</Text>
-      {!!sub && <Text style={[styles.statSub, { color: colors.textSecondary }]}>{sub}</Text>}
-    </View>
-  );
-}
-
-function ActionTile({
-  icon,
-  label,
-  onPress,
-  testID,
+/**
+ * ApprovalRow — one pending expense inside the "Needs your approval" card.
+ *
+ * A bespoke row rather than a `<WaCell>` (which has no slot for an avatar
+ * well, a trailing amount, a receipt thumbnail, or the Approve/Deny pair that
+ * hangs below the row), built to the same `WA_CELL_*` metrics so it keeps the
+ * card's rhythm. Every gate is the caller's, unchanged: `canApprove`, the
+ * self-approval block, and the two-approver badge.
+ */
+function ApprovalRow({
+  expense,
+  canApprove,
+  currentUserId,
+  isProcessing,
+  onApprove,
+  onOpenDeny,
+  onViewReceipt,
 }: {
-  icon: keyof typeof Ionicons.glyphMap;
-  label: string;
-  onPress: () => void;
-  testID?: string;
+  expense: GivingExpense;
+  canApprove: boolean;
+  currentUserId: string | null;
+  isProcessing: boolean;
+  onApprove: (expenseId: string) => void;
+  onOpenDeny: (expenseId: string) => void;
+  onViewReceipt: (url: string) => void;
 }) {
   const { colors } = useTheme();
+  const isSelf = !!currentUserId && expense.submitter.id === currentUserId;
+  const needsSecondApproval = expense.status === "pending" && !!expense.approverId;
+  const canActOnRow = canApprove && expense.status === "pending" && !isSelf;
+  const receiptMissing = expense.kind === "card_charge" && !expense.receiptUrl;
+  const submitterName =
+    expense.submitter.displayName ||
+    `${expense.submitter.firstName ?? ""} ${expense.submitter.lastName ?? ""}`.trim() ||
+    "Unknown";
+  const kindLabel = expense.kind === "card_charge" ? "Card charge" : "Reimbursement";
+
   return (
-    <TouchableOpacity
-      style={[styles.actionTile, { backgroundColor: colors.surface }]}
-      onPress={onPress}
-      accessibilityRole="button"
-      testID={testID}
-    >
-      <Ionicons name={icon} size={20} color={colors.text} />
-      <Text style={[styles.actionTileLabel, { color: colors.text }]}>{label}</Text>
-    </TouchableOpacity>
+    <View testID={`expense-row-${expense.id}`}>
+      <View style={styles.approvalRow}>
+        <WaAvatar
+          imageUrl={expense.submitter.profileImage}
+          label={submitterName}
+          seed={expense.submitter.id || submitterName}
+          size={APPROVAL_AVATAR_SIZE}
+          style={styles.approvalAvatar}
+        />
+        <View style={styles.approvalText}>
+          <Text style={[styles.approvalTitle, { color: colors.text }]} numberOfLines={1}>
+            {kindLabel} · {formatCents(expense.amountCents)}
+          </Text>
+          <Text style={[styles.approvalSubtitle, { color: colors.textTertiary }]} numberOfLines={2}>
+            {submitterName} — {expense.description}
+            {receiptMissing ? " · " : ""}
+            {receiptMissing && (
+              <Text style={{ color: colors.destructive, fontWeight: WA_WEIGHT_BOLD }}>
+                receipt missing
+              </Text>
+            )}
+          </Text>
+        </View>
+        {expense.receiptUrl ? (
+          <TouchableOpacity
+            onPress={() => onViewReceipt(expense.receiptUrl as string)}
+            accessibilityRole="button"
+            accessibilityLabel="View receipt"
+            testID={`expense-receipt-${expense.id}`}
+          >
+            <Image source={{ uri: expense.receiptUrl }} style={styles.receiptThumb} />
+          </TouchableOpacity>
+        ) : null}
+      </View>
+
+      {needsSecondApproval && (
+        <View style={styles.approvalBadgeRow}>
+          <Badge variant="warning" size="small">1 of 2 approvals</Badge>
+        </View>
+      )}
+
+      {canActOnRow && (
+        <View style={styles.approvalActions}>
+          <Button
+            variant="secondary"
+            onPress={() => onOpenDeny(expense.id)}
+            disabled={isProcessing}
+            style={styles.actionButton}
+          >
+            Deny
+          </Button>
+          <Button
+            variant="primary"
+            onPress={() => onApprove(expense.id)}
+            loading={isProcessing}
+            style={styles.actionButton}
+          >
+            Approve
+          </Button>
+        </View>
+      )}
+      {isSelf && expense.status === "pending" && (
+        <Text style={[styles.selfNote, { color: colors.textTertiary }]}>
+          You can't approve your own request.
+        </Text>
+      )}
+    </View>
   );
 }
 
@@ -554,29 +515,6 @@ function CardStatusBadge({ status }: { status: CardStatus }) {
     default:
       return null;
   }
-}
-
-function activityIcon(kind: string): keyof typeof Ionicons.glyphMap {
-  switch (kind) {
-    case "donation":
-      return "heart-outline";
-    case "card_capture":
-      return "card-outline";
-    case "reimbursement":
-      return "receipt-outline";
-    case "allocation":
-    case "transfer":
-    case "sweep":
-      return "business-outline";
-    case "refund":
-      return "return-down-back-outline";
-    default:
-      return "swap-horizontal-outline";
-  }
-}
-
-function formatDate(timestampMs: number): string {
-  return new Date(timestampMs).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
 function DenyReasonInput({
@@ -608,173 +546,123 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   loadingPad: {
-    padding: 16,
+    padding: WA_GROUP_MARGIN,
   },
   scrollContent: {
-    padding: 16,
-    paddingBottom: 32,
-    gap: 20,
-  },
-  balance: {
-    alignItems: "center",
     paddingTop: 8,
+    paddingBottom: 32,
   },
-  balanceAmount: {
-    fontSize: 40,
-    fontWeight: "700",
+  section: {
+    marginTop: WA_GROUP_SPACING,
+  },
+  heroSkeleton: {
+    marginHorizontal: WA_GROUP_MARGIN,
+  },
+  inlineSkeleton: {
+    marginHorizontal: WA_GROUP_MARGIN,
+  },
+  hero: {
+    alignItems: "center",
+    paddingVertical: 20,
+    paddingHorizontal: WA_CELL_PADDING,
+  },
+  heroFundName: {
+    fontSize: HERO_FUND_NAME_SIZE,
+    fontWeight: WA_WEIGHT_SEMIBOLD,
+  },
+  heroBalance: {
+    marginTop: 4,
+    fontSize: HERO_BALANCE_SIZE,
+    fontWeight: WA_WEIGHT_BOLD,
     letterSpacing: -0.5,
-  },
-  balanceFund: {
-    fontSize: 13,
-    marginTop: 2,
+    // Tabular figures so a changing balance doesn't reflow the hero.
+    fontVariant: ["tabular-nums"],
   },
   liveChip: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 5,
-    marginTop: 10,
+    gap: 6,
+    marginTop: 12,
     paddingHorizontal: 12,
-    paddingVertical: 4,
+    paddingVertical: 5,
     borderRadius: 100,
   },
+  liveDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+  },
   liveChipText: {
-    fontSize: 12,
-    fontWeight: "700",
-  },
-  statsRow: {
-    flexDirection: "row",
-    gap: 10,
-  },
-  statTile: {
-    flex: 1,
-    borderRadius: 16,
-    padding: 12,
-  },
-  statLabel: {
-    fontSize: 10.5,
-    fontWeight: "600",
-    letterSpacing: 0.3,
-  },
-  statValue: {
-    fontSize: 17,
-    fontWeight: "700",
-    marginTop: 3,
-  },
-  statSub: {
-    fontSize: 11,
-    marginTop: 1,
-  },
-  actionsRow: {
-    flexDirection: "row",
-    gap: 10,
-  },
-  actionTile: {
-    flex: 1,
-    borderRadius: 16,
-    paddingVertical: 12,
-    alignItems: "center",
-    gap: 5,
-  },
-  actionTileLabel: {
-    fontSize: 12,
-    fontWeight: "600",
-  },
-  labelRow: {
-    flexDirection: "row",
-    alignItems: "baseline",
-    justifyContent: "space-between",
-    marginBottom: 8,
-    paddingHorizontal: 4,
-  },
-  sectionLabel: {
-    fontSize: 13,
-    paddingHorizontal: 4,
-    marginBottom: 8,
-  },
-  labelLink: {
-    fontSize: 13,
-    fontWeight: "600",
-  },
-  group: {
-    borderRadius: 20,
-    overflow: "hidden",
+    fontSize: WA_TYPE_FOOTNOTE,
+    fontWeight: WA_WEIGHT_SEMIBOLD,
   },
   emptyCell: {
-    padding: 20,
-    alignItems: "center",
+    minHeight: WA_CELL_TALL_MIN_HEIGHT,
+    justifyContent: "center",
+    paddingHorizontal: WA_CELL_PADDING,
   },
-  cell: {
-    minHeight: 54,
+  emptyText: {
+    fontSize: WA_TYPE_SUBTITLE,
+  },
+  cardTrailing: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
-    paddingHorizontal: 14,
+    alignSelf: "center",
+    gap: WA_CHEVRON_GAP,
+    flexShrink: 0,
+  },
+  approvalRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    minHeight: WA_CELL_TALL_MIN_HEIGHT,
+    paddingHorizontal: WA_CELL_PADDING,
     paddingVertical: 10,
+    gap: WA_CELL_ICON_LABEL_GAP,
   },
-  cellDivider: {
-    borderTopWidth: StyleSheet.hairlineWidth,
+  approvalAvatar: {
+    flexShrink: 0,
   },
-  cellMain: {
+  approvalText: {
     flex: 1,
+    minWidth: 0,
   },
-  cellTitle: {
-    fontSize: 15.5,
+  approvalTitle: {
+    fontSize: WA_TYPE_ROW_TITLE,
+    fontWeight: WA_WEIGHT_SEMIBOLD,
   },
-  cellSub: {
-    fontSize: 12.5,
+  approvalSubtitle: {
+    fontSize: WA_TYPE_FOOTNOTE,
     marginTop: 2,
-  },
-  actionCellText: {
-    fontSize: 15.5,
-    fontWeight: "600",
-  },
-  footerNote: {
-    fontSize: 12.5,
-    marginTop: 8,
-    paddingHorizontal: 4,
-    lineHeight: 17,
-  },
-  expenseCell: {
-    paddingVertical: 6,
-  },
-  expenseAmount: {
-    fontSize: 15,
-    fontWeight: "700",
-  },
-  expenseMeta: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    paddingHorizontal: 14,
-  },
-  receiptThumbWrap: {
-    marginLeft: "auto",
+    lineHeight: 18,
   },
   receiptThumb: {
-    width: 32,
-    height: 32,
-    borderRadius: 6,
+    width: 36,
+    height: 36,
+    borderRadius: 8,
   },
-  expenseActions: {
+  approvalBadgeRow: {
+    flexDirection: "row",
+    paddingHorizontal: WA_CELL_PADDING,
+    paddingBottom: 8,
+  },
+  approvalActions: {
     flexDirection: "row",
     gap: 10,
-    paddingHorizontal: 14,
-    paddingTop: 8,
-    paddingBottom: 4,
+    paddingHorizontal: WA_CELL_PADDING,
+    paddingBottom: 12,
   },
   actionButton: {
     flex: 1,
   },
   selfNote: {
     fontSize: 12,
-    marginTop: 4,
-    marginBottom: 6,
-    paddingHorizontal: 14,
+    marginBottom: 12,
+    paddingHorizontal: WA_CELL_PADDING,
     fontStyle: "italic",
   },
   denyLabel: {
-    fontSize: 13,
-    fontWeight: "600",
+    fontSize: WA_TYPE_FOOTNOTE,
+    fontWeight: WA_WEIGHT_SEMIBOLD,
     marginBottom: 8,
   },
   denyInput: {

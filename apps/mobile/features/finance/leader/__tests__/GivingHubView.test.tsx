@@ -66,12 +66,9 @@ const baseProps = {
   processingExpenseId: null,
   onApprove: jest.fn(),
   onDeny: jest.fn(),
-  activity: [],
   onEnableGiving: jest.fn(),
   isEnablingGiving: false,
   onViewRoles: jest.fn(),
-  onGivePress: jest.fn(),
-  onReimbursePress: jest.fn(),
   onCreateCardPress: jest.fn(),
   onSharePress: jest.fn(),
   onViewCard: jest.fn(),
@@ -83,32 +80,13 @@ describe("GivingHubView", () => {
     jest.clearAllMocks();
   });
 
-  describe("balance header", () => {
-    it("renders the fund balance and 'Giving is live' chip", () => {
+  describe("hero", () => {
+    it("renders the fund name, balance, and 'Giving is live' chip", () => {
       render(<GivingHubView {...baseProps} />);
 
+      expect(screen.getByText("Just the 2 of us")).toBeTruthy();
       expect(screen.getByText("$1,284.50")).toBeTruthy();
       expect(screen.getByText("Giving is live")).toBeTruthy();
-      expect(screen.getByText("$640.00")).toBeTruthy();
-    });
-
-    it("shows Stripe fees beside 'spent' rather than folded into it", () => {
-      render(<GivingHubView {...baseProps} />);
-
-      // Spend is the group's own outgoings only ($212.38). The processing
-      // fees Stripe kept ($18.86) get their own line — a fee bucketed into
-      // "spent" reports spending on a group that spent nothing, and a fee
-      // shown nowhere leaves "given" minus "spent" not reconciling.
-      expect(screen.getByText("$212.38")).toBeTruthy();
-      expect(screen.getByText("+ $18.86 fees")).toBeTruthy();
-    });
-
-    it("omits the fees line entirely when there are none", () => {
-      render(
-        <GivingHubView {...baseProps} balance={{ ...balance, monthFeesCents: 0 }} />,
-      );
-
-      expect(screen.queryByText(/fees/)).toBeNull();
     });
 
     it("hides the 'Giving is live' chip when givingLive is false", () => {
@@ -118,23 +96,58 @@ describe("GivingHubView", () => {
     });
   });
 
-  describe("quick actions", () => {
-    it("calls onGivePress and onReimbursePress when tapped", () => {
-      const onGivePress = jest.fn();
-      const onReimbursePress = jest.fn();
-      render(<GivingHubView {...baseProps} onGivePress={onGivePress} onReimbursePress={onReimbursePress} />);
+  describe("section structure", () => {
+    // The approved WA mock's four labelled cards, in order. Asserted here
+    // because a section quietly dropped in a future edit is invisible to
+    // every other test in this file.
+    it("renders the four WA section labels", () => {
+      render(<GivingHubView {...baseProps} />);
 
-      fireEvent.press(screen.getByTestId("giving-hub-action-give"));
-      fireEvent.press(screen.getByTestId("giving-hub-action-reimburse"));
+      expect(screen.getByText("Needs your approval")).toBeTruthy();
+      expect(screen.getByText("Cards")).toBeTruthy();
+      expect(screen.getByText("People")).toBeTruthy();
+      expect(screen.getByText("Activity")).toBeTruthy();
+    });
+  });
 
-      expect(onGivePress).toHaveBeenCalled();
-      expect(onReimbursePress).toHaveBeenCalled();
+  describe("people", () => {
+    it("renders the Fund roles cell and calls onViewRoles", () => {
+      const onViewRoles = jest.fn();
+      render(<GivingHubView {...baseProps} onViewRoles={onViewRoles} />);
+
+      expect(screen.getByText("Fund roles")).toBeTruthy();
+      expect(screen.getByText("Who can manage, approve, spend")).toBeTruthy();
+
+      fireEvent.press(screen.getByTestId("giving-hub-roles-link"));
+      expect(onViewRoles).toHaveBeenCalled();
+    });
+
+    it("renders the Share fund cell and calls onSharePress", () => {
+      const onSharePress = jest.fn();
+      render(<GivingHubView {...baseProps} onSharePress={onSharePress} />);
+
+      expect(screen.getByText("Invite people to give")).toBeTruthy();
+
+      fireEvent.press(screen.getByTestId("giving-hub-action-share"));
+      expect(onSharePress).toHaveBeenCalled();
     });
 
     it("hides Share fund when onSharePress is undefined", () => {
       render(<GivingHubView {...baseProps} onSharePress={undefined} />);
 
       expect(screen.queryByTestId("giving-hub-action-share")).toBeNull();
+    });
+  });
+
+  describe("activity", () => {
+    it("calls onViewAllActivity from the View all transactions cell", () => {
+      const onViewAllActivity = jest.fn();
+      render(<GivingHubView {...baseProps} onViewAllActivity={onViewAllActivity} />);
+
+      expect(screen.getByText("View all transactions")).toBeTruthy();
+
+      fireEvent.press(screen.getByTestId("giving-hub-see-all-transactions"));
+      expect(onViewAllActivity).toHaveBeenCalled();
     });
   });
 
@@ -177,17 +190,16 @@ describe("GivingHubView", () => {
       expect(screen.getByText(/as soon as it settles/i)).toBeTruthy();
     });
 
-    it("shows the 'Create a virtual card…' action and New card tile when canManageCards is true", () => {
+    it("shows the 'Create a card' action cell when canManageCards is true", () => {
       render(<GivingHubView {...baseProps} canManageCards />);
 
-      expect(screen.getByTestId("giving-hub-action-new-card")).toBeTruthy();
       expect(screen.getByTestId("giving-hub-create-card")).toBeTruthy();
+      expect(screen.getByText("Create a card")).toBeTruthy();
     });
 
-    it("hides the create-card affordances when canManageCards is false", () => {
+    it("hides the create-card affordance when canManageCards is false", () => {
       render(<GivingHubView {...baseProps} canManageCards={false} cards={[]} />);
 
-      expect(screen.queryByTestId("giving-hub-action-new-card")).toBeNull();
       expect(screen.queryByTestId("giving-hub-create-card")).toBeNull();
       expect(screen.getByText("No cards yet")).toBeTruthy();
     });
