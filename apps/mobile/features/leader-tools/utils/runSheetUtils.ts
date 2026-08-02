@@ -104,8 +104,16 @@ export function sanitizeNoteContent(content: string): string {
  * and the people who haven't accepted yet are marked inline, otherwise the run
  * sheet reads as if everyone has confirmed. The chip is a single truncating line
  * of comma-joined names with no room for a pill, so this uses the TEXT form of
- * the "Unconfirmed" signifier (the same fallback `ServingTasksScreen` renders
- * when it can't show its colored chip).
+ * the "Unconfirmed" signifier — the same capitalised word `ServingTasksScreen`
+ * and `ServingTeamScreen` fall back to (`"{role} · Unconfirmed"`) when they
+ * can't render the colored pill. Parenthesised rather than ` · `-joined because
+ * these names are themselves comma-joined, and a middot would read as another
+ * list separator.
+ *
+ * `status` is `"unconfirmed" | "confirmed" | "declined"` (see the assignments
+ * table in `apps/convex/schema.ts`); anything unrecognised is treated as not
+ * yet accepted, which fails safe — a leader would rather over-flag than see an
+ * unaccepted volunteer presented as confirmed.
  */
 export function assigneeLabels(
   assignments: Array<{ userName: string; status: string }>,
@@ -113,6 +121,6 @@ export function assigneeLabels(
   return assignments
     .filter((a) => a.status !== "declined")
     .map((a) =>
-      a.status === "confirmed" ? a.userName : `${a.userName} (unconfirmed)`,
+      a.status === "confirmed" ? a.userName : `${a.userName} (Unconfirmed)`,
     );
 }

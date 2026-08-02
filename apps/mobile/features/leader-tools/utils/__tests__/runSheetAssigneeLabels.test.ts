@@ -14,7 +14,22 @@ describe("run sheet assignee labels", () => {
 
   it("marks an unconfirmed assignee", () => {
     expect(assigneeLabels([person("Ada", "unconfirmed")])).toEqual([
-      "Ada (unconfirmed)",
+      "Ada (Unconfirmed)",
+    ]);
+  });
+
+  // Capitalised to match the "Unconfirmed" pill/text signifier the serving
+  // screens already use — the run sheet must not invent a second spelling.
+  it("uses the same capitalised signifier as the serving screens", () => {
+    const [label] = assigneeLabels([person("Ada", "unconfirmed")]);
+    expect(label).toContain("Unconfirmed");
+  });
+
+  // `status` is a plain string column, so an unexpected value must fail safe:
+  // shown (not hidden like "declined") and flagged (not passed off as confirmed).
+  it("treats an unrecognised status as not yet accepted", () => {
+    expect(assigneeLabels([person("Ada", "invited")])).toEqual([
+      "Ada (Unconfirmed)",
     ]);
   });
 
@@ -29,7 +44,7 @@ describe("run sheet assignee labels", () => {
       person("Cy", "declined"),
       person("Di", "confirmed"),
     ]);
-    expect(labels).toEqual(["Ada", "Bo (unconfirmed)", "Di"]);
+    expect(labels).toEqual(["Ada", "Bo (Unconfirmed)", "Di"]);
   });
 
   it("returns nothing for an unfilled role", () => {
