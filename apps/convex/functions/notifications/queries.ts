@@ -6,7 +6,7 @@
 
 import { v } from "convex/values";
 import { query } from "../../_generated/server";
-import { requireAuthWithArchivedStatus } from "../../lib/auth";
+import { getOptionalAuth, requireAuthWithArchivedStatus } from "../../lib/auth";
 
 /**
  * Notification types that represent chat messages. These are deliberately
@@ -143,24 +143,42 @@ export const inboxSummary = query({
 });
 
 /**
- * Get unread notification count for a user
+ * Get unread notification count for a user.
+ *
+ * Deliberately unauthenticated-tolerant: NotificationProvider mounts this at
+ * app boot with whatever token is sitting in AsyncStorage, before the auth
+ * lifecycle has validated or refreshed it (a mobile-web cold boot — e.g.
+ * returning from a Stripe checkout redirect — hits exactly this window). A
+ * `requireAuth` throw there is re-thrown by `convex/react` during render, and
+ * AuthErrorBoundary only recovers COMMUNITY_ARCHIVED, so the app hard-crashes
+ * to the root "Something went wrong" screen. A badge count of 0 is the correct
+ * answer for a caller we can't authenticate.
  */
 export const unreadCount = query({
   args: {
-    token: v.string(),
+    // Optional so a caller with no token at all still gets 0 rather than an
+    // argument-validation error.
+    token: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const token = args.token;
+    // Lenient resolve first: missing, malformed, expired, revoked, or
+    // orphaned tokens all land here as null.
+    if (!token || !(await getOptionalAuth(ctx, token))) {
+      return { unreadCount: 0 };
+    }
+
+    // Safe: getOptionalAuth accepted this same token inside this same query
+    // transaction, so this cannot throw. Re-resolving keeps the
+    // archived-community rule owned by lib/auth instead of duplicated here.
     const { userId, isArchivedCommunity } = await requireAuthWithArchivedStatus(
       ctx,
-      args.token,
+      token,
     );
-    // This query mounts unconditionally as soon as any token exists
-    // (NotificationProvider), before the user can navigate away from an
-    // archived community. The mobile AuthErrorBoundary is recovery UI for
-    // exactly this throw now, but returning a benign 0 here is still
-    // intentional defense-in-depth against crash-recovery churn on every
-    // boot — see requireAuthWithArchivedStatus. New boot queries don't need
-    // to copy this pattern.
+    // Returning a benign 0 for an archived community is intentional
+    // defense-in-depth against AuthErrorBoundary crash-recovery churn on every
+    // boot — see requireAuthWithArchivedStatus. New boot queries don't need to
+    // copy this pattern.
     if (isArchivedCommunity) {
       return { unreadCount: 0 };
     }
