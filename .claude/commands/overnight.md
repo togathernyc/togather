@@ -1224,7 +1224,7 @@ curl -sS -m 20 -X POST \
 ```
 
 **Send plain text — do not set `parse_mode`.** Telegram's MarkdownV2 requires
-escaping `_ * [ ] ( ) ~ \` > # + - = | { } . !` *everywhere*, including inside
+escaping `_ * [ ] ( ) ~ \` > # + - = | { } ! .` *everywhere*, including inside
 ordinary prose, and an unescaped one makes the whole call fail with `400: can't
 parse entities` — so a formatting bug loses the entire report rather than
 rendering it plainly. This report is full of exactly those characters: issue
