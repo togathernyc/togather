@@ -39,6 +39,7 @@ import type { Id } from "@services/api/convex";
 import { formatError } from "@/utils/error-handling";
 import { GiveScreenView, GiveCancelledNotice, type GiveStep } from "./GiveScreenView";
 import { estimateCoverFeesCents, resolveGiveAmountCents } from "./amount";
+import { urlSafeName } from "./giveSuccessParams";
 import type { CheckoutSession } from "./types";
 
 /** Opens a URL in the platform's browser sheet — mirrors
@@ -124,10 +125,14 @@ export function GiveScreen() {
     const fund = checkoutStatus.fundName ?? context?.fundName ?? "";
     const community = checkoutStatus.communityName ?? context?.communityLegalName ?? "";
 
+    // `urlSafeName`, not bare `encodeURIComponent`: it throws on an unpaired
+    // surrogate, and throwing here — after `advancedRef` has latched — costs
+    // the donor the thank-you screen with no retry. Same helper shape the
+    // backend uses to build Stripe's success_url.
     const query =
       `?amount=${amountCents}` +
-      `&fund=${encodeURIComponent(fund)}` +
-      `&community=${encodeURIComponent(community)}`;
+      `&fund=${urlSafeName(fund)}` +
+      `&community=${urlSafeName(community)}`;
     router.replace(`/groups/${groupId}/give-success${query}` as any);
   }, [
     checkoutStatus,

@@ -1,4 +1,4 @@
-import { parseGiveSuccessParams } from "../giveSuccessParams";
+import { parseGiveSuccessParams, urlSafeName } from "../giveSuccessParams";
 
 describe("parseGiveSuccessParams", () => {
   it("formats the charged total from integer cents", () => {
@@ -68,5 +68,32 @@ describe("parseGiveSuccessParams", () => {
     expect(result.amountLabel).toBeNull();
     expect(result.thankYouLine).toBe("Thank you 🎉");
     expect(result.fundLine).toBeNull();
+  });
+});
+
+// The native auto-advance builds this query string itself (the backend's copy
+// only covers Stripe's success_url), and it does so inside the effect that has
+// already latched the navigate-once guard — a throw there costs the donor the
+// thank-you with no retry.
+describe("urlSafeName", () => {
+  it("percent-encodes the way the query string needs", () => {
+    expect(urlSafeName("Young Adults — Manhattan")).toBe(
+      encodeURIComponent("Young Adults — Manhattan"),
+    );
+  });
+
+  it("keeps emoji and other valid surrogate pairs intact", () => {
+    expect(decodeURIComponent(urlSafeName("Kids 🎉"))).toBe("Kids 🎉");
+  });
+
+  it("drops an unpaired surrogate instead of throwing", () => {
+    expect(() => encodeURIComponent("Fund \ud800")).toThrow(URIError);
+    expect(decodeURIComponent(urlSafeName("Fund \ud800"))).toBe("Fund ");
+  });
+
+  it("caps the length, without leaving a half pair behind at the cut", () => {
+    const name = "🎉".repeat(80);
+    const out = decodeURIComponent(urlSafeName(name));
+    expect(out).toBe("🎉".repeat(50));
   });
 });

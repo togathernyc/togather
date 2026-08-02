@@ -18,6 +18,30 @@
  * an unparseable amount hides the amount line rather than rendering "$NaN".
  */
 
+/**
+ * Percent-encodes a fund/community name for the give-success query string.
+ *
+ * A deliberate mirror of `urlSafeName` in
+ * apps/convex/functions/finance/giving.ts, which builds the same two params for
+ * Stripe's `success_url`. Both ends need it because the native flow never sees
+ * that URL — `GiveScreen` builds its own from the status query's raw names —
+ * and `encodeURIComponent` throws `URIError` on an unpaired surrogate. Thrown
+ * from inside the auto-advance effect, that would swallow the thank-you AFTER
+ * the navigate-once guard has latched, so the donor gets nothing at all.
+ *
+ * `for...of` walks whole code points, so valid pairs survive and only true
+ * orphans (including one the slice may have just created) are dropped.
+ */
+export function urlSafeName(value: string): string {
+  let safe = "";
+  for (const char of value.slice(0, 100)) {
+    const code = char.codePointAt(0)!;
+    if (code >= 0xd800 && code <= 0xdfff) continue;
+    safe += char;
+  }
+  return encodeURIComponent(safe);
+}
+
 /** What the give-success screen renders, derived from the URL alone. */
 export interface GiveSuccessDisplay {
   /**

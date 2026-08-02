@@ -190,6 +190,25 @@ describe("GiveScreen", () => {
     );
   });
 
+  // A lone surrogate in a fund/community name makes `encodeURIComponent` throw,
+  // and it would throw here — inside the effect, after the navigate-once guard
+  // has latched — costing the donor the thank-you with no retry.
+  it("survives a name that would make encodeURIComponent throw", async () => {
+    checkoutStatus = {
+      status: "complete",
+      amountCents: 5000,
+      fundName: "Fund \ud800",
+      communityName: "First Church",
+    };
+    const { getByTestId } = render(<GiveScreen />);
+    await pressGive(getByTestId);
+
+    expect(mockReplace).toHaveBeenCalledTimes(1);
+    expect(mockReplace).toHaveBeenCalledWith(
+      "/groups/group_1/give-success?amount=5000&fund=Fund%20&community=First%20Church",
+    );
+  });
+
   // The status query keeps reporting "complete" with a fresh object every
   // update; `router.replace` is not idempotent, so the guard is load-bearing.
   it("navigates exactly once no matter how many times 'complete' re-renders", async () => {

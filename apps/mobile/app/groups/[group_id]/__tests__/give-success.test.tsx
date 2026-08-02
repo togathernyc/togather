@@ -9,6 +9,7 @@
  */
 import React from "react";
 import { render, screen, act } from "@testing-library/react-native";
+import { AccessibilityInfo } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useStoredAuthToken } from "@services/api/convex";
 import GiveSuccessScreen from "../give-success";
@@ -42,6 +43,12 @@ describe("GiveSuccessScreen", () => {
     jest.clearAllMocks();
     jest.useFakeTimers();
     canGoBack = true;
+    jest
+      .spyOn(AccessibilityInfo, "isReduceMotionEnabled")
+      .mockResolvedValue(false);
+    jest
+      .spyOn(AccessibilityInfo, "addEventListener")
+      .mockReturnValue({ remove: jest.fn() } as never);
     setParams({ amount: "5000", fund: "Young Adults", community: "First Church" });
     (useStoredAuthToken as jest.Mock).mockReturnValue("token_abc");
     (useRouter as jest.Mock).mockReturnValue({
@@ -107,6 +114,38 @@ describe("GiveSuccessScreen", () => {
     });
     expect(mockBack).not.toHaveBeenCalled();
     expect(mockReplace).not.toHaveBeenCalled();
+  });
+
+  // The GIF is a 54-frame burst; firing it at someone who asked for less
+  // motion, as the reward for paying, is exactly the case the setting exists
+  // for. The waiting dots already honour it.
+  describe("Reduce Motion", () => {
+    it("plays the celebration when motion is fine", async () => {
+      render(<GiveSuccessScreen />);
+      await act(async () => {});
+      expect(screen.getByTestId("give-success-gif")).toBeTruthy();
+      expect(screen.queryByTestId("give-success-static-mark")).toBeNull();
+    });
+
+    it("swaps it for a still mark when the setting is on", async () => {
+      (AccessibilityInfo.isReduceMotionEnabled as jest.Mock).mockResolvedValue(true);
+      render(<GiveSuccessScreen />);
+      await act(async () => {});
+      expect(screen.getByTestId("give-success-static-mark")).toBeTruthy();
+      expect(screen.queryByTestId("give-success-gif")).toBeNull();
+    });
+
+    // Nothing animates while the answer is still in flight, and nothing
+    // animates if it never arrives (RN-Web rejects rather than resolving).
+    it("stays still while detection is pending, and if it never resolves", async () => {
+      (AccessibilityInfo.isReduceMotionEnabled as jest.Mock).mockRejectedValue(
+        new Error("unsupported"),
+      );
+      render(<GiveSuccessScreen />);
+      expect(screen.getByTestId("give-success-static-mark")).toBeTruthy();
+      await act(async () => {});
+      expect(screen.getByTestId("give-success-static-mark")).toBeTruthy();
+    });
   });
 
   // Stripe's in-app browser has its own storage and no session, so /fund there

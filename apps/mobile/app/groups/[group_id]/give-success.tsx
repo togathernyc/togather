@@ -25,12 +25,13 @@
  * ADR-013), and a tinted View is the same picture with no native view in it.
  */
 import React, { useEffect } from "react";
-import { View, Text, StyleSheet, Image, Pressable } from "react-native";
+import { View, Text, StyleSheet, Image, Pressable, AccessibilityInfo } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useStoredAuthToken } from "@services/api/convex";
+import { Ionicons } from "@expo/vector-icons";
 import { parseGiveSuccessParams } from "@features/finance/member/giveSuccessParams";
-import { GIVING_GOLD_WASH } from "@features/finance/member/giveTheme";
+import { GIVING_GOLD, GIVING_GOLD_WASH } from "@features/finance/member/giveTheme";
 
 const starStrikeGif = require("../../../assets/star-strike.gif");
 
@@ -47,6 +48,7 @@ export default function GiveSuccessScreen() {
     community?: string;
   }>();
 
+  const reduceMotion = useReduceMotion();
   const { amountLabel, thankYouLine, fundLine } = parseGiveSuccessParams(params);
   const groupId = params.group_id;
   const token = useStoredAuthToken();
@@ -80,7 +82,16 @@ export default function GiveSuccessScreen() {
       <View style={styles.wash} pointerEvents="none" />
 
       <View style={styles.content}>
-        <Image source={starStrikeGif} style={styles.gif} />
+        {/* The GIF is a 54-frame burst. Someone who asked for less motion
+            should not get it fired at them for completing a payment, so the
+            celebration falls back to the same glyph at rest. */}
+        {reduceMotion ? (
+          <View style={styles.gifFallback} testID="give-success-static-mark">
+            <Ionicons name="star" size={64} color={GIVING_GOLD} />
+          </View>
+        ) : (
+          <Image source={starStrikeGif} style={styles.gif} testID="give-success-gif" />
+        )}
         <Text style={styles.thankYou}>{thankYouLine}</Text>
         {!!amountLabel && (
           <Text style={styles.amount} testID="give-success-amount">
@@ -108,6 +119,38 @@ export default function GiveSuccessScreen() {
   );
 }
 
+/**
+ * Whether the viewer asked for less motion.
+ *
+ * Starts `true` so nothing animates while detection is pending, and stays
+ * `true` if `isReduceMotionEnabled()` rejects (RN-Web does) — there is no
+ * answer coming, and at-rest is the safe resting state. Same shape as
+ * `PulseDots` in GiveScreenView; kept local rather than shared because this
+ * screen must not import anything that could pull in a provider.
+ */
+function useReduceMotion(): boolean {
+  const [reduceMotion, setReduceMotion] = React.useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    AccessibilityInfo.isReduceMotionEnabled()
+      .then((enabled) => {
+        if (!cancelled) setReduceMotion(enabled);
+      })
+      .catch(() => {});
+    const subscription = AccessibilityInfo.addEventListener(
+      "reduceMotionChanged",
+      setReduceMotion,
+    );
+    return () => {
+      cancelled = true;
+      subscription?.remove?.();
+    };
+  }, []);
+
+  return reduceMotion;
+}
+
 const styles = StyleSheet.create({
   // Fixed light palette rather than the themed one on purpose: this renders
   // before providers have settled, and a celebration card that flips to a dark
@@ -132,6 +175,13 @@ const styles = StyleSheet.create({
   },
   content: { alignItems: "center", flex: 1, justifyContent: "center" },
   gif: { width: 140, height: 140, marginBottom: 16 },
+  gifFallback: {
+    width: 140,
+    height: 140,
+    marginBottom: 16,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   thankYou: {
     fontSize: 20,
     fontWeight: "600",
