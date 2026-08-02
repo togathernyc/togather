@@ -48,7 +48,7 @@ import {
   api,
 } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
-import { formatError } from "@/utils/error-handling";
+import { errorMessage } from "@/utils/error-handling";
 import {
   GiveScreenView,
   GiveCancelledNotice,
@@ -327,7 +327,15 @@ export function GiveScreen() {
       setStep("confirmation");
       await openCheckoutUrl(result.url);
     } catch (err) {
-      setError(formatError(err, "Couldn't start this gift. Please try again."));
+      setError(
+        // `errorMessage`, not `formatError`: the rejections this call can return
+        // are the actionable ones ("Finish that checkout, or try again in a few
+        // minutes.", "You already give monthly to this fund."), and a ConvexError
+        // carries them on `.data`. In production `.message` is only
+        // "[CONVEX A(...)] [Request ID: ...] Server Error", so parsing the
+        // message would replace every one of them with the fallback below.
+        errorMessage(err, "Couldn't start this gift. Please try again."),
+      );
     } finally {
       setSubmitting(false);
     }

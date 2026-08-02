@@ -61,6 +61,7 @@ jest.mock("../GiveScreenView", () => {
     GiveScreenView: ({
       step,
       frequency,
+      error,
       onContinue,
       onBack,
       onSelectPreset,
@@ -70,6 +71,7 @@ jest.mock("../GiveScreenView", () => {
       <>
         <Text testID="give-step">{step}</Text>
         <Text testID="give-frequency">{frequency}</Text>
+        <Text testID="give-error">{error ?? ""}</Text>
         <Text testID="give-can-auto-advance">{String(canAutoAdvance)}</Text>
         <Pressable testID="give-monthly" onPress={() => onSelectFrequency("monthly")}>
           <Text>Monthly</Text>
@@ -448,6 +450,29 @@ describe("GiveScreen", () => {
         "https://checkout.stripe.com/c/pay/cs_sub_123",
       );
       expect(WebBrowser.dismissBrowser).toHaveBeenCalled();
+    });
+
+    // The rejection this call actually returns in production: a ConvexError
+    // whose text is on `.data`, with `.message` reduced to an opaque
+    // "[CONVEX A(...)] ... Server Error". A message-parsing formatter would
+    // swap "finish that checkout, or try again in a few minutes" — the only
+    // sentence that tells the donor what to DO during the grace window — for a
+    // generic "couldn't start this gift".
+    it("shows the server's actual reason a monthly gift was refused", async () => {
+      mockCreateRecurringSession.mockRejectedValue(
+        Object.assign(
+          new Error(
+            "[CONVEX A(functions/finance/giving:createRecurringDonationCheckoutSession)] [Request ID: abc] Server Error",
+          ),
+          { data: "Finish that checkout, or try again in a few minutes." },
+        ),
+      );
+      const { getByTestId } = render(<GiveScreen />);
+      await pressGiveMonthly(getByTestId);
+
+      expect(getByTestId("give-error").props.children).toBe(
+        "Finish that checkout, or try again in a few minutes.",
+      );
     });
 
     // One active monthly per fund is a backend rule; the container refuses
