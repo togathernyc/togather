@@ -784,6 +784,9 @@ describe("prepareDonationIntent", () => {
       userId: s.donorUserId,
       communityId: s.communityId,
       groupId: s.groupId,
+      // Both halves of the validated pair come back, because the actions build
+      // the Stripe charge from these and never from their own args.
+      amountCents: 1000,
       // The legal name the receipt is issued under wins over the community's
       // display name ("Test Church"), matching getGivingContext.
       communityName: "Test Church Inc.",

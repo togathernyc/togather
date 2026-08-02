@@ -382,7 +382,7 @@ export const getGivingContext = query({
 function validateDonationAmount(
   amountCents: number,
   coverFeesCents: number | undefined,
-): { feeCoverCents: number } {
+): { amountCents: number; feeCoverCents: number } {
   if (
     !Number.isInteger(amountCents) ||
     amountCents < MIN_DONATION_CENTS ||
@@ -419,7 +419,7 @@ function validateDonationAmount(
       "We couldn't confirm the processing fee for this gift. Please reopen the give screen and try again.",
     );
   }
-  return { feeCoverCents };
+  return { amountCents, feeCoverCents };
 }
 
 /**
@@ -442,7 +442,10 @@ export const prepareDonationIntent = internalQuery({
     const userId = await requireAuth(ctx, args.token);
     await requireGroupGivingEnabled(ctx); // Gate donation creation at the source.
 
-    const { feeCoverCents } = validateDonationAmount(args.amountCents, args.coverFeesCents);
+    const { amountCents, feeCoverCents } = validateDonationAmount(
+      args.amountCents,
+      args.coverFeesCents,
+    );
 
     const fund = await ctx.db.get(args.fundId);
     if (!fund) {
@@ -480,6 +483,12 @@ export const prepareDonationIntent = internalQuery({
       communityName: communityFinance.legalName ?? community?.name ?? "",
       fundName: fund.name,
       stripeConnectedAccountId: communityFinance.stripeConnectedAccountId,
+      // BOTH halves of the validated pair come back, and the actions build the
+      // Stripe charge from these — never from their own `args`. Handing back
+      // only the fee would leave the amount side of the cap resting on the
+      // caller's discipline, which is the opposite of what a single
+      // "everything money-initiating goes through here" seam is for.
+      amountCents,
       feeCoverCents,
     };
   },
@@ -541,7 +550,7 @@ export const createDonationIntent = action({
     // per the acquiring topology in ADR-032 §1.
     const paymentIntent = await stripe.paymentIntents.create(
       {
-        amount: args.amountCents + context.feeCoverCents,
+        amount: context.amountCents + context.feeCoverCents,
         currency: "usd",
         automatic_payment_methods: { enabled: true },
         metadata: {
@@ -712,7 +721,7 @@ export const createDonationCheckoutSession = action({
       apiVersion: "2026-02-25.clover",
     });
 
-    const totalCents = args.amountCents + context.feeCoverCents;
+    const totalCents = context.amountCents + context.feeCoverCents;
     const { successUrl, cancelUrl } = buildGiveReturnUrls({
       groupId: context.groupId,
       totalCents,
