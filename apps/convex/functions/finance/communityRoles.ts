@@ -28,6 +28,8 @@ import type { Doc, Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
 import { now, getDisplayName, getMediaUrl } from "../../lib/utils";
 import {
+  ADMIN_ROLE_THRESHOLD,
+  PRIMARY_ADMIN_ROLE,
   isCommunityAdmin,
   isPrimaryAdmin,
   assertCommunityNotArchived,
@@ -132,6 +134,69 @@ export const listCommunityFinanceRoles = query({
       })),
       viewerIsPrimaryAdmin: await isPrimaryAdmin(ctx, args.communityId, userId),
     };
+  },
+});
+
+// ============================================================================
+// listGrantableFinanceAdmins
+// ============================================================================
+
+/**
+ * The community admins a grant could actually be made to.
+ *
+ * The grant screen needs a PICKER, and a general member search would be the
+ * wrong one: `grantCommunityFinanceRole` refuses anyone who is not already a
+ * community admin, so offering the whole membership means most taps end in an
+ * error the person cannot act on ("make them an admin first" — in a different
+ * screen, for a different reason than they came here for).
+ *
+ * Excluded from the list, both for the same reason — the mutation would refuse
+ * them:
+ *  - the PRIMARY admin, whose access is implicit and deliberately not a row;
+ *  - anyone who already holds an active grant, who is on the roster above.
+ *
+ * Read by the same people who can read the roster (`canManageCommunityFinance`),
+ * not restricted to the primary admin: a holder looking at the screen should
+ * see why the grant buttons they cannot press are pointed at these names.
+ */
+export const listGrantableFinanceAdmins = query({
+  args: { token: v.string(), communityId: v.id("communities") },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    if (!(await canManageCommunityFinance(ctx, userId, args.communityId))) {
+      throw new ConvexError(
+        "You need financial-controls access for this community to see who it can be given to",
+      );
+    }
+    await assertCommunityNotArchived(ctx, args.communityId);
+
+    const memberships = await ctx.db
+      .query("userCommunities")
+      .withIndex("by_community", (q) => q.eq("communityId", args.communityId))
+      .collect();
+
+    const candidates = memberships.filter(
+      (m) =>
+        m.status === 1 &&
+        (m.roles ?? 0) >= ADMIN_ROLE_THRESHOLD &&
+        (m.roles ?? 0) !== PRIMARY_ADMIN_ROLE,
+    );
+
+    const rows = await Promise.all(
+      candidates.map(async (membership) => {
+        const existing = await getActiveCommunityFinanceRole(
+          ctx,
+          membership.userId,
+          args.communityId,
+        );
+        if (existing) return null;
+        return toUserSummary(await ctx.db.get(membership.userId));
+      }),
+    );
+
+    return rows
+      .filter((row): row is NonNullable<typeof row> => row !== null)
+      .sort((a, b) => a.displayName.localeCompare(b.displayName));
   },
 });
 
