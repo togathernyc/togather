@@ -76,6 +76,7 @@ import {
   internalQuery,
   internalMutation,
   internalAction,
+  type MutationCtx,
 } from "../../_generated/server";
 import type { Doc, Id } from "../../_generated/dataModel";
 import { internal } from "../../_generated/api";
@@ -1124,7 +1125,7 @@ export const applyCardStatus = internalAction({
  * donation landed mid-flight.
  */
 async function setManagedCardCap(
-  ctx: any,
+  ctx: MutationCtx,
   args: {
     card: Doc<"cards">;
     fund: Doc<"funds">;
