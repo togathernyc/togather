@@ -83,6 +83,7 @@ import {
   freezeBillCard,
   getBillCurrentUser,
   getBillTransaction,
+  uploadBillReceipt,
   listBillBudgets,
   listBillTransactions,
   listBillUsers,
@@ -324,6 +325,20 @@ const BILL_TXN_MAX_PAGES = 20;
  * BILL Spend & Expense's capability profile. Every value is a claim about the
  * vendor, checked against their docs (2026-08-03), not assumed.
  */
+/**
+ * The image types BILL's receipt endpoint accepts, per its own docs
+ * (developer.bill.com "Transaction management", confirmed 2026-08-03).
+ *
+ * An allowlist rather than a denylist because the failure it prevents is
+ * SILENT: a PDF uploads to the pre-signed URL happily and then sits in BILL as
+ * a receipt nobody can open.
+ */
+const BILL_RECEIPT_CONTENT_TYPES = new Set([
+  "image/jpeg",
+  "image/jpg",
+  "image/png",
+]);
+
 export const BILL_CAPABILITIES: ProviderCapabilities = {
   // Cards are a charge card against the ORGANIZATION's shared credit line.
   // A budget is a spending policy, not a segregated pot — so the bank cannot
@@ -681,6 +696,35 @@ export function createBillCardProvider(apiToken: string): CardProviderAdapter {
       // recorder's idempotency key empty, which is how one charge becomes many.
       if (!normalized.providerTxnId) return null;
       return normalized;
+    },
+
+    /**
+     * Send a receipt Togather holds to BILL, against the transaction it belongs
+     * to (ADR-033 Phase 3).
+     *
+     * BILL is the only supported issuer with a receipt API, so this method is
+     * the whole of `capabilities.receiptForwarding: true`. The three-step
+     * upload lives in lib/finance/bill.ts's `uploadBillReceipt` — see there for
+     * why it cannot be fewer calls and why step 2 bypasses the shared client.
+     *
+     * FORMAT IS CHECKED HERE, not at the caller. BILL accepts JPG and PNG only,
+     * and a PDF or HEIC pushed through the pre-signed URL would upload
+     * perfectly and then be a receipt nobody can open in BILL — a failure with
+     * no error anywhere. Refusing names the file so the person who uploaded it
+     * can re-shoot it, and the caller turns the throw into a log line rather
+     * than a failed expense.
+     */
+    async forwardReceipt(providerTxnId, receipt) {
+      if (!BILL_RECEIPT_CONTENT_TYPES.has(receipt.contentType.toLowerCase())) {
+        throw new Error(
+          `BILL accepts JPG and PNG receipts; "${receipt.filename}" is ${receipt.contentType}`,
+        );
+      }
+      await uploadBillReceipt(client, {
+        transactionUuid: providerTxnId,
+        bytes: receipt.bytes,
+        contentType: receipt.contentType,
+      });
     },
 
     /**

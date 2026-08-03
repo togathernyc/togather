@@ -386,6 +386,32 @@ export interface CardProviderAdapter {
   registerWebhook?(notificationUrl: string): Promise<void>;
 
   /**
+   * Send a receipt Togather already holds to the provider, against the
+   * transaction it belongs to.
+   *
+   * Present only where the issuer HAS a receipt API — today that is BILL alone,
+   * declared as `capabilities.receiptForwarding`. The capability is what UI copy
+   * reads ("Saved to the fund" vs "Saved and sent to your card provider"), and
+   * it must not be inferred from the method's presence: a caller that guessed
+   * would promise the wrong thing to every future provider that adds one before
+   * we wire it.
+   *
+   * BEST EFFORT BY CONTRACT. The receipt is already durable in Togather by the
+   * time this runs, and the church's books are complete without the copy at the
+   * issuer. So a throw here means "the provider didn't take it", which the
+   * caller LOGS — it must never undo the receipt, fail the expense, or block
+   * the person who uploaded it.
+   *
+   * `bytes` is the raw image. Providers restrict formats (BILL: JPG/PNG only),
+   * so an adapter refuses what it cannot send rather than uploading something
+   * the issuer will silently drop.
+   */
+  forwardReceipt?(
+    providerTransactionId: string,
+    receipt: { bytes: ArrayBuffer; contentType: string; filename: string },
+  ): Promise<void>;
+
+  /**
    * Prove the stored credential still works, and say whose account it is.
    *
    * Present only on BRING-YOUR-OWN providers, where the credential belongs to

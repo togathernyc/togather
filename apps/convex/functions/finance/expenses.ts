@@ -1,9 +1,15 @@
 /**
  * Expense submission, approval, and reimbursement payout (ADR-032 §3-4).
  *
- * Card-charge expenses are out of scope here — Phase 3 (cards) creates those
- * from the card-transaction webhook. This file only handles the
- * member-submitted reimbursement flow: submit -> approve/deny -> pay.
+ * Card-charge expenses are CREATED elsewhere — functions/finance/webhooks.ts
+ * turns a settled swipe into one. What this file owns for them is the receipt:
+ * `attachExpenseReceipt` is the write behind the "No receipt" badge that has
+ * been rendering since ADR-032 with nothing to set it, and it is the one place
+ * a receipt is forwarded on to a card provider that has an API for them
+ * (ADR-033 Phase 3, `capabilities.receiptForwarding`).
+ *
+ * The rest is the member-submitted reimbursement flow: submit -> approve/deny
+ * -> pay.
  */
 
 import { v } from "convex/values";
@@ -22,6 +28,13 @@ import { isCommunityAdmin } from "../../lib/permissions";
 import { logFinanceAudit } from "../../lib/finance/audit";
 import { requireGroupGivingEnabled } from "../../lib/finance/flag";
 import { postLedgerEntry } from "../../lib/finance/ledger";
+import {
+  describeProviderCapabilities,
+  getCardProviderByName,
+  isBringYourOwnProvider,
+  loadActiveProviderConnection,
+  type CardProviderName,
+} from "../../lib/finance/cardProviders";
 import {
   requireFundRole,
   requireFundRoleOrGroupLeader,
@@ -89,6 +102,52 @@ async function resolveEffectiveRole(
   if (roleRow) return roleRow.role;
   const isAdmin = await isCommunityAdmin(ctx, fund.communityId, userId);
   return isAdmin ? "finance_admin" : null;
+}
+
+/**
+ * PROVENANCE, not just format — the gate every receipt write shares.
+ *
+ * An `r2:` string proves nothing on its own: receipt URLs are handed to every
+ * manager+ viewer of a fund (`listExpenses`) and every card viewer
+ * (`getCardDetail`), so a member who has seen someone else's receipt could
+ * otherwise attach it to an expense of their own. The `uploadGrants` row
+ * written when the presigned URL was minted (functions/uploads.ts, or
+ * lib/r2.ts's `putR2Object` with `grantTo`) is the only record of who the key
+ * belongs to.
+ *
+ * NO ROW is a different situation from SOMEONE ELSE'S ROW, and it has an honest
+ * cause the member can act on: a photo picked before this check shipped (or
+ * before a grant write that failed) has no provenance to read, and refusing it
+ * with "that isn't yours" reads as a bug. Say what fixes it instead. Not a
+ * weaker gate — still a refusal.
+ *
+ * Returns the grant because callers need its `contentType`: forwarding a
+ * receipt to a card provider has to declare the image type, and the grant is
+ * where it was recorded.
+ */
+async function assertReceiptOwnedBy(
+  ctx: { db: any },
+  receiptKey: string,
+  userId: Id<"users">,
+): Promise<Doc<"uploadGrants">> {
+  if (!receiptKey.startsWith("r2:")) {
+    throw new Error("Receipt must be an uploaded file (r2:<key>)");
+  }
+  const grant = await ctx.db
+    .query("uploadGrants")
+    .withIndex("by_storagePath", (q: any) => q.eq("storagePath", receiptKey))
+    .first();
+  if (!grant) {
+    throw new Error(
+      "We couldn't verify who uploaded that receipt — re-attach the photo and submit again",
+    );
+  }
+  if (grant.userId !== userId) {
+    throw new Error(
+      "That receipt wasn't uploaded from this account — attach a photo you uploaded yourself",
+    );
+  }
+  return grant;
 }
 
 // ============================================================================
@@ -163,37 +222,7 @@ export const submitExpense = mutation({
       throw new Error(decision.reason ?? "This expense cannot be submitted");
     }
 
-    if (!args.receiptKey.startsWith("r2:")) {
-      throw new Error("Receipt must be an uploaded file (r2:<key>)");
-    }
-
-    // PROVENANCE, not just format. An `r2:` string proves nothing on its own:
-    // receipt URLs are handed to every manager+ viewer of a fund
-    // (`listExpenses`) and every card viewer (`getCardDetail`), so a member
-    // who has seen someone else's receipt could otherwise submit a
-    // reimbursement backed by that person's proof of purchase. The
-    // `uploadGrants` row written when the presigned URL was minted
-    // (functions/uploads.ts, or lib/r2.ts's `putR2Object` with `grantTo`) is
-    // the only record of who the key belongs to.
-    const grant = await ctx.db
-      .query("uploadGrants")
-      .withIndex("by_storagePath", (q) => q.eq("storagePath", args.receiptKey))
-      .first();
-    if (!grant) {
-      // NO ROW is a different situation from SOMEONE ELSE'S ROW, and it has an
-      // honest cause the member can act on: a photo picked before this check
-      // shipped (or before a grant write that failed) has no provenance to
-      // read, and refusing it with "that isn't yours" reads as a bug. Say what
-      // fixes it instead. Not a weaker gate — still a refusal.
-      throw new Error(
-        "We couldn't verify who uploaded that receipt — re-attach the photo and submit again",
-      );
-    }
-    if (grant.userId !== userId) {
-      throw new Error(
-        "That receipt wasn't uploaded from this account — attach a photo you uploaded yourself",
-      );
-    }
+    await assertReceiptOwnedBy(ctx, args.receiptKey, userId);
 
     const timestamp = now();
     const expenseId = await ctx.db.insert("expenses", {
@@ -222,6 +251,290 @@ export const submitExpense = mutation({
     });
 
     return expenseId;
+  },
+});
+
+// ============================================================================
+// attachExpenseReceipt — the receipt-nudge write path, and the one place a
+// receipt is forwarded to a card provider (ADR-033 Phase 3).
+// ============================================================================
+
+/**
+ * Attach (or replace) the receipt on a CARD-CHARGE expense.
+ *
+ * The read side of this has existed since ADR-032 — the "No receipt" badge on
+ * the card detail screen, the red "receipt missing" line in the approvals
+ * queue, `canPay`'s receipt requirement — but nothing ever wrote it, because a
+ * card charge is created by the settlement webhook before anyone has the
+ * receipt in their hand. This is that write.
+ *
+ * Reimbursements are excluded: they carry a receipt from `submitExpense` and
+ * replacing one already approved is a different question (does the approval
+ * still stand?) that ADR-032 has not answered.
+ *
+ * WHO: the cardholder whose swipe made the expense, or a manager+ on the fund.
+ * The holder is the person who has the paper; the manager is who chases them.
+ *
+ * WHAT IT SCHEDULES: if the card was issued at a provider with a receipt API
+ * (`capabilities.receiptForwarding` — BILL alone today), a best-effort forward
+ * so the church's expense record AT THE ISSUER is complete too. That is the
+ * whole reason the UI copy differs by provider: "Saved to the fund" is a
+ * smaller promise than "Saved and sent to your card provider", and only one of
+ * them is true at a time.
+ */
+export const attachExpenseReceipt = mutation({
+  args: {
+    token: v.string(),
+    expenseId: v.id("expenses"),
+    receiptKey: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    await requireGroupGivingEnabled(ctx);
+
+    const expense = await ctx.db.get(args.expenseId);
+    if (!expense) {
+      throw new Error("Expense not found");
+    }
+    if (expense.kind !== "card_charge") {
+      throw new Error(
+        "Receipts are attached when a reimbursement is submitted — this is a card charge",
+      );
+    }
+    const fund = await ctx.db.get(expense.fundId);
+    if (!fund) {
+      throw new Error("Fund not found");
+    }
+
+    if (expense.submitterId !== userId) {
+      // Not the cardholder, so this has to be someone who manages the fund.
+      await requireFundRoleOrGroupLeader(ctx, fund._id, userId, "manager");
+    }
+
+    await assertReceiptOwnedBy(ctx, args.receiptKey, userId);
+
+    await ctx.db.patch(args.expenseId, {
+      receiptKey: args.receiptKey,
+      updatedAt: now(),
+    });
+
+    await logFinanceAudit(ctx, {
+      communityId: fund.communityId,
+      fundId: fund._id,
+      actorUserId: userId,
+      action: "expense.receipt_attached",
+      details: {
+        expenseId: args.expenseId,
+        replaced: expense.receiptKey !== undefined,
+      },
+    });
+
+    // FORWARDING IS SCHEDULED ONCE PER ATTACHMENT, and that is the whole
+    // dedupe mechanism. There is no `forwardedAt` column to write (schema.ts is
+    // not being widened for this phase, and `expenses` has no free-form bag the
+    // way `cards.controls` does), so instead of a marker the design relies on
+    // two facts that are true anyway:
+    //
+    //   1. exactly one run is enqueued here, per attachment; and
+    //   2. the action re-reads the expense and STOPS unless `receiptKey` is
+    //      still the key it was scheduled with.
+    //
+    // Together those make a re-attachment forward the NEW receipt and never the
+    // old one, and make a duplicate/stale run a no-op. What they deliberately
+    // do not do is prevent forwarding the same image twice if a human attaches
+    // the identical file twice — which is a duplicate document in BILL, not a
+    // wrong one, and is not worth a schema change or a listing call to avoid.
+    if (expense.cardId) {
+      const card = await ctx.db.get(expense.cardId);
+      if (card && cardProviderSupportsReceipts(card.provider)) {
+        await ctx.scheduler.runAfter(
+          0,
+          internal.functions.finance.expenses.forwardExpenseReceipt,
+          { expenseId: args.expenseId, receiptKey: args.receiptKey },
+        );
+      }
+    }
+
+    return { receiptKey: args.receiptKey };
+  },
+});
+
+/**
+ * Does the issuer this card was created at accept forwarded receipts?
+ *
+ * Keyed on the stored provider NAME rather than on the presence of the
+ * adapter's `forwardReceipt` method: this runs in a mutation with no
+ * credential, and "will a receipt reach the provider?" must not cost a decrypt.
+ * A card with no `provider` is a pre-ADR-033 Increase card, which has no
+ * receipt API either way.
+ */
+function cardProviderSupportsReceipts(provider: string | undefined): boolean {
+  if (!provider) return false;
+  return describeProviderCapabilities(provider as CardProviderName)
+    ?.receiptForwarding === true;
+}
+
+/** Everything `forwardExpenseReceipt` needs, in one round trip. */
+export const getExpenseForReceiptForward = internalQuery({
+  args: { expenseId: v.id("expenses"), receiptKey: v.string() },
+  handler: async (ctx, args) => {
+    const expense = await ctx.db.get(args.expenseId);
+    // STALENESS GUARD, and the dedupe half of the mechanism described in
+    // `attachExpenseReceipt`: a run scheduled for a receipt that has since been
+    // replaced must not upload the outdated image.
+    if (!expense || expense.receiptKey !== args.receiptKey) return null;
+    if (!expense.cardId) return null;
+    // The provider's own transaction id — what BILL's receipt endpoint is
+    // addressed by. Card-charge expenses store it in `increaseTransactionId`,
+    // which is provider-neutral in practice despite its name (webhooks.ts's
+    // `recordCardSettlement` writes whatever the provider called it).
+    if (!expense.increaseTransactionId) return null;
+
+    const card = await ctx.db.get(expense.cardId);
+    if (!card?.provider) return null;
+    const fund = await ctx.db.get(expense.fundId);
+    if (!fund) return null;
+
+    const grant = await ctx.db
+      .query("uploadGrants")
+      .withIndex("by_storagePath", (q) => q.eq("storagePath", args.receiptKey))
+      .first();
+
+    return {
+      communityId: fund.communityId,
+      fundId: fund._id,
+      providerName: card.provider as CardProviderName,
+      providerTxnId: expense.increaseTransactionId,
+      receiptUrl: getMediaUrl(args.receiptKey) ?? null,
+      contentType: grant?.contentType ?? null,
+      connection: isBringYourOwnProvider(card.provider as CardProviderName)
+        ? await loadActiveProviderConnection(ctx, fund.communityId)
+        : null,
+    };
+  },
+});
+
+/** Audit the outcome of a forward. Success and failure are both worth a row. */
+export const recordReceiptForward = internalMutation({
+  args: {
+    expenseId: v.id("expenses"),
+    communityId: v.id("communities"),
+    fundId: v.id("funds"),
+    provider: v.string(),
+    ok: v.boolean(),
+    message: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    await logFinanceAudit(ctx, {
+      communityId: args.communityId,
+      fundId: args.fundId,
+      action: args.ok
+        ? "expense.receipt_forwarded"
+        : "expense.receipt_forward_failed",
+      details: {
+        expenseId: args.expenseId,
+        provider: args.provider,
+        message: args.message,
+      },
+    });
+  },
+});
+
+/**
+ * Send a stored receipt on to the card provider.
+ *
+ * BEST EFFORT, ALWAYS. The receipt is already durable in Togather and the
+ * church's own books are complete without the copy at the issuer, so every
+ * failure here is a logged audit row and nothing else. It must never undo the
+ * attachment, fail the expense, or reach the person who uploaded it — they did
+ * their part, and telling them "your receipt failed" about a bookkeeping
+ * convenience would make them re-upload for no reason.
+ *
+ * NOT RETRIED. Unlike the managed-limit sync there is no hourly backstop, and
+ * that is a deliberate scope call rather than an omission: a missing receipt at
+ * BILL is a gap in a secondary record, whereas a stale spending cap is money.
+ * The audit row is what makes it visible, and re-attaching the photo is the
+ * manual retry.
+ */
+export const forwardExpenseReceipt = internalAction({
+  args: { expenseId: v.id("expenses"), receiptKey: v.string() },
+  handler: async (ctx, args): Promise<{ forwarded: boolean }> => {
+    const loaded = await ctx.runQuery(
+      internal.functions.finance.expenses.getExpenseForReceiptForward,
+      { expenseId: args.expenseId, receiptKey: args.receiptKey },
+    );
+    // Every "nothing to do" the query already decided: replaced receipt, no
+    // card, no provider transaction id. Not an error.
+    if (!loaded) return { forwarded: false };
+
+    const fail = async (message: string) => {
+      console.error(
+        `[finance] forwardExpenseReceipt: ${message} (expense ${args.expenseId})`,
+      );
+      await ctx.runMutation(
+        internal.functions.finance.expenses.recordReceiptForward,
+        {
+          expenseId: args.expenseId,
+          communityId: loaded.communityId,
+          fundId: loaded.fundId,
+          provider: loaded.providerName,
+          ok: false,
+          message: message.slice(0, 300),
+        },
+      );
+      return { forwarded: false };
+    };
+
+    if (!loaded.receiptUrl) {
+      return await fail("the receipt has no readable URL (R2_PUBLIC_URL unset?)");
+    }
+
+    try {
+      const provider = await getCardProviderByName(
+        loaded.providerName,
+        loaded.connection,
+      );
+      if (!provider.forwardReceipt) {
+        // Structurally unreachable — `cardProviderSupportsReceipts` gated the
+        // schedule on the same capability — but a provider that declares the
+        // flag without the method should say so rather than silently succeed.
+        return await fail(
+          `${loaded.providerName} declares receipt forwarding but its adapter implements none`,
+        );
+      }
+
+      const response = await fetch(loaded.receiptUrl);
+      if (!response.ok) {
+        return await fail(`could not read the receipt (${response.status})`);
+      }
+      const bytes = await response.arrayBuffer();
+
+      await provider.forwardReceipt(loaded.providerTxnId, {
+        bytes,
+        // The grant's recorded type first; the object's own header as the
+        // fallback. The adapter refuses a format the provider can't open, so
+        // guessing "image/jpeg" here would only move the failure later.
+        contentType:
+          loaded.contentType ??
+          response.headers.get("content-type") ??
+          "application/octet-stream",
+        filename: args.receiptKey.replace(/^r2:/, "").split("/").pop() ?? "receipt",
+      });
+    } catch (error) {
+      return await fail(error instanceof Error ? error.message : String(error));
+    }
+
+    await ctx.runMutation(
+      internal.functions.finance.expenses.recordReceiptForward,
+      {
+        expenseId: args.expenseId,
+        communityId: loaded.communityId,
+        fundId: loaded.fundId,
+        provider: loaded.providerName,
+        ok: true,
+      },
+    );
+    return { forwarded: true };
   },
 });
 
