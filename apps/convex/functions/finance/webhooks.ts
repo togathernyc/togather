@@ -352,6 +352,28 @@ export const auditOverLimitCardCharge = internalMutation({
     const limitPeriod = card.limitPeriod;
     if (limitCents === undefined || limitPeriod === undefined) return;
 
+    // The card's CURRENT limit is only evidence about a charge if it was the
+    // limit in force WHEN that charge settled. Since the hourly poll can
+    // backfill a charge from before a `setCardLimit`, that is no longer a safe
+    // assumption: a lowered limit would manufacture a breach that never
+    // happened, and a raised one would hide a real one. `cards.updatedAt` is
+    // the only marker available for "this row has changed since" without a
+    // limit history to reconstruct from, so a card touched after the charge
+    // gets no assertion at all.
+    //
+    // Conservative in the direction that costs least: this is an audit, not a
+    // control — the money has already moved either way — so a skipped check
+    // loses a monitoring signal, while a wrong one puts a false
+    // `card.limit_exceeded` in a church's permanent record.
+    // TODO: reconstruct the limit effective at `atMs` from the
+    // `card.limit_updated` audit trail, and drop this skip.
+    if (card.updatedAt > args.atMs) {
+      console.log(
+        `[finance] auditOverLimitCardCharge: card ${card._id} changed after this charge settled — skipping the drift check rather than judging it against a limit that may not have applied`,
+      );
+      return;
+    }
+
     const windowStart = cardLimitWindowStart(limitPeriod, args.atMs);
     let windowTotalCents: number;
     if (windowStart === null) {

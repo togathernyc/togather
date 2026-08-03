@@ -1208,6 +1208,44 @@ describe("finance-card-txn-poll", () => {
     expect(logged).not.toContain("A".repeat(200));
   });
 
+  test("a backfilled charge is not judged against a limit set after it", async () => {
+    // The hourly poll imports charges from before a setCardLimit; the card row
+    // only knows its CURRENT limit. Lowering a limit afterwards would
+    // manufacture a breach that never happened, and it would land in a
+    // church's permanent audit trail.
+    const t = convexTest(schema, modules);
+    await connectedWithCard(t);
+    const card = await t.run(async (ctx) => ctx.db.query("cards").first());
+    // The charge settled a week before the card was last touched, and it blows
+    // straight through the stored limit.
+    await t.run(async (ctx) =>
+      ctx.db.patch(card!._id, { spendLimitCents: 1, limitPeriod: "month" }),
+    );
+    const old = {
+      ...SETTLED_TXN,
+      token: "txn_backfilled",
+      created: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
+    };
+    privacy.listPrivacyTransactions.mockResolvedValue({
+      data: [old],
+      page: 1,
+      total_pages: 1,
+    } as any);
+
+    await t.action(
+      internal.functions.finance.jobs.pollCardProviderTransactions,
+      {},
+    );
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const audits = await t.run(async (ctx) =>
+      ctx.db.query("financeAuditEvents").collect(),
+    );
+    expect(audits.map((a) => a.action)).not.toContain("card.limit_exceeded");
+    // The expense itself is still recorded — only the JUDGEMENT is withheld.
+    expect(await countWrites(t)).toEqual({ expenses: 1, ledger: 1 });
+  });
+
   test("a poll that finishes after a disconnect cannot resurrect the connection", async () => {
     // The poll is an HTTP round trip long. An admin who revokes a compromised
     // key inside that window must stay revoked — a stale success patching
