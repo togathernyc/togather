@@ -54,7 +54,7 @@ export function FundScreen() {
     myRole?.role === "manager" ||
     myRole?.role === "finance_admin" ||
     myRole?.isGroupLeader === true ||
-    myRole?.isCommunityAdmin === true;
+    myRole?.canManageCommunityFinance === true;
 
   const handleBack = () => {
     if (router.canGoBack()) {

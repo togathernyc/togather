@@ -73,13 +73,19 @@ export function GivingHubScreen() {
   const denyExpense = useAuthenticatedMutation(api.functions.finance.expenses.denyExpense);
   const enableGroupGiving = useAuthenticatedMutation(api.functions.finance.onboarding.enableGroupGiving);
 
-  const isCommunityAdmin = !!(user?.is_admin || myFundRole?.isCommunityAdmin);
+  // ADR-033: community-wide finance surfaces key off financial-controls
+  // access (primary admin or an explicit grant), no longer plain community
+  // admin. `user.is_admin` is the Togather SUPERUSER flag and is unrelated.
+  const canManageCommunityFinance = !!(
+    user?.is_admin || myFundRole?.canManageCommunityFinance
+  );
 
   const state: GivingHubState = useMemo(() => {
     if (isLoadingGroup || givingContext === undefined) return "loading";
-    if (!givingContext) return isCommunityAdmin ? "no-fund-admin" : "no-fund-member";
+    if (!givingContext)
+      return canManageCommunityFinance ? "no-fund-admin" : "no-fund-member";
     return "ready";
-  }, [isLoadingGroup, givingContext, isCommunityAdmin]);
+  }, [isLoadingGroup, givingContext, canManageCommunityFinance]);
 
   const expenses: GivingExpense[] = useMemo(
     () => (expensesRaw ?? []).map(toGivingExpense),
@@ -104,7 +110,9 @@ export function GivingHubScreen() {
   }, [overview]);
 
   const canApprove =
-    myFundRole?.role === "manager" || myFundRole?.role === "finance_admin" || isCommunityAdmin;
+    myFundRole?.role === "manager" ||
+    myFundRole?.role === "finance_admin" ||
+    canManageCommunityFinance;
 
   // Mirrors createFundCard's own gate (finance_admin, incl. the
   // community-admin override) — a group leader without a finance role can

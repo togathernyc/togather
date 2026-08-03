@@ -57,7 +57,7 @@ export function FundRolesScreen() {
   const canManageRoles = !!(
     myFundRole?.role === "finance_admin" ||
     myFundRole?.isGroupLeader ||
-    myFundRole?.isCommunityAdmin ||
+    myFundRole?.canManageCommunityFinance ||
     user?.is_admin
   );
 

@@ -655,7 +655,9 @@ describe("listFundRoles / getMyFundRole", () => {
     );
     expect(memberResult.role).toBeNull();
     expect(memberResult.isGroupLeader).toBe(false);
-    expect(memberResult.isCommunityAdmin).toBe(false);
+    // Renamed from `isCommunityAdmin` by ADR-033: a plain community admin no
+    // longer implies community-wide finance access.
+    expect(memberResult.canManageCommunityFinance).toBe(false);
   });
 
   test("listFundRoles includes both active and revoked rows", async () => {

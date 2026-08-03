@@ -15,6 +15,17 @@
  * webhooks.ts calls it); the Increase-side counterpart, applyIncreaseEntityStatus,
  * lives in webhooks.ts per the task split (it's purely webhook-driven glue).
  *
+ * WHO CAN DO ANY OF THIS CHANGED IN ADR-033. Every public entry point here
+ * used to gate on `requireCommunityAdmin`; they now gate on
+ * `requireCommunityFinanceAccess` — primary admin, or an explicit
+ * `communityFinanceRoles` grant. A plain community admin (roles === 3) with
+ * no grant NO LONGER has implicit access to a church's finance setup. That is
+ * the deliberate, approved tightening: submitting an EIN, redirecting through
+ * Stripe identity verification, and turning giving on for a group are not
+ * things "can add a channel" should carry. No migration is needed — the
+ * primary admin's access is implicit, so every community keeps exactly one
+ * person who can do this on day one, and they grant the rest.
+ *
  * Every external write is idempotency-keyed off the community/fund id (see
  * lib/finance/increase.ts, lib/finance/stripeConnect.ts) so a retried action
  * — the scheduler retries a throwing action's *next* run, not the failed one
@@ -35,7 +46,7 @@ import {
 import { internal } from "../../_generated/api";
 import type { Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
-import { requireCommunityAdmin } from "../../lib/permissions";
+import { requireCommunityFinanceAccess } from "../../lib/finance/communityFinanceAccess";
 import { logFinanceAudit } from "../../lib/finance/audit";
 import { hasFundRole, isActiveLeader } from "../../lib/helpers";
 import { now } from "../../lib/utils";
@@ -156,7 +167,7 @@ export const startOnboarding = mutation({
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
-    await requireCommunityAdmin(ctx, args.communityId, userId);
+    await requireCommunityFinanceAccess(ctx, userId, args.communityId);
     await requireGroupGivingEnabled(ctx);
 
     if (!isValidEin(args.ein)) {
@@ -464,7 +475,7 @@ export const retryProvisioning = mutation({
   args: { token: v.string(), communityId: v.id("communities") },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
-    await requireCommunityAdmin(ctx, args.communityId, userId);
+    await requireCommunityFinanceAccess(ctx, userId, args.communityId);
     await requireGroupGivingEnabled(ctx);
 
     const finance = await ctx.db
@@ -612,7 +623,7 @@ export const getOnboardingStatus = query({
   args: { token: v.string(), communityId: v.id("communities") },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
-    await requireCommunityAdmin(ctx, args.communityId, userId);
+    await requireCommunityFinanceAccess(ctx, userId, args.communityId);
     await requireGroupGivingEnabled(ctx);
 
     const finance = await ctx.db
@@ -699,7 +710,7 @@ export const enableGroupGiving = mutation({
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
-    await requireCommunityAdmin(ctx, args.communityId, userId);
+    await requireCommunityFinanceAccess(ctx, userId, args.communityId);
     await requireGroupGivingEnabled(ctx);
 
     const group = await ctx.db.get(args.groupId);
@@ -1170,7 +1181,7 @@ export const assertAdminAndGetFinance = internalQuery({
   args: { token: v.string(), communityId: v.id("communities") },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
-    await requireCommunityAdmin(ctx, args.communityId, userId);
+    await requireCommunityFinanceAccess(ctx, userId, args.communityId);
     await requireGroupGivingEnabled(ctx);
     return await ctx.db
       .query("communityFinance")

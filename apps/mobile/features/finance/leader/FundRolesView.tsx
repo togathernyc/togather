@@ -45,7 +45,7 @@ export interface FundRolesViewProps {
   groupId: string;
   roles: FundRoleRow[];
   isLoadingRoles: boolean;
-  /** finance_admin, isGroupLeader, or isCommunityAdmin per getMyFundRole. */
+  /** finance_admin, isGroupLeader, or canManageCommunityFinance per getMyFundRole. */
   canManageRoles: boolean;
   isGrantSheetOpen: boolean;
   onOpenGrantSheet: () => void;
