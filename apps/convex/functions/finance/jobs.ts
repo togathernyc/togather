@@ -1842,11 +1842,20 @@ async function pollOneConnection(
     return 0;
   }
 
-  const page = await provider.listTransactions(connection.syncCursor);
+  // Read from `loaded`, NOT from the fan-out's list snapshot. The two are
+  // separate reads with an admin-sized gap between them: a reconnect in that
+  // gap clears `syncCursor` and points at a different account, and polling the
+  // NEW credential from the OLD account's timestamp — then accepting the
+  // result under the new generation — would skip the new account's earlier
+  // transactions permanently.
+  const syncCursor = loaded.connection.syncCursor ?? null;
+  const providerName = loaded.connection.provider;
+
+  const page = await provider.listTransactions(syncCursor);
 
   let recorded = 0;
   for (const txn of page.transactions) {
-    if (await recordProviderTransaction(ctx, connection.provider, txn, "CardTxnPoll")) {
+    if (await recordProviderTransaction(ctx, providerName, txn, "CardTxnPoll")) {
       recorded++;
     }
   }
@@ -1858,7 +1867,7 @@ async function pollOneConnection(
     // `isCredentialRejection`, does NOT deactivate the connection: the
     // credential is fine, the volume isn't) so it shows on the connection
     // screen instead of looking like a healthy hourly poll forever.
-    const message = `Transaction backlog exceeds one poll — read ${page.transactions.length} and stopped; the cursor is held at ${connection.syncCursor ?? "the initial lookback"} until the backlog clears`;
+    const message = `Transaction backlog exceeds one poll — read ${page.transactions.length} and stopped; the cursor is held at ${syncCursor ?? "the initial lookback"} until the backlog clears`;
     console.error(
       `[finance] card txn poll truncated for community ${connection.communityId}: ${message}`,
     );

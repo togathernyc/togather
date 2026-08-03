@@ -246,7 +246,8 @@ export const saveCardProviderConnection = internalMutation({
         // A fresh credential invalidates the old failure AND the old position
         // in the transaction feed: the new key may be for a different Privacy
         // account entirely, whose transaction history has nothing to do with
-        // the cursor we were holding.
+        // the cursor we were holding. It is RESEEDED to now rather than
+        // cleared — see the insert below for why.
         //
         // KNOWN GAP, and the guard above does not close it: a same-provider
         // reconnect is the key-ROTATION path, so it must be allowed, but
@@ -261,7 +262,7 @@ export const saveCardProviderConnection = internalMutation({
         // migration/closure when it changes (ADR-033 Phase 3, with the connect
         // UI and the live account that can settle the question).
         lastError: undefined,
-        syncCursor: undefined,
+        syncCursor: initialSyncCursor(timestamp),
         connectedById: args.userId,
         updatedAt: timestamp,
       });
@@ -274,6 +275,7 @@ export const saveCardProviderConnection = internalMutation({
         keyVersion: args.keyVersion,
         accountLabel: args.accountLabel,
         status: "active",
+        syncCursor: initialSyncCursor(timestamp),
         connectedById: args.userId,
         createdAt: timestamp,
         updatedAt: timestamp,
@@ -533,6 +535,29 @@ async function countLiveCards(
     }
   }
   return live;
+}
+
+/**
+ * Where a brand-new connection starts reading the transaction feed.
+ *
+ * SEEDED at connect time rather than left empty, because an empty cursor makes
+ * the adapter fall back to "now minus a lookback" — computed afresh on every
+ * attempt. A connection whose first poll keeps failing (a bad week at the
+ * vendor) would then watch its own horizon slide forward, and the transactions
+ * from its first days would fall out of range and never be recoverable by the
+ * backstop at all. A fixed mark can only ever be re-read.
+ *
+ * The connect moment is the right mark and loses nothing: cards are issued
+ * AFTER a connection exists, so there is no Togather card whose spending could
+ * predate this.
+ *
+ * FORMAT NOTE: an ISO timestamp, which is what today's one BYO adapter defines
+ * its cursor to be (`syncCursor` is otherwise opaque and provider-defined). A
+ * future adapter that paginates by opaque token must seed its own — which is
+ * why this is a named function rather than an inline `toISOString()`.
+ */
+function initialSyncCursor(atMs: number): string {
+  return new Date(atMs).toISOString();
 }
 
 // ============================================================================

@@ -378,7 +378,7 @@ describe("connectCardProvider", () => {
     expect(finance!.cardProvider).toBeUndefined();
   });
 
-  test("reconnecting replaces the credential and clears the stale cursor", async () => {
+  test("reconnecting replaces the credential and RESEEDS the cursor", async () => {
     const t = convexTest(schema, modules);
     const f = await seed(t);
     await connect(t, f);
@@ -401,8 +401,12 @@ describe("connectCardProvider", () => {
     expect(rows[0].status).toBe("active");
     expect(rows[0].lastError).toBeUndefined();
     // The new key may be a DIFFERENT Privacy account, whose history has
-    // nothing to do with the position we were holding.
-    expect(rows[0].syncCursor).toBeUndefined();
+    // nothing to do with the position we were holding — so the mark moves to
+    // the reconnect moment. Reseeded rather than cleared: an empty cursor
+    // makes the adapter fall back to "now minus a lookback", recomputed on
+    // every attempt, so a connection whose polls keep failing would watch its
+    // own horizon slide forward and lose its first days for good.
+    expect(rows[0].syncCursor).toBe(new Date(Date.now()).toISOString());
     await expect(
       decryptCredential(
         {
@@ -934,6 +938,11 @@ describe("finance-card-txn-poll", () => {
   test("records settled charges and advances the cursor", async () => {
     const t = convexTest(schema, modules);
     await connectedWithCard(t);
+    // Wind the seeded mark back so the fixture's transactions are ahead of it.
+    await t.run(async (ctx) => {
+      const row = await ctx.db.query("cardProviderConnections").first();
+      await ctx.db.patch(row!._id, { syncCursor: "2026-07-30T00:00:00Z" });
+    });
     privacy.listPrivacyTransactions.mockResolvedValue({
       data: [
         SETTLED_TXN,
@@ -1008,6 +1017,20 @@ describe("finance-card-txn-poll", () => {
     );
     expect(result.recorded).toBe(0);
     expect(await countWrites(t)).toEqual({ expenses: 0, ledger: 0 });
+  });
+
+  test("a fresh connection starts from a FIXED mark, not a sliding lookback", async () => {
+    // With no cursor the adapter would compute "now minus seven days" afresh
+    // on every attempt, so a connection whose first polls keep failing would
+    // lose its earliest transactions permanently. A stored mark can only ever
+    // be re-read.
+    const t = convexTest(schema, modules);
+    const f = await seed(t);
+    await connect(t, f);
+    const row = await t.run(async (ctx) =>
+      ctx.db.query("cardProviderConnections").first(),
+    );
+    expect(row!.syncCursor).toBe(new Date(Date.now()).toISOString());
   });
 
   test("a resumed poll passes the stored cursor back to the provider", async () => {
@@ -1154,7 +1177,8 @@ describe("finance-card-txn-poll", () => {
     // The credential is fine — the VOLUME isn't — so the connection stays
     // usable and next hour tries again.
     expect(row!.status).toBe("active");
-    expect(row!.syncCursor).toBeUndefined();
+    // Held exactly where connect seeded it.
+    expect(row!.syncCursor).toBe(new Date(Date.now()).toISOString());
   });
 
   test("an unverified card token cannot forge a log line", async () => {
@@ -1212,7 +1236,8 @@ describe("finance-card-txn-poll", () => {
       ctx.db.query("cardProviderConnections").first(),
     );
     expect(row!.status).toBe("revoked");
-    expect(row!.syncCursor).toBeUndefined();
+    // Untouched by the stale poll — still the mark connect seeded.
+    expect(row!.syncCursor).toBe(new Date(Date.now()).toISOString());
   });
 });
 
