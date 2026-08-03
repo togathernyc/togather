@@ -29,7 +29,11 @@
 
 import { ConvexError } from "convex/values";
 import type { Id } from "../../_generated/dataModel";
-import { assertCommunityNotArchived, isPrimaryAdmin } from "../permissions";
+import {
+  assertCommunityNotArchived,
+  isCommunityAdmin,
+  isPrimaryAdmin,
+} from "../permissions";
 
 interface DbCtx {
   db: {
@@ -65,6 +69,15 @@ export async function getActiveCommunityFinanceRole(
  * Can this user act on the community's financial controls? Returns a boolean;
  * doesn't throw. Mirrors `isCommunityAdmin`'s shape so call sites swap one
  * for the other without restructuring.
+ *
+ * A GRANT IS NOT ENOUGH ON ITS OWN — the holder must still be a community
+ * admin. `grantCommunityFinanceRole` enforces that at grant time, but nothing
+ * revokes the finance row when someone is later demoted to member: the
+ * role-management mutations only patch `userCommunities.roles`, so a
+ * demoted-but-never-revoked user would otherwise keep submitting the church's
+ * EIN. Re-checking here rather than trying to make demotion transactional
+ * across two features means the standing is evaluated where it is USED, and
+ * no future demotion path can forget to call us.
  */
 export async function canManageCommunityFinance(
   ctx: DbCtx,
@@ -72,7 +85,10 @@ export async function canManageCommunityFinance(
   communityId: Id<"communities">,
 ): Promise<boolean> {
   if (await isPrimaryAdmin(ctx as any, communityId, userId)) return true;
-  return (await getActiveCommunityFinanceRole(ctx, userId, communityId)) !== null;
+  if ((await getActiveCommunityFinanceRole(ctx, userId, communityId)) === null) {
+    return false;
+  }
+  return await isCommunityAdmin(ctx as any, communityId, userId);
 }
 
 /**

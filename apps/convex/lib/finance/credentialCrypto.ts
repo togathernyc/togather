@@ -14,6 +14,12 @@
  * to decrypt rather than returning garbage — the property that lets a caller
  * treat a successful `decryptCredential` as "this is exactly what we stored".
  *
+ * Every ciphertext is additionally BOUND to the row it belongs to, via GCM's
+ * additional authenticated data (see `CredentialContext`). Authenticity alone
+ * would not stop a valid credential from being read out of the wrong row and
+ * spending the wrong community's money; the binding upgrades a successful
+ * decrypt from "this is what we stored" to "this is what we stored HERE".
+ *
  * Web Crypto (`crypto.subtle`), not Node's `crypto`: this runs in the same
  * restricted V8 isolate that forced lib/finance/increase.ts to hand-roll its
  * webhook HMAC instead of using a Node/SDK helper. No `Buffer` either — the
@@ -33,6 +39,44 @@ const IV_BYTES = 12;
 
 /** AES-256 needs exactly 32 bytes of key material. */
 const MASTER_KEY_BYTES = 32;
+
+/**
+ * What a ciphertext is BOUND to (AES-GCM additional authenticated data).
+ *
+ * GCM's auth tag proves a ciphertext wasn't altered. It does not prove the
+ * ciphertext belongs where you found it: a valid `(ciphertext, iv)` pair
+ * copied from another `cardProviderConnections` row — a mis-scoped query, a
+ * bad row update, a restored backup — decrypts perfectly, and community A
+ * would silently start moving money with community B's credential. Binding
+ * the row's immutable identity as AAD closes that: decryption with different
+ * context fails the tag, exactly like tampering.
+ *
+ * Every field here must be IMMUTABLE for the life of the row. `communityId`
+ * and `provider` never change; `purpose` distinguishes the two secrets a
+ * single row holds, so a webhook secret can't be swapped in for an API key.
+ * `accountLabel` and `status` are deliberately absent — they are editable,
+ * and binding to an editable field would make a rename undecryptable.
+ */
+export interface CredentialContext {
+  communityId: string;
+  provider: string;
+  purpose: "apiKey" | "webhookSecret";
+}
+
+/**
+ * Serialize the context to the exact bytes both sides authenticate.
+ *
+ * JSON with the keys written out in a fixed order rather than
+ * `JSON.stringify(obj)` over a literal: object key order is a property of how
+ * the object was BUILT, and a caller assembling the context field-by-field in
+ * a different order would produce different AAD and a credential that no
+ * longer decrypts. Spelling the order out here makes it ours, not theirs.
+ */
+function contextBytes(context: CredentialContext): Uint8Array<ArrayBuffer> {
+  return new TextEncoder().encode(
+    JSON.stringify([context.communityId, context.provider, context.purpose]),
+  );
+}
 
 /**
  * A credential at rest. Every field is base64 except `keyVersion`, so the
@@ -128,11 +172,12 @@ async function getMasterKey(usage: "encrypt" | "decrypt"): Promise<CryptoKey> {
  */
 export async function encryptCredential(
   plaintext: string,
+  context: CredentialContext,
 ): Promise<EncryptedCredential> {
   const key = await getMasterKey("encrypt");
   const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
   const ciphertext = await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv },
+    { name: "AES-GCM", iv, additionalData: contextBytes(context) },
     key,
     new TextEncoder().encode(plaintext),
   );
@@ -154,6 +199,7 @@ export async function encryptCredential(
  */
 export async function decryptCredential(
   credential: EncryptedCredential,
+  context: CredentialContext,
 ): Promise<string> {
   if (credential.keyVersion !== CURRENT_KEY_VERSION) {
     throw new Error(
@@ -174,16 +220,18 @@ export async function decryptCredential(
   let plaintext: ArrayBuffer;
   try {
     plaintext = await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv },
+      { name: "AES-GCM", iv, additionalData: contextBytes(context) },
       key,
       ciphertext,
     );
   } catch {
-    // GCM's authentication tag failed. Either the master key is wrong or the
-    // stored bytes were altered; we deliberately don't try to tell the caller
-    // which, because both answers are "do not use this credential".
+    // GCM's authentication tag failed. The master key is wrong, the stored
+    // bytes were altered, or this ciphertext belongs to a DIFFERENT row than
+    // the context says (see CredentialContext). We deliberately don't try to
+    // tell the caller which, because every answer is "do not use this
+    // credential".
     throw new Error(
-      "Stored credential could not be decrypted — the master key is wrong or the ciphertext was tampered with",
+      "Stored credential could not be decrypted — wrong master key, tampered ciphertext, or a credential that does not belong to this connection",
     );
   }
   return new TextDecoder().decode(plaintext);

@@ -129,6 +129,20 @@ export const listFundRoles = query({
  * still lets any community admin through a fund gate, so nothing an admin
  * could do on a specific fund stopped working — only the community-wide
  * surfaces moved.
+ *
+ * Which is why `hasCommunityAdminFundOverride` is reported SEPARATELY rather
+ * than folded into the field above. The two signals answer different
+ * questions and a plain community admin gets different answers to them, so
+ * one field cannot carry both: substituting the community-wide signal for the
+ * fund-level one would make mobile hide fund settings, role management, and
+ * expense approval from a user the server still authorizes — a UI stricter
+ * than its backend, which reads as a bug from both ends.
+ *
+ * Mobile must pick per surface: `canManageCommunityFinance` for anything
+ * community-wide (onboarding, enabling giving), `hasCommunityAdminFundOverride`
+ * for anything a fund gate protects. Neither is a substitute for the other,
+ * and neither should be approximated client-side from `user.is_admin` — that
+ * flag is scoped to the viewer's ACTIVE community, not the fund's.
  */
 export const getMyFundRole = query({
   args: { token: v.string(), fundId: v.id("funds") },
@@ -157,10 +171,21 @@ export const getMyFundRole = query({
     return {
       role: roleRow?.role ?? null,
       isGroupLeader: leader,
+      /** Community-WIDE finance surfaces. Primary admin or an explicit grant. */
       canManageCommunityFinance: await canManageCommunityFinance(
         ctx,
         userId,
         fund.communityId,
+      ),
+      /**
+       * FUND-level only: mirrors the community-admin override still baked into
+       * `resolveFundAccess` (lib/helpers.ts). Never gate a community-wide
+       * surface on this.
+       */
+      hasCommunityAdminFundOverride: await isCommunityAdmin(
+        ctx,
+        fund.communityId,
+        userId,
       ),
     };
   },

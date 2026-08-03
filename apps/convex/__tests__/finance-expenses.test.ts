@@ -658,6 +658,32 @@ describe("listFundRoles / getMyFundRole", () => {
     // Renamed from `isCommunityAdmin` by ADR-033: a plain community admin no
     // longer implies community-wide finance access.
     expect(memberResult.canManageCommunityFinance).toBe(false);
+    expect(memberResult.hasCommunityAdminFundOverride).toBe(false);
+  });
+
+  /**
+   * The two community signals must DISAGREE for a plain community admin, and
+   * that disagreement is the whole reason they are separate fields. ADR-033
+   * tightened the community-WIDE surfaces only; `requireFundRole` still lets
+   * an admin through a fund gate. If these ever collapse into one value,
+   * mobile either hides fund controls the server allows (too strict) or shows
+   * community-wide ones it rejects (the CTA-that-only-errors bug).
+   */
+  test("getMyFundRole reports the fund override separately from community finance access", async () => {
+    const t = convexTest(schema, modules);
+    const { fundId, adminUserId } = await seedExpenseFixture(t);
+
+    const result = await t.query(api.functions.finance.roles.getMyFundRole, {
+      token: await tokenFor(adminUserId),
+      fundId,
+    });
+
+    expect(result.role).toBeNull();
+    expect(result.isGroupLeader).toBe(false);
+    // Community-WIDE: denied — no grant, not the primary admin.
+    expect(result.canManageCommunityFinance).toBe(false);
+    // FUND-level: still allowed, matching resolveFundAccess in lib/helpers.ts.
+    expect(result.hasCommunityAdminFundOverride).toBe(true);
   });
 
   test("listFundRoles includes both active and revoked rows", async () => {

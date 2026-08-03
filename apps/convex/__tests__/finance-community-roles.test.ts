@@ -381,6 +381,30 @@ describe("listCommunityFinanceRoles", () => {
       }),
     ).rejects.toThrow(/financial-controls access/i);
   });
+
+  /**
+   * The by-id path every other finance gate closes through
+   * `requireCommunityFinanceAccess`. This query checks access directly, so it
+   * has to assert the archived state itself — otherwise it would be the one
+   * finance surface still readable on an archived community.
+   */
+  test("an archived community is refused even for a legitimate holder", async () => {
+    const t = convexTest(schema, modules);
+    const f = await seed(t);
+    await grant(t, f, f.grantedAdminUserId);
+    await t.run(async (ctx) => {
+      await ctx.db.patch(f.communityId, { isArchived: true });
+    });
+
+    for (const userId of [f.primaryAdminUserId, f.grantedAdminUserId]) {
+      await expect(
+        t.query(api.functions.finance.communityRoles.listCommunityFinanceRoles, {
+          token: await tokenFor(userId),
+          communityId: f.communityId,
+        }),
+      ).rejects.toThrow();
+    }
+  });
 });
 
 // ============================================================================
@@ -446,6 +470,72 @@ describe("canManageCommunityFinance", () => {
         canManageCommunityFinance(ctx, f.grantedAdminUserId, f.communityId),
       ),
     ).resolves.toBe(false);
+  });
+
+  /**
+   * The grant checks community-admin standing at GRANT time, but nothing
+   * revokes the finance row on demotion — the role-management mutations only
+   * patch `userCommunities.roles`. If the standing weren't re-checked here, a
+   * user demoted to member would keep submitting the church's EIN forever.
+   */
+  test("a holder demoted out of community admin loses access, grant row or not", async () => {
+    const t = convexTest(schema, modules);
+    const f = await seed(t);
+    await grant(t, f, f.grantedAdminUserId);
+
+    await expect(
+      t.run(async (ctx) =>
+        canManageCommunityFinance(ctx, f.grantedAdminUserId, f.communityId),
+      ),
+    ).resolves.toBe(true);
+
+    // Demote to plain member, exactly as the role-management mutations do.
+    await t.run(async (ctx) => {
+      const row = await ctx.db
+        .query("userCommunities")
+        .filter((q) =>
+          q.and(
+            q.eq(q.field("userId"), f.grantedAdminUserId),
+            q.eq(q.field("communityId"), f.communityId),
+          ),
+        )
+        .first();
+      await ctx.db.patch(row!._id, { roles: 1 });
+    });
+
+    // The communityFinanceRoles row is still active and un-revoked...
+    await expect(
+      t.run(async (ctx) => {
+        const rows = await ctx.db
+          .query("communityFinanceRoles")
+          .withIndex("by_user_community", (q) =>
+            q
+              .eq("userId", f.grantedAdminUserId)
+              .eq("communityId", f.communityId),
+          )
+          .collect();
+        return rows.filter((r) => r.revokedAt === undefined).length;
+      }),
+    ).resolves.toBe(1);
+
+    // ...and access is gone anyway.
+    await expect(
+      t.run(async (ctx) =>
+        canManageCommunityFinance(ctx, f.grantedAdminUserId, f.communityId),
+      ),
+    ).resolves.toBe(false);
+  });
+
+  test("the primary admin survives a roles patch that would demote anyone else", async () => {
+    const t = convexTest(schema, modules);
+    const f = await seed(t);
+
+    // Sanity: the implicit path must not accidentally depend on the recheck.
+    await expect(
+      t.run(async (ctx) =>
+        canManageCommunityFinance(ctx, f.primaryAdminUserId, f.communityId),
+      ),
+    ).resolves.toBe(true);
   });
 
   test("a grant on one community does not carry to another", async () => {

@@ -96,6 +96,11 @@ export const listCommunityFinanceRoles = query({
         "You need financial-controls access for this community to see who holds it",
       );
     }
+    // Same by-id close-out `requireCommunityFinanceAccess` does for the
+    // mutations. Spelled out rather than delegated because the message above
+    // is tailored to reading the roster; losing this would leave the one
+    // finance surface where an archived community is still readable by id.
+    await assertCommunityNotArchived(ctx, args.communityId);
 
     const rows = await ctx.db
       .query("communityFinanceRoles")

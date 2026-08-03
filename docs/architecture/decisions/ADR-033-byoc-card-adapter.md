@@ -190,6 +190,17 @@ exactly what we stored". Decryption throws on every failure mode (wrong key,
 tampered bytes, unknown version); there is deliberately no "returns null"
 variant to accidentally ignore.
 
+Every ciphertext is additionally **bound to its row** through GCM's additional
+authenticated data: `(communityId, provider, purpose)`, all immutable for the
+life of the row. Authenticity alone is not enough here — a valid ciphertext
+lifted from another row by a mis-scoped query, a bad update, or a restored
+backup would decrypt perfectly, and community A would start spending with
+community B's credential without anything having failed. The binding upgrades
+a successful decrypt from "this is what we stored" to "this is what we stored
+*here*". `purpose` separates the API key from the webhook secret so the two
+cannot be swapped for each other. Editable fields (`accountLabel`, `status`)
+are deliberately excluded: binding to one would make a rename undecryptable.
+
 `webhookSecretCiphertext` covers issuers that mint a per-endpoint signing
 secret at connect time. `syncCursor` / `lastSyncAt` belong to the pull-based
 providers, where a poll has to remember where it stopped.
@@ -252,6 +263,13 @@ with extra steps". A grantee must already be a community admin: this is an
 extra key on top of admin, never a way to give finance power to someone with
 no standing in the community.
 
+That standing is re-checked at USE time, not only at grant time.
+`canManageCommunityFinance` requires an active row **and** current
+community-admin standing, because nothing revokes the finance row when someone
+is later demoted to member — the role-management mutations only patch
+`userCommunities.roles`. Evaluating it where the access is used means no
+future demotion path can forget to call us.
+
 **Surfaces tightened** (`isCommunityAdmin` → `canManageCommunityFinance`):
 
 - `functions/finance/onboarding.ts` — `startOnboarding`, `retryProvisioning`,
@@ -259,7 +277,14 @@ no standing in the community.
   (the gate behind `getStripeOnboardingLinkUrl`).
 - `functions/finance/roles.ts` — `getMyFundRole`'s third access signal, which
   mobile uses to unlock the community-wide finance surfaces. The returned
-  field is renamed `isCommunityAdmin` → `canManageCommunityFinance`.
+  field is renamed `isCommunityAdmin` → `canManageCommunityFinance`. The
+  fund-level override is returned ALONGSIDE it as
+  `hasCommunityAdminFundOverride`, not folded into it: a plain community admin
+  gets different answers to "can run the money" and "can act on this fund",
+  and collapsing them would make mobile hide controls the server still
+  authorizes. Mobile picks per surface, and never approximates either from
+  `user.is_admin` — that flag is scoped to the viewer's *active* community,
+  not the fund's.
 - Provider connection (Phase 1) will gate here from the start.
 
 **Explicitly NOT tightened.** Fund-level access is unchanged:

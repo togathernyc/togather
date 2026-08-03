@@ -117,16 +117,16 @@ export function GivingHubScreen() {
     };
   }, [overview]);
 
-  // FUND-scoped, so it keeps the community-admin fallback ADR-033 explicitly
+  // FUND-scoped, so it keeps the community-admin override ADR-033 explicitly
   // did NOT tighten: `approveExpense` still runs through `requireFundRole`,
   // whose `resolveEffectiveRole` resolves a community admin to finance_admin.
-  // Dropping `user?.is_admin` here would make the UI stricter than the server
-  // and hide buttons that would have worked.
+  // Gating this on `canManageCommunityFinance` would make the UI stricter than
+  // the server and hide buttons that would have worked.
   const canApprove =
     myFundRole?.role === "manager" ||
     myFundRole?.role === "finance_admin" ||
     canManageCommunityFinance ||
-    !!user?.is_admin;
+    myFundRole?.hasCommunityAdminFundOverride === true;
 
   // Mirrors createFundCard's own gate (finance_admin, incl. the
   // community-admin override) — a group leader without a finance role can
