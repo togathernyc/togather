@@ -1726,11 +1726,23 @@ export const retryStuckReimbursements = internalAction({
  * Increase we have no `GET /events` feed to replay. So the poll is the
  * backstop that makes a missed delivery a delay instead of a hole in a
  * church's books. It is also, today, the only way a DECLINE reaches us at all
- * (`declineFeed: "poll"`).
+ * (`declineFeed: "poll"` on every BYO provider).
+ *
+ * For BILL Spend & Expense (ADR-033 Phase 2) it is more than a backstop: BILL's
+ * webhook subscriptions are PRODUCTION-ONLY, so on staging this poll is the
+ * entire settlement feed.
  *
  * Both paths book a charge through the same `recordProviderTransaction`, and
  * the settlement recorder is idempotent on the provider transaction id, so
  * "the webhook already handled this" costs one read and writes nothing.
+ *
+ * PER-PROVIDER DISPATCH IS THE ADAPTER'S JOB, not a switch here. Each
+ * connection resolves to its own community's adapter (`getCardProviderByName`
+ * in `pollOneConnection`) with its own decrypted credential and its own cursor
+ * semantics — an ISO `created` high-water mark at Privacy, an ISO `updatedTime`
+ * one at BILL. A Privacy church and a BILL church in the same fan-out never
+ * share a client, a cursor, or a credential, which is the property the
+ * cross-wiring test in finance-byoc-bill.test.ts pins.
  *
  * PER-COMMUNITY try/catch, deliberately: one church's revoked API key must not
  * stop every other church's charges from importing. A failure flips that one

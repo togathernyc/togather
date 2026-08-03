@@ -13,6 +13,12 @@
  *   anything else. Privacy signs with the COMMUNITY's API key, so that handler
  *   has to route the payload to a community first (read-only) and verify
  *   second.
+ * - `handleBillWebhookRequest` — `POST /card-provider-webhook/bill` (ADR-033
+ *   Phase 2), and a THIRD shape again: BILL publishes no webhook signature at
+ *   all, so there is nothing to verify. That handler uses the payload only to
+ *   route, then re-fetches the transaction from BILL with the community's own
+ *   token and records what the API says. Read its header before touching it —
+ *   "just book the payload" is exactly the change it exists to prevent.
  * - `handleFinanceStripeEvent` — called from the EXISTING `/stripe-webhook`
  *   route's switch (functions/ee/billing.ts's billing events already live
  *   there) for whatever billing's switch doesn't handle itself, i.e.
@@ -48,6 +54,7 @@ import {
 } from "../../lib/finance/cardProviders";
 import type { ProviderTxn } from "../../lib/finance/cardProviders";
 import { PRIVACY_HMAC_HEADER, type PrivacyTransaction } from "../../lib/finance/privacy";
+import type { BillWebhookNotification } from "../../lib/finance/bill";
 import { postLedgerEntry } from "../../lib/finance/ledger";
 import { now } from "../../lib/utils";
 import {
@@ -713,6 +720,143 @@ export async function handlePrivacyWebhookRequest(
     });
   } catch (error) {
     console.error("[PrivacyWebhook] Error processing transaction:", error);
+    return new Response("Webhook processing failed", { status: 500 });
+  }
+}
+
+// ============================================================================
+// handleBillWebhookRequest — POST /card-provider-webhook/bill
+// (http.ts mounts the path; all of the thinking is here).
+// ============================================================================
+
+/**
+ * BILL Spend & Expense transaction notification — the FETCH-TO-VERIFY handler.
+ *
+ * READ THIS BEFORE CHANGING ANYTHING HERE. Privacy's handler verifies an HMAC
+ * and then books the payload. BILL's cannot: their Spend & Expense notification
+ * documentation describes the payload in full and says nothing about a
+ * signature, header, or shared secret. There is no scheme to implement, so
+ * there is nothing to verify — which means an unauthenticated stranger can POST
+ * this endpoint any JSON they like.
+ *
+ * So the payload is treated as a HINT and never as evidence:
+ *
+ *   payload -> transaction uuid + card uuid   (routing ONLY)
+ *     -> our card -> fund -> community -> connection -> decrypted token
+ *       -> GET /v3/spend/transactions/{uuid} with THAT token
+ *         -> record whatever the API said
+ *
+ * A forged POST claiming a $9,000 clearing on someone's card therefore results
+ * in one of two things: BILL 404s (we write nothing) or BILL returns the real
+ * transaction (we write the REAL amount). The attacker controls which
+ * transaction we look at — all of which are transactions on this community's own
+ * cards, which we were going to import on the next poll anyway — and controls
+ * nothing about what we book. The worst they can do is make a settlement land
+ * an hour early.
+ *
+ * That is the whole security argument, and it is why "just trust the payload
+ * because it's over TLS" is not an acceptable simplification here.
+ *
+ * `spend.transaction.updated` fires at AUTHORIZATION and AGAIN at CLEAR, so
+ * most deliveries are the same uuid in an earlier state; `recordProviderTransaction`
+ * records only clearings and the settlement recorder is idempotent on the uuid,
+ * so the repeat costs one read and writes nothing.
+ *
+ * A card we don't know is a 200, not a 404: the church has their own cards in
+ * this BILL account and the subscription covers the whole company's feed.
+ */
+export async function handleBillWebhookRequest(
+  ctx: ActionCtx,
+  request: Request,
+): Promise<Response> {
+  const ok = (extra: Record<string, unknown> = {}) =>
+    new Response(JSON.stringify({ received: true, ...extra }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+
+  let payload: BillWebhookNotification;
+  try {
+    payload = JSON.parse(await request.text());
+  } catch {
+    return new Response("Invalid JSON", { status: 400 });
+  }
+
+  // The ONLY two fields read from an unauthenticated body, and both are used
+  // to LOOK THINGS UP rather than to decide anything.
+  const transactionUuid = payload.transaction?.uuid;
+  const cardUuid = payload.transaction?.cardUuid;
+  if (!transactionUuid || !cardUuid) {
+    console.log(
+      "[BillWebhook] Payload has no transaction uuid / cardUuid — nothing to route on, ignoring",
+    );
+    return ok({ ignored: true });
+  }
+
+  const resolved = await ctx.runQuery(
+    internal.functions.finance.webhooks.resolveCardForProviderWebhook,
+    { provider: "bill", providerCardId: cardUuid },
+  );
+  if (!resolved) {
+    console.log(
+      `[BillWebhook] No Togather card (or no active connection) for card ${cardUuid} — ignoring`,
+    );
+    return ok({ ignored: true });
+  }
+
+  // Decrypts the community's token into the adapter. Any failure here is a
+  // deployment problem (missing master key, incomplete rotation), not a bad
+  // request — 500 so BILL retries once it's fixed.
+  let provider;
+  try {
+    provider = await getCardProviderByName("bill", resolved.connection);
+  } catch (error) {
+    console.error(
+      "[BillWebhook] Could not build the provider adapter (credential undecryptable?)",
+      error,
+    );
+    return new Response("Webhook not configured", { status: 500 });
+  }
+
+  if (!provider.fetchTransaction) {
+    // Structurally impossible while the BILL adapter is the only thing mounted
+    // here, and a hard failure rather than a fallback ON PURPOSE: the fallback
+    // would be "book the unauthenticated payload", which is the one behaviour
+    // this entire handler exists to prevent.
+    console.error(
+      "[BillWebhook] Adapter cannot re-fetch transactions — refusing to record an unverified payload",
+    );
+    return new Response("Webhook not configured", { status: 500 });
+  }
+
+  let txn: ProviderTxn | null;
+  try {
+    txn = await provider.fetchTransaction(transactionUuid);
+  } catch (error) {
+    // The fetch itself failed (rate limit, revoked token, BILL down). 500 so
+    // BILL redelivers; the hourly poll covers it either way.
+    console.error(
+      `[BillWebhook] Could not re-fetch transaction ${transactionUuid}:`,
+      error,
+    );
+    return new Response("Webhook processing failed", { status: 500 });
+  }
+
+  if (!txn) {
+    // BILL has no such transaction. Either a forged/garbage delivery or one
+    // for an object that no longer exists — both are "write nothing", and
+    // neither is worth a retry.
+    console.log(
+      `[BillWebhook] BILL has no transaction ${transactionUuid} — ignoring (payloads are hints, not evidence)`,
+    );
+    return ok({ ignored: true });
+  }
+
+  try {
+    await recordProviderTransaction(ctx, "bill", txn, "BillWebhook");
+    return ok();
+  } catch (error) {
+    console.error("[BillWebhook] Error processing transaction:", error);
     return new Response("Webhook processing failed", { status: 500 });
   }
 }
