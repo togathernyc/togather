@@ -13,7 +13,11 @@ import { paginationArgs } from "../lib/validators";
 import { requireAuth, requireAuthAllowArchivedCommunity } from "../lib/auth";
 import { assertCommunityNotArchived } from "../lib/permissions";
 import { parseDate } from "../lib/validation";
-import { COMMUNITY_ADMIN_THRESHOLD, PRIMARY_ADMIN_ROLE } from "../lib/permissions";
+import {
+  COMMUNITY_ADMIN_THRESHOLD,
+  PRIMARY_ADMIN_ROLE,
+  pickInheritingPrimaryAdmin,
+} from "../lib/permissions";
 import { syncUserChannelMembershipsLogic, syncAnnouncementGroupMembership } from "./sync/memberships";
 import { ensureChannelsForGroupLogic, ensureAnnouncementsChannelLogic } from "./messaging/channels";
 
@@ -621,20 +625,17 @@ async function removeUserFromCommunity(
     await ctx.db.delete(cp._id);
   }
 
-  // 4. Transfer ownership of future meetings to the primary admin. ADR-022:
+  // 4. Transfer ownership of future meetings to a primary admin. ADR-022:
   //    member-created events are allowed to outlive the creator's community
   //    membership — we don't want to orphan them or hide them from existing
-  //    RSVPers. The primary admin inherits silently.
-  const primaryAdminRow = await ctx.db
-    .query("userCommunities")
-    .withIndex("by_community", (q: any) => q.eq("communityId", communityId))
-    .filter((q: any) =>
-      q.and(
-        q.eq(q.field("roles"), PRIMARY_ADMIN_ROLE),
-        q.eq(q.field("status"), 1)
-      )
-    )
-    .first();
+  //    RSVPers. A primary admin inherits silently.
+  //
+  //    A meeting has exactly one `createdById`, so when a community has more
+  //    than one primary admin (a supported state — see PRIMARY_ADMIN_ROLE) we
+  //    must pick one. `pickInheritingPrimaryAdmin` picks the earliest
+  //    `createdAt` deterministically; this used to be a `.first()` on the
+  //    index, i.e. insertion-order luck.
+  const primaryAdminRow = await pickInheritingPrimaryAdmin(ctx, communityId);
   if (primaryAdminRow) {
     const futureMeetings = await ctx.db
       .query("meetings")
@@ -797,7 +798,12 @@ export const leave = mutation({
       throw new Error("Not a member of this community");
     }
 
-    // Primary Admin cannot leave - must transfer primary admin first
+    // Primary Admin cannot leave - must transfer primary admin first.
+    // NOTE: deliberately still a blanket block, even though a community with
+    // several primary admins (see PRIMARY_ADMIN_ROLE) could survive one of
+    // them leaving. Relaxing it to "may leave if another primary admin
+    // remains" is a product decision, not a correctness fix, and the strict
+    // rule can never strand a community without an owner.
     if ((membership.roles ?? 0) === PRIMARY_ADMIN_ROLE) {
       throw new Error("Primary Admin cannot leave community. Transfer primary admin role first.");
     }
@@ -811,7 +817,8 @@ export const leave = mutation({
 /**
  * Remove a member from the community (admin only)
  *
- * Allows a community admin to remove another member. Cannot remove the primary admin.
+ * Allows a community admin to remove another member. Cannot remove a primary admin
+ * (any of them — the block is per-target, so it holds however many there are).
  */
 export const removeMember = mutation({
   args: {
@@ -846,16 +853,18 @@ export const removeMember = mutation({
       throw new Error("User is not a member of this community");
     }
 
-    // Cannot remove the primary admin
+    // Cannot remove a primary admin (they must transfer or be demoted first).
+    // Per-target check, so it holds whether the community has one primary
+    // admin or several.
     if ((targetMembership.roles ?? 0) === PRIMARY_ADMIN_ROLE) {
-      throw new Error("Cannot remove the primary admin from the community");
+      throw new Error("Cannot remove a primary admin from the community");
     }
 
-    // Regular admins cannot remove other admins - only primary admin can
+    // Regular admins cannot remove other admins - only a primary admin can
     const adminRole = adminMembership.roles ?? 0;
     const targetRole = targetMembership.roles ?? 0;
     if (adminRole < PRIMARY_ADMIN_ROLE && targetRole >= COMMUNITY_ADMIN_THRESHOLD) {
-      throw new Error("Only the primary admin can remove other admins");
+      throw new Error("Only a primary admin can remove other admins");
     }
 
     // Cannot remove yourself (use leave instead)

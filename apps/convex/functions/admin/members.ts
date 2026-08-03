@@ -432,7 +432,22 @@ export const updateMemberRole = mutation({
 });
 
 /**
- * Transfer Primary Admin role to another community member
+ * Transfer the CALLER's Primary Admin role to another community member.
+ *
+ * Primary admin is a set, not a singleton (see PRIMARY_ADMIN_ROLE) — so read
+ * this as "hand over MY primary-admin standing", not "reassign the
+ * community's one owner". It demotes exactly two rows: the caller (4 → 3) and
+ * the target (whatever → 4). Any OTHER primary admin in the community is
+ * untouched and stays a primary admin, which is what makes this compose
+ * correctly with the multi-primary state: the set shrinks by the caller and
+ * grows by the target, net size unchanged.
+ *
+ * `targetWasAdmin` still holds under those semantics: it is read from the
+ * TARGET's own row before the patch and only decides whether the target needs
+ * to be added to the announcement group as a leader. Whether some third
+ * person is also a primary admin has no bearing on it — the caller keeps
+ * roles >= 3 and so keeps their own announcement-group standing, needing no
+ * resync.
  */
 export const transferPrimaryAdmin = mutation({
   args: {
