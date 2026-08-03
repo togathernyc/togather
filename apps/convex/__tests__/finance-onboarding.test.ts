@@ -150,7 +150,13 @@ async function seedOnboardingFixture(
     await ctx.db.insert("userCommunities", {
       userId: adminUserId,
       communityId,
-      roles: 3, // COMMUNITY_ROLES.ADMIN
+      // PRIMARY_ADMIN, not plain ADMIN. Since ADR-033 the community-level
+      // finance surfaces gate on `canManageCommunityFinance` — primary admin
+      // or an explicit `communityFinanceRoles` grant — so a plain admin (3)
+      // no longer reaches them. This fixture's caller is the person who can;
+      // the tightening itself (plain admin denied, granted admin allowed) is
+      // proven in finance-community-roles.test.ts.
+      roles: 4, // COMMUNITY_ROLES.PRIMARY_ADMIN
       status: 1,
       createdAt: timestamp,
       updatedAt: timestamp,

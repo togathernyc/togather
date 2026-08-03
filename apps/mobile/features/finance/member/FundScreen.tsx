@@ -50,11 +50,15 @@ export function FundScreen() {
     api.functions.finance.roles.getMyFundRole,
     fundId ? { fundId } : "skip",
   );
+  // FUND-scoped, so the community-admin override applies (ADR-033 left
+  // fund-level access alone). `hasCommunityAdminFundOverride`, NOT
+  // `canManageCommunityFinance` — the latter is the community-wide signal and
+  // using it here would hide this cell from admins the server still lets in.
   const canManage =
     myRole?.role === "manager" ||
     myRole?.role === "finance_admin" ||
     myRole?.isGroupLeader === true ||
-    myRole?.isCommunityAdmin === true;
+    myRole?.hasCommunityAdminFundOverride === true;
 
   const handleBack = () => {
     if (router.canGoBack()) {

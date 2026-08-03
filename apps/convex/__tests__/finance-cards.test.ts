@@ -67,12 +67,17 @@ vi.mock("../lib/finance/increase", async (importOriginal) => ({
  * Making it throw on demand is the only deterministic way to prove the claim
  * this suite has to keep honest: a bug inside the audit must not be able to
  * undo the expense and the ledger debit the settlement already wrote.
+ *
+ * It lives in the INCREASE ADAPTER, not cardPolicy, since ADR-033 — the
+ * UTC-anchored window math is Increase's reset semantics, not a shared rule.
+ * Mocking the adapter module here also leaves `increaseCardProvider` itself
+ * real, which is what keeps the provider-payload assertions above meaningful.
  */
 const policy = vi.hoisted(() => ({ explodeOnWindowStart: false }));
 
-vi.mock("../lib/finance/cardPolicy", async (importOriginal) => {
+vi.mock("../lib/finance/cardProviders/increase", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("../lib/finance/cardPolicy")>();
+    await importOriginal<typeof import("../lib/finance/cardProviders/increase")>();
   return {
     ...actual,
     cardLimitWindowStart: (
@@ -350,7 +355,8 @@ async function provisionedCard(
   );
   await t.mutation(internal.functions.finance.cards.recordCardProvisioned, {
     cardId,
-    increaseCardId: "increase_card_1",
+    provider: "increase",
+    providerCardId: "increase_card_1",
     last4: "4242",
     status: "active",
   });
@@ -564,7 +570,7 @@ describe("spend-limit validation", () => {
 // ============================================================================
 
 describe("recordCardProvisioned / recordCardProvisionFailed", () => {
-  test("recordCardProvisioned patches increaseCardId/last4/status", async () => {
+  test("recordCardProvisioned patches provider/providerCardId/last4/status", async () => {
     const t = convexTest(schema, modules);
     const { fundId, financeAdminUserId, cardholderUserId } =
       await seedCardFixture(t);
@@ -572,7 +578,8 @@ describe("recordCardProvisioned / recordCardProvisionFailed", () => {
 
     await t.mutation(internal.functions.finance.cards.recordCardProvisioned, {
       cardId,
-      increaseCardId: "increase_card_1",
+      provider: "increase",
+      providerCardId: "increase_card_1",
       last4: "4242",
       status: "active",
     });
@@ -871,7 +878,8 @@ describe("setCardFrozen", () => {
     );
     await t.mutation(internal.functions.finance.cards.recordCardProvisioned, {
       cardId,
-      increaseCardId: "increase_card_1",
+      provider: "increase",
+      providerCardId: "increase_card_1",
       last4: "4242",
       status: "active",
     });
@@ -997,7 +1005,8 @@ describe("cancelCard", () => {
     );
     await t.mutation(internal.functions.finance.cards.recordCardProvisioned, {
       cardId,
-      increaseCardId: "increase_card_1",
+      provider: "increase",
+      providerCardId: "increase_card_1",
       last4: "4242",
       status: "active",
     });
@@ -1028,7 +1037,8 @@ describe("cancelCard", () => {
     );
     await t.mutation(internal.functions.finance.cards.recordCardProvisioned, {
       cardId,
-      increaseCardId: "increase_card_1",
+      provider: "increase",
+      providerCardId: "increase_card_1",
       last4: "4242",
       status: "active",
     });
@@ -1047,25 +1057,38 @@ describe("cancelCard", () => {
 // ============================================================================
 
 describe("applyCardStatus", () => {
-  test.each(["disabled", "active", "canceled"] as const)(
-    "pushes %s to Increase and stores what Increase confirmed",
-    async (status) => {
+  // The action now takes NORMALIZED states (ADR-033); the adapter is what
+  // turns them into Increase's own status strings. Asserting both halves of
+  // each pair is the point — a mistranslation here would cancel a card that
+  // was only meant to be frozen.
+  test.each([
+    ["paused", "disabled"],
+    ["active", "active"],
+    ["closed", "canceled"],
+  ] as const)(
+    "maps the %s state to Increase's %s and stores what Increase confirmed",
+    async (state, increaseStatus) => {
       const t = convexTest(schema, modules);
       const fixture = await seedCardFixture(t);
       const cardId = await provisionedCard(t, fixture);
 
       await t.action(internal.functions.finance.cards.applyCardStatus, {
         cardId,
-        status,
+        state,
       });
 
-      expect(increase.updateCardStatus).toHaveBeenCalledWith("increase_card_1", status);
+      expect(increase.updateCardStatus).toHaveBeenCalledWith(
+        "increase_card_1",
+        increaseStatus,
+      );
       const card = await t.run(async (ctx) => ctx.db.get(cardId));
-      expect(card?.status).toBe(status);
+      // The LEGACY Increase string is what lands in cards.status — see the
+      // status-vocabulary note in functions/finance/cards.ts.
+      expect(card?.status).toBe(increaseStatus);
     },
   );
 
-  test("a card with no increaseCardId is logged, not pushed", async () => {
+  test("a card with no provider card id is logged, not pushed", async () => {
     const t = convexTest(schema, modules);
     const fixture = await seedCardFixture(t);
     const cardId = await createCard(
@@ -1077,7 +1100,7 @@ describe("applyCardStatus", () => {
 
     await t.action(internal.functions.finance.cards.applyCardStatus, {
       cardId,
-      status: "disabled",
+      state: "paused",
     });
 
     expect(increase.updateCardStatus).not.toHaveBeenCalled();
@@ -1492,7 +1515,8 @@ describe("getCardDetail", () => {
     );
     await t.mutation(internal.functions.finance.cards.recordCardProvisioned, {
       cardId,
-      increaseCardId: "increase_card_1",
+      provider: "increase",
+      providerCardId: "increase_card_1",
       last4: "4242",
       status: "active",
     });
@@ -1642,7 +1666,8 @@ describe("recordCardSettlement", () => {
     await drainScheduled(t);
     await t.mutation(internal.functions.finance.cards.recordCardProvisioned, {
       cardId,
-      increaseCardId: "increase_card_settlement_test",
+      provider: "increase",
+      providerCardId: "increase_card_settlement_test",
       last4: "4242",
       status: "active",
     });
@@ -1796,7 +1821,8 @@ describe("recordCardSettlement", () => {
       await drainScheduled(t); // see seedSettledCard
       await t.mutation(internal.functions.finance.cards.recordCardProvisioned, {
         cardId,
-        increaseCardId: "increase_card_settlement_test",
+        provider: "increase",
+        providerCardId: "increase_card_settlement_test",
         last4: "4242",
         status: "active",
       });
@@ -1891,7 +1917,8 @@ describe("recordCardSettlement", () => {
       );
       await t.mutation(internal.functions.finance.cards.recordCardProvisioned, {
         cardId,
-        increaseCardId: "increase_card_settlement_test",
+        provider: "increase",
+        providerCardId: "increase_card_settlement_test",
         last4: "4242",
         status: "active",
       });

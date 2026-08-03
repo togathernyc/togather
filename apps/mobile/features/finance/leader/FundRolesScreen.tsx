@@ -8,7 +8,6 @@ import { View, StyleSheet, TouchableOpacity, Text } from "react-native";
 import { useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useAuth } from "@providers/AuthProvider";
 import { useAuthenticatedQuery, useAuthenticatedMutation, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 import { useTheme } from "@hooks/useTheme";
@@ -24,7 +23,6 @@ export function FundRolesScreen() {
   const insets = useSafeAreaInsets();
   const { group_id } = useLocalSearchParams<{ group_id: string }>();
   const groupId = group_id || "";
-  const { user } = useAuth();
 
   const { group, handleBack } = useMembersPage(groupId);
 
@@ -54,11 +52,15 @@ export function FundRolesScreen() {
   const [revokeTargetRoleId, setRevokeTargetRoleId] = useState<string | null>(null);
   const [isRevoking, setIsRevoking] = useState(false);
 
+  // grantFundRole/revokeFundRole are FUND gates, so the community-admin
+  // override still applies — but read it from the server signal, which is
+  // computed for the FUND's community. `user?.is_admin` is scoped to the
+  // viewer's ACTIVE community and was the wrong answer whenever those differ.
   const canManageRoles = !!(
     myFundRole?.role === "finance_admin" ||
     myFundRole?.isGroupLeader ||
-    myFundRole?.isCommunityAdmin ||
-    user?.is_admin
+    myFundRole?.canManageCommunityFinance ||
+    myFundRole?.hasCommunityAdminFundOverride
   );
 
   const roles: FundRoleRow[] = useMemo(

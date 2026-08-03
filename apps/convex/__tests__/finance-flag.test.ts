@@ -61,7 +61,11 @@ async function seedWithoutFlag(t: ReturnType<typeof convexTest>) {
     await ctx.db.insert("userCommunities", {
       userId: adminUserId,
       communityId,
-      roles: 3, // COMMUNITY_ROLES.ADMIN
+      // PRIMARY_ADMIN since ADR-033: this fixture drives community-level
+      // finance surfaces (startOnboarding), which now need financial-controls
+      // access. A plain admin would be rejected by the ROLE gate before ever
+      // reaching the kill-switch gate this suite is about.
+      roles: 4, // COMMUNITY_ROLES.PRIMARY_ADMIN
       status: 1,
       createdAt: timestamp,
       updatedAt: timestamp,

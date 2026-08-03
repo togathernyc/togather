@@ -3816,6 +3816,20 @@ export default defineSchema({
     // onboarding checklist so admins aren't stuck staring at "In progress".
     // Cleared on resubmit/retry.
     provisioningError: v.optional(v.string()),
+    // Which card issuer this community's cards live at (ADR-033). Absent means
+    // "never chosen", which the resolver (lib/finance/cardProviders/index.ts)
+    // reads as "increase" for any community that already has Increase ids —
+    // every community that exists today. "none" is the explicit opt-out for a
+    // community that takes giving but issues no cards; it is a different fact
+    // from "not chosen yet" and the resolver throws on it rather than guessing.
+    cardProvider: v.optional(
+      v.union(
+        v.literal("increase"),
+        v.literal("privacy"),
+        v.literal("bill"),
+        v.literal("none"),
+      ),
+    ),
     // Appears on the donor's card/bank statement. Optional — Stripe defaults
     // it from the connected account if the community hasn't set one.
     statementDescriptor: v.optional(v.string()),
@@ -3832,6 +3846,77 @@ export default defineSchema({
     createdAt: v.number(), // Unix timestamp ms
     updatedAt: v.number(), // Unix timestamp ms
   }).index("by_community", ["communityId"]),
+
+  /**
+   * A community's own account at a third-party card issuer (ADR-033) — the
+   * "bring your own cards" leg, where the community holds the vendor
+   * relationship and Togather drives it on their behalf.
+   *
+   * CREDENTIALS ARE ENCRYPTED, ALWAYS. `credentialCiphertext` /
+   * `credentialIv` / `keyVersion` are the output of
+   * lib/finance/credentialCrypto.ts's `encryptCredential`, never a raw API
+   * key. This is the one hard difference from `communityIntegrations`, which
+   * stores its tokens in plaintext and is deliberately NOT reused here: a key
+   * on this table can move a church's money.
+   *
+   * `syncCursor` / `lastSyncAt` belong to the pull-based providers — the ones
+   * with no usable webhook, where a poll has to remember where it stopped.
+   * `lastError` is the operator-facing reason behind `status: "error"`; it is
+   * a provider message, so treat it as untrusted display text.
+   */
+  cardProviderConnections: defineTable({
+    communityId: v.id("communities"),
+    provider: v.union(v.literal("privacy"), v.literal("bill")),
+    credentialCiphertext: v.string(),
+    credentialIv: v.string(),
+    keyVersion: v.number(),
+    // What the admin calls this account ("Operations card account"), shown on
+    // the connection screen. Purely cosmetic — never sent to the provider.
+    accountLabel: v.optional(v.string()),
+    // "error" means the credential stopped working (revoked, rotated, rate-
+    // limited); "revoked" means WE disconnected it and the ciphertext is dead.
+    status: v.union(
+      v.literal("active"),
+      v.literal("error"),
+      v.literal("revoked"),
+    ),
+    // Some providers issue a per-endpoint webhook signing secret at connect
+    // time. Same envelope encryption as the credential, same reason.
+    webhookSecretCiphertext: v.optional(v.string()),
+    webhookSecretIv: v.optional(v.string()),
+    syncCursor: v.optional(v.string()),
+    lastSyncAt: v.optional(v.number()), // Unix timestamp ms
+    lastError: v.optional(v.string()),
+    connectedById: v.id("users"),
+    createdAt: v.number(), // Unix timestamp ms
+    updatedAt: v.number(), // Unix timestamp ms
+  }).index("by_community", ["communityId"]),
+
+  /**
+   * Community-wide financial-controls role (ADR-033 §5). Distinct from
+   * `fundRoles`, which scopes power to ONE fund: this row is what lets
+   * someone act on the community's finance setup itself — onboarding, the
+   * card-provider connection, the surfaces that have no fund to hang off.
+   *
+   * Only the primary admin grants it, and the primary admin's own power is
+   * IMPLICIT — there is no seeded row for them, so revoking every row here
+   * can never lock a community out of its own finances. One literal role for
+   * now (`finance_admin`); it is a union rather than a bare string so adding
+   * a second tier later is a schema change someone has to think about.
+   *
+   * `revokedAt` soft-deletes, matching `fundRoles` — the audit trail of who
+   * held the keys and when outlives the grant.
+   */
+  communityFinanceRoles: defineTable({
+    communityId: v.id("communities"),
+    userId: v.id("users"),
+    role: v.literal("finance_admin"),
+    grantedBy: v.id("users"),
+    grantedAt: v.number(), // Unix timestamp ms
+    revokedAt: v.optional(v.number()), // Unix timestamp ms
+  })
+    .index("by_community", ["communityId"])
+    .index("by_user_community", ["userId", "communityId"]),
 
   /**
    * A fund is Togather's own attribution unit: one per group with giving
@@ -4077,6 +4162,16 @@ export default defineSchema({
     fundId: v.id("funds"),
     holderUserId: v.id("users"),
     increaseCardId: v.optional(v.string()),
+    // ADR-033 (bring-your-own-cards): which issuer this card was created at,
+    // and its id there. Provider-neutral replacements for `increaseCardId`,
+    // which stays exactly as it is — every card in production today was
+    // created at Increase and is found through `by_increaseCardId`, and
+    // rewriting a live webhook's lookup key is not something an additive
+    // schema change gets to do. New cards write BOTH (provider "increase" +
+    // the same id in both columns); a card at a BYOC provider writes only the
+    // provider pair. See ADR-033 "Phases" for when increaseCardId retires.
+    provider: v.optional(v.string()),
+    providerCardId: v.optional(v.string()),
     // Display name the finance_admin picked at creation, e.g. "Groceries &
     // supplies" — shown on the fund's card list, distinct from the holder.
     name: v.optional(v.string()),
@@ -4106,7 +4201,13 @@ export default defineSchema({
   })
     .index("by_fund", ["fundId"])
     .index("by_holder", ["holderUserId"])
-    .index("by_increaseCardId", ["increaseCardId"]),
+    .index("by_increaseCardId", ["increaseCardId"])
+    // Provider-neutral webhook lookup (ADR-033). CAUTION, same trap as
+    // `recurringDonations.by_stripeSubscriptionId`: both fields are optional,
+    // so every legacy card shares the same missing value on this index and a
+    // query with an absent provider/card id would return an arbitrary
+    // stranger's row. Readers MUST guard on non-empty values before using it.
+    .index("by_provider_cardId", ["provider", "providerCardId"]),
 
   /**
    * A card charge (from the card-transaction webhook) or a member-submitted
