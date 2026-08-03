@@ -22,6 +22,7 @@ import "./functions/devAssistant/config"; // side-effect: sets config first
 import {
   handleFinanceStripeEvent,
   handleIncreaseWebhookRequest,
+  handlePrivacyWebhookRequest,
 } from "./functions/finance/webhooks";
 import { isConnectEvent } from "./lib/finance/webhookRouting";
 
@@ -567,6 +568,30 @@ http.route({
   method: "POST",
   handler: httpAction(async (ctx, request) => {
     return await handleIncreaseWebhookRequest(ctx, request);
+  }),
+});
+
+/**
+ * POST /card-provider-webhook/privacy
+ *
+ * Transaction receiver for communities that bring their OWN Privacy.com
+ * account (ADR-033 Phase 1). Signature verification, routing and settlement
+ * recording live in functions/finance/webhooks.ts — this route is pure
+ * mounting, same as /increase-webhook above.
+ *
+ * One URL for every community, not one per church: Privacy has no webhook
+ * API (the endpoint is typed into their dashboard by hand), so a per-community
+ * path would be a setup step someone gets wrong. The handler routes on the
+ * payload's `card_token` instead, and verifies with that community's own key.
+ *
+ * The `/card-provider-webhook/<name>` shape is deliberate — the next BYO
+ * issuer mounts beside this one instead of inventing another top-level path.
+ */
+http.route({
+  path: "/card-provider-webhook/privacy",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    return await handlePrivacyWebhookRequest(ctx, request);
   }),
 });
 

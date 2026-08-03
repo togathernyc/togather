@@ -6,6 +6,13 @@
  * - `handleIncreaseWebhookRequest` — a complete httpAction body for a new
  *   `POST /increase-webhook` route: verifies the signature, parses the
  *   event, and dispatches by category.
+ * - `handlePrivacyWebhookRequest` — the same for
+ *   `POST /card-provider-webhook/privacy` (ADR-033 Phase 1). Structurally
+ *   different in one way that is worth knowing before reading it: Increase's
+ *   webhook secret is a deployment env var, so it can verify before it knows
+ *   anything else. Privacy signs with the COMMUNITY's API key, so that handler
+ *   has to route the payload to a community first (read-only) and verify
+ *   second.
  * - `handleFinanceStripeEvent` — called from the EXISTING `/stripe-webhook`
  *   route's switch (functions/ee/billing.ts's billing events already live
  *   there) for whatever billing's switch doesn't handle itself, i.e.
@@ -34,6 +41,13 @@ import { logFinanceAudit } from "../../lib/finance/audit";
 // IS the Increase webhook handler, so the Increase-specific import is
 // honest here rather than a leak (ADR-033).
 import { cardLimitWindowStart } from "../../lib/finance/cardProviders/increase";
+import { normalizePrivacyTransaction } from "../../lib/finance/cardProviders/privacy";
+import {
+  getCardProviderByName,
+  loadActiveProviderConnection,
+} from "../../lib/finance/cardProviders";
+import type { ProviderTxn } from "../../lib/finance/cardProviders";
+import { PRIVACY_HMAC_HEADER, type PrivacyTransaction } from "../../lib/finance/privacy";
 import { postLedgerEntry } from "../../lib/finance/ledger";
 import { now } from "../../lib/utils";
 import {
@@ -110,36 +124,82 @@ export const applyIncreaseEntityStatus = internalMutation({
 });
 
 // ============================================================================
-// recordCardSettlement — turns a card_settlement transaction into a
+// recordCardSettlement — turns a settled card transaction into a
 // `card_charge` expense + ledger debit (functions/finance/cards.ts owns the
 // card object itself; this is the settlement side). Idempotent on the
-// Increase transaction id — a redelivered transaction.created webhook must
-// not create a second expense or post a second ledger debit.
+// PROVIDER's transaction id — a redelivered webhook, or the hourly poll
+// re-reading its cursor boundary, must not create a second expense or post a
+// second ledger debit.
+//
+// PROVIDER-NEUTRAL since ADR-033 Phase 1. It used to take `increaseCardId` /
+// `increaseTransactionId` / `accountId`; it now takes a provider name plus
+// that provider's ids, because Privacy.com settlements land here through the
+// same door. Two things did NOT change and are load-bearing:
+//
+// - `expenses.increaseTransactionId` and `by_increaseTransactionId` keep their
+//   names. The column IS the provider transaction id and always was; renaming
+//   it is a schema migration on live data, which this change is not.
+//   TODO: rename the column + index when a finance migration next runs.
+// - The ledger idempotency key stays `card-settlement:{txnId}`. Changing it
+//   would make every in-flight Increase settlement look new.
 // ============================================================================
 
 export const recordCardSettlement = internalMutation({
   args: {
-    increaseCardId: v.string(),
-    increaseTransactionId: v.string(),
-    accountId: v.string(),
-    /** Absolute cents — the webhook dispatcher already stripped the sign (transaction.amount is a signed debit). */
+    /** "increase" | "privacy" — decides which index finds the card. */
+    provider: v.string(),
+    providerCardId: v.string(),
+    providerTxnId: v.string(),
+    /**
+     * The provider account the money moved in. Present only for providers with
+     * `capabilities.hardFundIsolation` (Increase), where a fund owns its own
+     * account and the cross-check below is meaningful.
+     */
+    accountRef: v.optional(v.string()),
+    /** Absolute cents — callers strip the sign (a provider debit may be signed). */
     amountCents: v.number(),
     merchantDescription: v.string(),
   },
   handler: async (ctx, args) => {
-    const card = await ctx.db
-      .query("cards")
-      .withIndex("by_increaseCardId", (q) =>
-        q.eq("increaseCardId", args.increaseCardId),
-      )
-      .first();
-    if (!card) {
-      // A card_settlement transaction on a card this app didn't issue
-      // (shouldn't happen once cards.ts is the only card issuer on the
-      // platform's Increase account, but log rather than throw — throwing
-      // would just retry against a permanently-missing card).
+    // Legacy cards carry only `increaseCardId`; ADR-033 cards carry the
+    // provider pair too. Increase looks up by the legacy column so every card
+    // in production today keeps resolving, BYO providers by the pair.
+    //
+    // Guarding on a non-empty id first is not defensive noise: both fields of
+    // `by_provider_cardId` are optional, so every legacy card shares the same
+    // missing value on that index and an empty lookup would return an
+    // arbitrary stranger's card (schema.ts says so at the index).
+    if (!args.providerCardId) {
       console.error(
-        `[finance] recordCardSettlement: no card found for Increase card ${args.increaseCardId} (transaction ${args.increaseTransactionId})`,
+        `[finance] recordCardSettlement: empty provider card id on transaction ${args.providerTxnId}`,
+      );
+      return;
+    }
+    const card =
+      args.provider === "increase"
+        ? await ctx.db
+            .query("cards")
+            .withIndex("by_increaseCardId", (q) =>
+              q.eq("increaseCardId", args.providerCardId),
+            )
+            .first()
+        : await ctx.db
+            .query("cards")
+            .withIndex("by_provider_cardId", (q) =>
+              q
+                .eq("provider", args.provider)
+                .eq("providerCardId", args.providerCardId),
+            )
+            .first();
+    if (!card) {
+      // A settlement on a card this app didn't issue. At Increase that
+      // shouldn't happen (cards.ts is the only issuer on the platform
+      // account); at a BYO provider it is ROUTINE — the church has their own
+      // cards on the same account and we get webhooks for all of them. Either
+      // way: log, don't throw. Throwing would retry forever against a card
+      // that is permanently not ours.
+      console.log(
+        `[finance] recordCardSettlement: no Togather card for ${args.provider} card ${args.providerCardId} (transaction ${args.providerTxnId}) — ignoring`,
       );
       return;
     }
@@ -153,21 +213,29 @@ export const recordCardSettlement = internalMutation({
     }
 
     // Defense-in-depth, mirroring the Stripe account cross-checks above: a
-    // transaction's account_id must match the fund's OWN Increase Account
-    // before anything is credited/debited — a mismatch (e.g. a stale/
-    // misrouted card record) is rejected and audited, never silently trusted.
-    if (fund.increaseAccountId !== args.accountId) {
+    // transaction's account must match the fund's OWN account before anything
+    // is credited/debited — a mismatch (e.g. a stale/misrouted card record) is
+    // rejected and audited, never silently trusted.
+    //
+    // SKIPPED when `accountRef` is absent, which is exactly the set of
+    // providers with no `hardFundIsolation`: at Privacy.com every card draws
+    // one pooled funding source, so there is no per-fund account to compare
+    // against and the check would have nothing to say. That is not a gap we're
+    // tolerating quietly — it IS the difference the capability flag names, and
+    // it is why fund over-spend is an app-side concern on those providers.
+    if (args.accountRef !== undefined && fund.increaseAccountId !== args.accountRef) {
       console.error(
-        `[finance] recordCardSettlement: account mismatch on fund ${fund._id} — transaction.account_id=${args.accountId} expected=${fund.increaseAccountId ?? "none"}`,
+        `[finance] recordCardSettlement: account mismatch on fund ${fund._id} — transaction account=${args.accountRef} expected=${fund.increaseAccountId ?? "none"}`,
       );
       await logFinanceAudit(ctx, {
         communityId: fund.communityId,
         fundId: fund._id,
         action: "webhook.rejected_account_mismatch",
         details: {
-          eventAccount: args.accountId,
+          eventAccount: args.accountRef,
           expectedAccount: fund.increaseAccountId ?? null,
-          increaseTransactionId: args.increaseTransactionId,
+          provider: args.provider,
+          increaseTransactionId: args.providerTxnId,
         },
       });
       return;
@@ -176,11 +244,11 @@ export const recordCardSettlement = internalMutation({
     const existingExpense = await ctx.db
       .query("expenses")
       .withIndex("by_increaseTransactionId", (q) =>
-        q.eq("increaseTransactionId", args.increaseTransactionId),
+        q.eq("increaseTransactionId", args.providerTxnId),
       )
       .first();
     if (existingExpense) {
-      return; // Already recorded — a redelivered webhook is a no-op.
+      return; // Already recorded — a redelivered webhook (or a re-polled cursor boundary) is a no-op.
     }
 
     const timestamp = now();
@@ -192,7 +260,7 @@ export const recordCardSettlement = internalMutation({
       description: args.merchantDescription,
       status: "pending",
       cardId: card._id,
-      increaseTransactionId: args.increaseTransactionId,
+      increaseTransactionId: args.providerTxnId,
       createdAt: timestamp,
       updatedAt: timestamp,
     });
@@ -202,8 +270,8 @@ export const recordCardSettlement = internalMutation({
       direction: "debit",
       amountCents: args.amountCents,
       kind: "card_capture",
-      idempotencyKey: `card-settlement:${args.increaseTransactionId}`,
-      increaseObjectId: args.increaseTransactionId,
+      idempotencyKey: `card-settlement:${args.providerTxnId}`,
+      increaseObjectId: args.providerTxnId,
     });
 
     await logFinanceAudit(ctx, {
@@ -214,7 +282,8 @@ export const recordCardSettlement = internalMutation({
         expenseId,
         cardId: card._id,
         amountCents: args.amountCents,
-        increaseTransactionId: args.increaseTransactionId,
+        provider: args.provider,
+        increaseTransactionId: args.providerTxnId,
       },
     });
 
@@ -408,9 +477,10 @@ export async function handleIncreaseWebhookRequest(
         await ctx.runMutation(
           internal.functions.finance.webhooks.recordCardSettlement,
           {
-            increaseCardId: cardSettlement.card_id,
-            increaseTransactionId: transaction.id,
-            accountId: transaction.account_id,
+            provider: "increase",
+            providerCardId: cardSettlement.card_id,
+            providerTxnId: transaction.id,
+            accountRef: transaction.account_id,
             // transaction.amount is signed cents (negative = debit); a card
             // settlement is always a debit, so store the absolute value —
             // ledgerEntries/expenses encode direction via `kind`/`direction`,
@@ -440,6 +510,205 @@ export async function handleIncreaseWebhookRequest(
     console.error("[IncreaseWebhook] Error processing event:", error);
     return new Response("Webhook processing failed", { status: 500 });
   }
+}
+
+// ============================================================================
+// handlePrivacyWebhookRequest — POST /card-provider-webhook/privacy
+// (http.ts mounts the path; all of the thinking is here).
+// ============================================================================
+
+/**
+ * Find the Togather card a BYO webhook is about, and the connection whose key
+ * signs it.
+ *
+ * The lookup order is forced by Privacy's design: the signing key IS the
+ * community's API key, so we cannot verify a delivery until we know which
+ * community it belongs to, and the only routing information in the payload is
+ * the card token. Hence: card -> fund -> community -> connection -> key ->
+ * verify. Everything before the verification is READ-ONLY, which is the
+ * property that matters — an unsigned request can make us look something up,
+ * and can change nothing.
+ */
+export const resolveCardForProviderWebhook = internalQuery({
+  args: { provider: v.string(), providerCardId: v.string() },
+  handler: async (ctx, args) => {
+    if (!args.providerCardId) return null; // see the index caution in schema.ts
+    const card = await ctx.db
+      .query("cards")
+      .withIndex("by_provider_cardId", (q) =>
+        q
+          .eq("provider", args.provider)
+          .eq("providerCardId", args.providerCardId),
+      )
+      .first();
+    if (!card) return null;
+    const fund = await ctx.db.get(card.fundId);
+    if (!fund) return null;
+    const connection = await loadActiveProviderConnection(
+      ctx,
+      fund.communityId,
+    );
+    if (!connection) return null;
+    return { communityId: fund.communityId, connection };
+  },
+});
+
+/** The Privacy.com Transaction fields the route reads before handing off to the adapter. */
+interface PrivacyWebhookPayload {
+  token?: string;
+  card_token?: string;
+}
+
+/**
+ * Privacy.com transaction webhook.
+ *
+ * Privacy posts the FULL Transaction object (no event envelope) for five
+ * events: Authorization, Auth Advice, Void, Clearing, Return. We do not
+ * dispatch on which event fired — the transaction's own `status` says what
+ * state it is in now, and using it means the webhook path and the hourly poll
+ * path normalize through exactly the same function. One notion of "settled",
+ * not two that can drift.
+ *
+ * Phase 1 records CLEARINGS and nothing else. An authorization is money that
+ * has not moved; recording it as an expense would double-count it the moment
+ * it clears, and Privacy sends no "authorization expired" event to clean up
+ * with. Declines are logged here and become notifications in Phase 3.
+ *
+ * A card we don't know is a 200, not a 404: the church has their own cards on
+ * this Privacy account and we are signed up for the whole account's feed.
+ * Retrying those deliveries for a day (Privacy's backoff) would be noise about
+ * a situation that is completely normal.
+ */
+export async function handlePrivacyWebhookRequest(
+  ctx: ActionCtx,
+  request: Request,
+): Promise<Response> {
+  const rawBody = await request.text();
+
+  let payload: PrivacyWebhookPayload;
+  try {
+    payload = JSON.parse(rawBody);
+  } catch {
+    return new Response("Invalid JSON", { status: 400 });
+  }
+
+  const cardToken = payload.card_token;
+  if (!cardToken) {
+    console.log(
+      "[PrivacyWebhook] Payload has no card_token — nothing to route on, ignoring",
+    );
+    return new Response(JSON.stringify({ received: true }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  const resolved = await ctx.runQuery(
+    internal.functions.finance.webhooks.resolveCardForProviderWebhook,
+    { provider: "privacy", providerCardId: cardToken },
+  );
+  if (!resolved) {
+    console.log(
+      `[PrivacyWebhook] No Togather card (or no active connection) for card ${cardToken} — ignoring`,
+    );
+    return new Response(JSON.stringify({ received: true, ignored: true }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  // Decrypts the community's key into the adapter. Any failure here is a
+  // deployment problem (missing master key, incomplete rotation), not a bad
+  // request — 500 so Privacy retries once it's fixed.
+  let provider;
+  try {
+    provider = await getCardProviderByName("privacy", resolved.connection);
+  } catch (error) {
+    console.error(
+      "[PrivacyWebhook] Could not build the provider adapter (credential undecryptable?)",
+      error,
+    );
+    return new Response("Webhook not configured", { status: 500 });
+  }
+
+  if (!provider.verifyWebhook) {
+    console.error("[PrivacyWebhook] Adapter cannot verify signatures");
+    return new Response("Webhook not configured", { status: 500 });
+  }
+
+  // NOTHING has been written at this point, and nothing will be until this
+  // returns true. Note the PARSED payload is verified, not `rawBody`: Privacy
+  // signs a canonical re-rendering (sorted keys, no whitespace), so the wire
+  // bytes are not the signed message — see lib/finance/privacy.ts.
+  const signature = request.headers.get(PRIVACY_HMAC_HEADER);
+  if (!(await provider.verifyWebhook(payload, signature))) {
+    console.error(`[PrivacyWebhook] Invalid signature for card ${cardToken}`);
+    return new Response("Invalid signature", { status: 401 });
+  }
+
+  try {
+    const txn = normalizePrivacyTransaction(
+      payload as unknown as PrivacyTransaction,
+    );
+    await recordProviderTransaction(ctx, "privacy", txn, "PrivacyWebhook");
+    return new Response(JSON.stringify({ received: true }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  } catch (error) {
+    console.error("[PrivacyWebhook] Error processing transaction:", error);
+    return new Response("Webhook processing failed", { status: 500 });
+  }
+}
+
+/**
+ * Book one normalized provider transaction, or explain why we didn't.
+ *
+ * Shared by the webhook and the hourly poll so a charge is treated identically
+ * however it reaches us — which is what makes the poll a genuine backstop for
+ * missed deliveries rather than a second, subtly different importer.
+ *
+ * Returns whether it recorded, so the poller can count.
+ *
+ * THREE THINGS ARE DELIBERATELY NOT RECORDED YET:
+ * - `pending` — an authorization is not money moved (see above).
+ * - `declined` — logged; Phase 3 turns these into a notification for the
+ *   cardholder, which is the only form in which a decline is useful.
+ * - NEGATIVE amounts (a refund/return) — reversing a `card_charge` expense and
+ *   posting the matching ledger credit is real work that belongs with the
+ *   expense module. Recording the credit as if it were a charge would debit
+ *   the fund twice for a refund, so until that lands, skipping loudly is the
+ *   correct behaviour, not a shortcut.
+ */
+export async function recordProviderTransaction(
+  ctx: ActionCtx,
+  provider: string,
+  txn: ProviderTxn,
+  logTag: string,
+): Promise<boolean> {
+  if (txn.state !== "settled") {
+    console.log(
+      `[${logTag}] ${txn.state} transaction ${txn.providerTxnId} on card ${txn.providerCardId} — not recorded (Phase 1 records clearings only)`,
+    );
+    return false;
+  }
+  if (txn.amountCents <= 0) {
+    console.log(
+      `[${logTag}] credit/zero transaction ${txn.providerTxnId} (${txn.amountCents} cents) — refund reversal is not implemented yet, skipping`,
+    );
+    return false;
+  }
+
+  await ctx.runMutation(internal.functions.finance.webhooks.recordCardSettlement, {
+    provider,
+    providerCardId: txn.providerCardId,
+    providerTxnId: txn.providerTxnId,
+    // No `accountRef`: this provider has no per-fund account to cross-check
+    // against. See recordCardSettlement's comment on hardFundIsolation.
+    amountCents: txn.amountCents,
+    merchantDescription: txn.merchantName ?? txn.description ?? "Card charge",
+  });
+  return true;
 }
 
 // ============================================================================
