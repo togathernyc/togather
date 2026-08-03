@@ -748,3 +748,66 @@ describe("getCardProvider", () => {
     ).rejects.toThrow(/isn't connected/i);
   });
 });
+
+// ============================================================================
+// listGrantableFinanceAdmins — the grant screen's picker (ADR-033 Phase 3)
+// ============================================================================
+
+describe("listGrantableFinanceAdmins", () => {
+  test("offers only community admins who don't already hold the grant", async () => {
+    const t = convexTest(schema, modules);
+    const f = await seed(t);
+    await grant(t, f, f.grantedAdminUserId);
+
+    const candidates = await t.query(
+      api.functions.finance.communityRoles.listGrantableFinanceAdmins,
+      { token: await tokenFor(f.primaryAdminUserId), communityId: f.communityId },
+    );
+    const ids = candidates.map((c: { id: string }) => c.id);
+
+    // A plain admin with no grant is the whole point of the screen.
+    expect(ids).toContain(f.plainAdminUserId);
+    // Already holds it — they're on the roster above, not in the picker.
+    expect(ids).not.toContain(f.grantedAdminUserId);
+    // Implicit access; a row for them is the one thing that could be revoked.
+    expect(ids).not.toContain(f.primaryAdminUserId);
+    // The mutation refuses a plain member, so offering one would be a tap that
+    // can only fail.
+    expect(ids).not.toContain(f.memberUserId);
+  });
+
+  test("a revoked grant puts someone back in the picker", async () => {
+    const t = convexTest(schema, modules);
+    const f = await seed(t);
+    await grant(t, f, f.grantedAdminUserId);
+
+    await t.mutation(
+      api.functions.finance.communityRoles.revokeCommunityFinanceRole,
+      {
+        token: await tokenFor(f.primaryAdminUserId),
+        communityId: f.communityId,
+        userId: f.grantedAdminUserId,
+      },
+    );
+
+    const candidates = await t.query(
+      api.functions.finance.communityRoles.listGrantableFinanceAdmins,
+      { token: await tokenFor(f.primaryAdminUserId), communityId: f.communityId },
+    );
+    expect(candidates.map((c: { id: string }) => c.id)).toContain(
+      f.grantedAdminUserId,
+    );
+  });
+
+  test("someone with no finance access can't read it", async () => {
+    const t = convexTest(schema, modules);
+    const f = await seed(t);
+
+    await expect(
+      t.query(api.functions.finance.communityRoles.listGrantableFinanceAdmins, {
+        token: await tokenFor(f.plainAdminUserId),
+        communityId: f.communityId,
+      }),
+    ).rejects.toThrow(/financial-controls access/i);
+  });
+});

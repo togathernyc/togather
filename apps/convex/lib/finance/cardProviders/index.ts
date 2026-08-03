@@ -302,3 +302,123 @@ export function isBringYourOwnProvider(
 ): name is "privacy" | "bill" {
   return name === "privacy" || name === "bill";
 }
+
+/**
+ * The subset of `ProviderCapabilities` a CLIENT is allowed to see, keyed on the
+ * provider NAME.
+ *
+ * Two reasons this is a separate, name-keyed shape rather than the adapter's
+ * own `capabilities` object handed straight to the UI:
+ *
+ * 1. **A query has no credential.** Answering "can a closed card be reopened?"
+ *    must never require decrypting a church's API key — same reasoning as
+ *    `supportsWeeklyLimits` and `requiresSpendLimit`, which are keyed the same
+ *    way for the same reason. A test pins that these agree with each adapter's
+ *    declared capabilities, so the two cannot drift.
+ * 2. **The group level is provider-ANONYMOUS.** ADR-033 §1 gives the community
+ *    the vendor relationship; a group's members did not choose the issuer and
+ *    cannot act on its name. So a card screen inside a group needs the
+ *    BEHAVIOUR ("you can reopen this from your provider") and must not be handed
+ *    the brand. Nothing in this shape names a provider, and that is deliberate:
+ *    there is no field here a future edit could widen into leaking one.
+ *
+ * `receiptForwarding` is the one flag that changes what we PROMISE rather than
+ * what we offer: "Saved to the fund" vs "Saved and sent to your card provider".
+ */
+export interface ClientCardCapabilities {
+  /** A closed card can be reopened at the provider (BILL). Drives the cancel copy. */
+  cardCloseReversible: boolean;
+  /** A paused card can be un-paused. */
+  cardFreezeReversible: boolean;
+  /** A per-week spend limit is expressible. */
+  weeklyLimits: boolean;
+  /** Every card must carry a spend limit (no hard fund isolation). */
+  limitRequired: boolean;
+  /** The limit is computed from the fund's ledger, not typed by an admin. */
+  managedFundLimit: boolean;
+  /** Live cards Togather allows per fund, or null for no cap. */
+  maxCardsPerFund: number | null;
+  /** A receipt uploaded here is also sent to the provider. */
+  receiptForwarding: boolean;
+}
+
+/**
+ * Capabilities as a name-keyed table.
+ *
+ * Duplicated from the adapters ON PURPOSE — see `ClientCardCapabilities`. The
+ * duplication is made safe by `__tests__/finance-byoc-capabilities.test.ts`,
+ * which loads every adapter and asserts each field here matches, so a new
+ * provider that forgets this table fails a test rather than shipping a UI that
+ * promises the wrong thing.
+ */
+const CLIENT_CAPABILITIES: Record<CardProviderName, ClientCardCapabilities> = {
+  increase: {
+    cardCloseReversible: false,
+    cardFreezeReversible: true,
+    weeklyLimits: true,
+    limitRequired: false,
+    managedFundLimit: false,
+    maxCardsPerFund: null,
+    receiptForwarding: false,
+  },
+  privacy: {
+    cardCloseReversible: false,
+    cardFreezeReversible: true,
+    weeklyLimits: false,
+    limitRequired: true,
+    managedFundLimit: true,
+    maxCardsPerFund: 1,
+    receiptForwarding: false,
+  },
+  bill: {
+    cardCloseReversible: true,
+    cardFreezeReversible: true,
+    weeklyLimits: false,
+    limitRequired: true,
+    managedFundLimit: false,
+    maxCardsPerFund: null,
+    receiptForwarding: true,
+  },
+  /**
+   * "No provider" is not a provider with no features — it is a community that
+   * cannot issue at all. The conservative row (nothing reversible, nothing
+   * forwarded, a limit required) is what a UI should render if it somehow gets
+   * here: it never promises anything.
+   */
+  none: {
+    cardCloseReversible: false,
+    cardFreezeReversible: false,
+    weeklyLimits: false,
+    limitRequired: true,
+    managedFundLimit: false,
+    maxCardsPerFund: null,
+    receiptForwarding: false,
+  },
+};
+
+export function describeProviderCapabilities(
+  name: CardProviderName,
+): ClientCardCapabilities {
+  return CLIENT_CAPABILITIES[name];
+}
+
+/**
+ * How many LIVE cards this provider allows on one fund, or `null` for no cap.
+ *
+ * Keyed on the name for the same reason as everything else in this section:
+ * `createFundCard` is a mutation with no credential to build an adapter from,
+ * and refusing a second card must not cost a decrypt.
+ */
+export function maxCardsPerFund(name: CardProviderName): number | null {
+  return CLIENT_CAPABILITIES[name].maxCardsPerFund;
+}
+
+/**
+ * Does Togather compute this provider's spend limit from the fund's ledger?
+ *
+ * See lib/finance/managedCardLimit.ts for what that computation is and why the
+ * lifetime window is the only one it can honestly use.
+ */
+export function usesManagedFundLimit(name: CardProviderName): boolean {
+  return CLIENT_CAPABILITIES[name].managedFundLimit;
+}

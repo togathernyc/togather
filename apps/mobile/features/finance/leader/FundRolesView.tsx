@@ -45,7 +45,12 @@ export interface FundRolesViewProps {
   groupId: string;
   roles: FundRoleRow[];
   isLoadingRoles: boolean;
-  /** finance_admin, isGroupLeader, or canManageCommunityFinance per getMyFundRole. */
+  /**
+   * `canManageCommunityFinance` per `getMyFundRole` — and ONLY that, since
+   * ADR-033 Phase 3 made granting and revoking a fund role a community act.
+   * A group leader or the fund's own finance_admin still reads this roster;
+   * neither can change it.
+   */
   canManageRoles: boolean;
   isGrantSheetOpen: boolean;
   onOpenGrantSheet: () => void;
@@ -118,7 +123,10 @@ export function FundRolesView({
           message={
             canManageRoles
               ? "Grant Finance admin, Manager, or Cardholder roles to trusted members."
-              : "Ask a group leader or finance admin to grant finance roles."
+              : // Names who can actually do it. "Ask a group leader" was true
+                // before ADR-033 Phase 3 and is now a dead end — a leader who
+                // was asked would find the same screen with no buttons on it.
+                "Ask someone with your community's financial controls to grant finance roles."
           }
         />
       ) : (

@@ -320,11 +320,41 @@ async function connect(
   );
 }
 
-/** Create + provision a card, the way createFundCard's scheduled action would. */
+/**
+ * Create + provision a card, the way createFundCard's scheduled action would.
+ *
+ * PROVIDER-AWARE, because the two BYO issuers take their limit differently
+ * since ADR-033 Phase 3: BILL's is a typed amount per period, Privacy's is a
+ * MANAGED lifetime cap computed from the fund's ledger (and passing a period
+ * there is a refusal). This helper is used in the cross-wiring tests below,
+ * where both churches appear in one fan-out, so it has to speak both.
+ */
 async function issueCard(
   t: ReturnType<typeof convexTest>,
   f: Fixture,
 ): Promise<Id<"cards">> {
+  const isManagedProvider = await t.run(async (ctx) => {
+    const finance = await ctx.db
+      .query("communityFinance")
+      .withIndex("by_community", (q) => q.eq("communityId", f.communityId))
+      .first();
+    if (finance?.cardProvider !== "privacy") return false;
+    // The credit that sizes the managed cap. Inserted directly rather than via
+    // postLedgerEntry so the fixture doesn't queue provider calls of its own.
+    const fund = (await ctx.db.get(f.fundId))!;
+    await ctx.db.insert("ledgerEntries", {
+      fundId: f.fundId,
+      communityId: f.communityId,
+      direction: "credit",
+      amountCents: 50_000,
+      kind: "donation",
+      idempotencyKey: `seed:${f.fundId}:${Math.random()}`,
+      createdAt: Date.now(),
+    });
+    await ctx.db.patch(f.fundId, { balanceCents: fund.balanceCents + 50_000 });
+    return true;
+  });
+
   const cardId: Id<"cards"> = await t.mutation(
     api.functions.finance.cards.createFundCard,
     {
@@ -332,19 +362,24 @@ async function issueCard(
       fundId: f.fundId,
       holderUserId: f.cardholderUserId,
       name: "Supplies",
-      spendLimitCents: 50_000,
-      limitPeriod: "month",
+      ...(isManagedProvider
+        ? {}
+        : { spendLimitCents: 50_000, limitPeriod: "month" as const }),
     },
   );
   await t.action(internal.functions.finance.cards.provisionCard, { cardId });
   return cardId;
 }
 
+/** What the code under test wrote — the `seed:` fixture rows excluded (see `issueCard`). */
 async function countWrites(t: ReturnType<typeof convexTest>) {
-  return await t.run(async (ctx) => ({
-    expenses: (await ctx.db.query("expenses").collect()).length,
-    ledger: (await ctx.db.query("ledgerEntries").collect()).length,
-  }));
+  return await t.run(async (ctx) => {
+    const ledger = await ctx.db.query("ledgerEntries").collect();
+    return {
+      expenses: (await ctx.db.query("expenses").collect()).length,
+      ledger: ledger.filter((e) => !e.idempotencyKey.startsWith("seed:")).length,
+    };
+  });
 }
 
 // ============================================================================
@@ -788,7 +823,7 @@ describe("finance-card-txn-poll on BILL", () => {
       internal.functions.finance.jobs.pollCardProviderTransactions,
       {},
     );
-    expect(result).toEqual({ polled: 1, recorded: 2 });
+    expect(result).toMatchObject({ polled: 1, recorded: 2 });
 
     const row = await t.run(async (ctx) =>
       ctx.db.query("cardProviderConnections").first(),
@@ -869,7 +904,7 @@ describe("finance-card-txn-poll on BILL", () => {
       internal.functions.finance.jobs.pollCardProviderTransactions,
       {},
     );
-    expect(result).toEqual({ polled: 1, recorded: 0 });
+    expect(result).toMatchObject({ polled: 1, recorded: 0 });
 
     const row = await t.run(async (ctx) =>
       ctx.db.query("cardProviderConnections").first(),
@@ -1011,7 +1046,7 @@ describe("a Privacy church and a BILL church in one fan-out", () => {
       internal.functions.finance.jobs.pollCardProviderTransactions,
       {},
     );
-    expect(result).toEqual({ polled: 2, recorded: 2 });
+    expect(result).toMatchObject({ polled: 2, recorded: 2 });
 
     // Each provider client saw exactly its own church's poll — no double
     // dispatch, and no adapter used for a community it doesn't belong to.

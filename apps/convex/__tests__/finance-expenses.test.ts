@@ -35,7 +35,14 @@ interface ExpenseFixture {
   communityId: Id<"communities">;
   groupId: Id<"groups">;
   fundId: Id<"funds">;
-  adminUserId: Id<"users">; // community admin, no fund role
+  adminUserId: Id<"users">; // community admin, NO financial-controls grant, no fund role
+  /**
+   * Community admin + an active `communityFinanceRoles` grant. Since ADR-033
+   * Phase 3 this is the only shape that can grant or revoke a FUND role — see
+   * functions/finance/roles.ts. Deliberately distinct from `adminUserId`, whose
+   * whole job in this fixture is to prove a plain admin no longer qualifies.
+   */
+  communityFinanceUserId: Id<"users">;
   leaderUserId: Id<"users">; // active group leader, no fund role
   financeAdminUserId: Id<"users">; // fundRole: finance_admin, active group member
   managerUserId: Id<"users">; // fundRole: manager, active group member
@@ -94,6 +101,7 @@ async function seedExpenseFixture(
       });
 
     const adminUserId = await mkUser("Admin");
+    const communityFinanceUserId = await mkUser("CommunityFinance");
     const leaderUserId = await mkUser("Leader");
     const financeAdminUserId = await mkUser("FinanceAdmin");
     const managerUserId = await mkUser("Manager");
@@ -101,13 +109,22 @@ async function seedExpenseFixture(
     const memberUserId = await mkUser("Member");
     const nonMemberUserId = await mkUser("NonMember");
 
-    await ctx.db.insert("userCommunities", {
-      userId: adminUserId,
+    for (const userId of [adminUserId, communityFinanceUserId]) {
+      await ctx.db.insert("userCommunities", {
+        userId,
+        communityId,
+        roles: 3, // COMMUNITY_ROLES.ADMIN
+        status: 1,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+    }
+    await ctx.db.insert("communityFinanceRoles", {
       communityId,
-      roles: 3, // COMMUNITY_ROLES.ADMIN
-      status: 1,
-      createdAt: timestamp,
-      updatedAt: timestamp,
+      userId: communityFinanceUserId,
+      role: "finance_admin",
+      grantedBy: adminUserId,
+      grantedAt: timestamp,
     });
 
     await ctx.db.insert("groupMembers", {
@@ -171,6 +188,7 @@ async function seedExpenseFixture(
       groupId,
       fundId,
       adminUserId,
+      communityFinanceUserId,
       leaderUserId,
       financeAdminUserId,
       managerUserId,
@@ -453,13 +471,13 @@ describe("canPay", () => {
 // ============================================================================
 
 describe("grantFundRole", () => {
-  test("finance_admin grants a role; audit logged", async () => {
+  test("a community finance admin grants a role; audit logged", async () => {
     const t = convexTest(schema, modules);
-    const { fundId, financeAdminUserId, memberUserId } =
+    const { fundId, communityFinanceUserId, memberUserId } =
       await seedExpenseFixture(t);
 
     const roleId = await t.mutation(api.functions.finance.roles.grantFundRole, {
-      token: await tokenFor(financeAdminUserId),
+      token: await tokenFor(communityFinanceUserId),
       fundId,
       userId: memberUserId,
       role: "cardholder",
@@ -481,9 +499,9 @@ describe("grantFundRole", () => {
 
   test("upsert-revoke: re-granting revokes the previous active row", async () => {
     const t = convexTest(schema, modules);
-    const { fundId, financeAdminUserId, memberUserId } =
+    const { fundId, communityFinanceUserId, memberUserId } =
       await seedExpenseFixture(t);
-    const token = await tokenFor(financeAdminUserId);
+    const token = await tokenFor(communityFinanceUserId);
 
     const firstRoleId = await t.mutation(
       api.functions.finance.roles.grantFundRole,
@@ -516,27 +534,18 @@ describe("grantFundRole", () => {
     expect(allRows.filter((r) => r.revokedAt === undefined)).toHaveLength(1);
   });
 
-  test("group leader (no fund role) can grant", async () => {
-    const t = convexTest(schema, modules);
-    const { fundId, leaderUserId, memberUserId } = await seedExpenseFixture(t);
-
-    const roleId = await t.mutation(api.functions.finance.roles.grantFundRole, {
-      token: await tokenFor(leaderUserId),
-      fundId,
-      userId: memberUserId,
-      role: "manager",
-    });
-    expect(roleId).toBeDefined();
-  });
+  // A group leader granting is now a REFUSAL, and the fuller set of refusals
+  // (leader, fund finance_admin, plain community admin) lives in
+  // __tests__/finance-roles.test.ts, which is the file that owns the gate.
 
   test("rejects a target who isn't an active member of the fund's group", async () => {
     const t = convexTest(schema, modules);
-    const { fundId, financeAdminUserId, nonMemberUserId } =
+    const { fundId, communityFinanceUserId, nonMemberUserId } =
       await seedExpenseFixture(t);
 
     await expect(
       t.mutation(api.functions.finance.roles.grantFundRole, {
-        token: await tokenFor(financeAdminUserId),
+        token: await tokenFor(communityFinanceUserId),
         fundId,
         userId: nonMemberUserId,
         role: "cardholder",
@@ -561,13 +570,13 @@ describe("grantFundRole", () => {
 });
 
 describe("revokeFundRole", () => {
-  test("finance_admin revokes a manager; audit logged", async () => {
+  test("a community finance admin revokes a manager; audit logged", async () => {
     const t = convexTest(schema, modules);
-    const { fundId, financeAdminUserId, managerUserId } =
+    const { fundId, communityFinanceUserId, managerUserId } =
       await seedExpenseFixture(t);
 
     await t.mutation(api.functions.finance.roles.revokeFundRole, {
-      token: await tokenFor(financeAdminUserId),
+      token: await tokenFor(communityFinanceUserId),
       fundId,
       userId: managerUserId,
     });
@@ -591,28 +600,32 @@ describe("revokeFundRole", () => {
     expect(events.some((e) => e.action === "role.revoked")).toBe(true);
   });
 
-  test("blocks revoking the last active finance_admin (non-admin caller)", async () => {
-    const t = convexTest(schema, modules);
-    const { fundId, financeAdminUserId } = await seedExpenseFixture(t);
+  // The old "blocks revoking the LAST finance_admin unless you're a community
+  // admin" guard is gone with ADR-033 Phase 3: every caller here is now a
+  // community finance holder, i.e. exactly the class the guard exempted, so
+  // the branch could only ever evaluate to "allowed". See roles.ts.
 
-    // financeAdminUserId is the only finance_admin — self-revoking would
-    // leave the fund with none.
+  test("a fund's own finance_admin can no longer revoke", async () => {
+    const t = convexTest(schema, modules);
+    const { fundId, financeAdminUserId, managerUserId } =
+      await seedExpenseFixture(t);
+
     await expect(
       t.mutation(api.functions.finance.roles.revokeFundRole, {
         token: await tokenFor(financeAdminUserId),
         fundId,
-        userId: financeAdminUserId,
+        userId: managerUserId,
       }),
-    ).rejects.toThrow(/last finance_admin/i);
+    ).rejects.toThrow(/financial-controls access/i);
   });
 
-  test("a community admin CAN revoke the last finance_admin", async () => {
+  test("a community finance admin CAN revoke the last finance_admin", async () => {
     const t = convexTest(schema, modules);
-    const { fundId, adminUserId, financeAdminUserId } =
+    const { fundId, communityFinanceUserId, financeAdminUserId } =
       await seedExpenseFixture(t);
 
     await t.mutation(api.functions.finance.roles.revokeFundRole, {
-      token: await tokenFor(adminUserId),
+      token: await tokenFor(communityFinanceUserId),
       fundId,
       userId: financeAdminUserId,
     });
@@ -688,11 +701,15 @@ describe("listFundRoles / getMyFundRole", () => {
 
   test("listFundRoles includes both active and revoked rows", async () => {
     const t = convexTest(schema, modules);
-    const { fundId, financeAdminUserId, managerUserId } =
-      await seedExpenseFixture(t);
+    const {
+      fundId,
+      communityFinanceUserId,
+      financeAdminUserId,
+      managerUserId,
+    } = await seedExpenseFixture(t);
 
     await t.mutation(api.functions.finance.roles.revokeFundRole, {
-      token: await tokenFor(financeAdminUserId),
+      token: await tokenFor(communityFinanceUserId),
       fundId,
       userId: managerUserId,
     });
@@ -1325,15 +1342,15 @@ describe("requireFundRole after a role upgrade (revoked-row shadowing fix)", () 
     // Grant cardholder, then UPGRADE to manager: grantFundRole revokes the
     // first row and inserts a new active one, leaving BOTH rows under
     // by_user_fund.
-    const leaderToken = await tokenFor(s.leaderUserId);
+    const granterToken = await tokenFor(s.communityFinanceUserId);
     await t.mutation(api.functions.finance.roles.grantFundRole, {
-      token: leaderToken,
+      token: granterToken,
       fundId: s.fundId,
       userId: s.memberUserId,
       role: "cardholder",
     });
     await t.mutation(api.functions.finance.roles.grantFundRole, {
-      token: leaderToken,
+      token: granterToken,
       fundId: s.fundId,
       userId: s.memberUserId,
       role: "manager",

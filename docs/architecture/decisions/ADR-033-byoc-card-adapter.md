@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (2026-08). Phase 0 implemented.
+Accepted (2026-08). Phases 0–3 implemented; Phase 4 (provider switching) open.
 
 Extends [ADR-032: Group Giving, Spending, Receipting & Reimbursements](./ADR-032-group-giving.md),
 which remains the design of record for the money model (funds, ledger,
@@ -119,7 +119,20 @@ CardProviderAdapter
                                                        -> ProviderCard
   setSpendLimit(providerCardId, NormalizedLimit | null) -> ProviderCard
   listTransactions?(cursor)                            -> ProviderTxnPage
+  fetchTransaction?(providerTxnId)                     -> ProviderTxn | null
+  forwardReceipt?(providerTxnId, receipt)              -> void
+  registerWebhook?(notificationUrl)                    -> void
+  checkConnection?()                                   -> { accountLabel }
+  verifyWebhook?(payload, signature)                   -> boolean
 ```
+
+The optional half grew as real issuers were added, and every one of them exists
+because a provider could not be served without it: `fetchTransaction` for an
+issuer whose webhooks carry no verifiable signature, `checkConnection` for a
+credential a human pastes, `forwardReceipt` for the only issuer with a receipt
+API. A caller MUST check for the method before calling it, and must gate on the
+matching capability rather than on the method's presence — otherwise the first
+provider to implement one before we wire it starts promising something.
 
 Deliberately small. Anything the card module does not do today (physical
 cards, merchant-category controls, real-time authorization decisioning) is
@@ -146,6 +159,23 @@ real issuers disagree about it:
 | `declineFeed` | How we learn about declines | `"webhook"` |
 | `maxCardsPerMonth` | Documented cap, or `null` | `null` |
 | `repaymentVisibility` | `"n/a"` \| `"prefund"` \| `"statement"` | `"n/a"` |
+| `maxCardsPerFund` | Live cards Togather allows per fund | `null` |
+| `managedFundLimit` | Togather computes the cap from the fund's ledger | `false` |
+| `receiptForwarding` | A receipt uploaded here also reaches the provider | `false` |
+
+The last three arrived with Phase 3 and answer differently at every provider,
+which is the test each flag has to pass: `maxCardsPerFund` is `1` at Privacy
+and `null` elsewhere; `managedFundLimit` is true at Privacy alone;
+`receiptForwarding` at BILL alone.
+
+Capabilities are ALSO published to the client, through a name-keyed
+`describeProviderCapabilities` rather than the adapter object. Two reasons, and
+they are the same reason: a query has no credential, so answering "can a closed
+card be reopened?" must never cost a decrypt of a church's API key; and the
+group-level surfaces are provider-anonymous, so the shape handed out contains
+no field a future edit could widen into leaking the vendor's name. The
+duplication is pinned by a test that loads every adapter and asserts the table
+agrees.
 
 A caller reads the flag and adapts; it never catches an error at the provider
 boundary and guesses what it meant.
@@ -223,6 +253,10 @@ communityFinanceRoles    communityId, userId, role: "finance_admin",
 cards                    + provider?, providerCardId?
                          + index by_provider_cardId
                          (increaseCardId and by_increaseCardId untouched)
+                         Phase 3 adds NO column: a managed card's
+                         {managedLimit, manualCapCents?} lives in the existing
+                         `controls: v.any()` bag, and its lifetime window is
+                         expressed by `limitPeriod` being ABSENT.
 
 communityFinance         + cardProvider?: "increase"|"privacy"|"bill"|"none"
 ```
@@ -270,7 +304,7 @@ is later demoted to member — the role-management mutations only patch
 `userCommunities.roles`. Evaluating it where the access is used means no
 future demotion path can forget to call us.
 
-**Surfaces tightened** (`isCommunityAdmin` → `canManageCommunityFinance`):
+**Surfaces tightened in Phase 0** (`isCommunityAdmin` → `canManageCommunityFinance`):
 
 - `functions/finance/onboarding.ts` — `startOnboarding`, `retryProvisioning`,
   `getOnboardingStatus`, `enableGroupGiving`, `assertAdminAndGetFinance`
@@ -287,28 +321,36 @@ future demotion path can forget to call us.
   not the fund's.
 - Provider connection (Phase 1) will gate here from the start.
 
-**Explicitly NOT tightened.** Fund-level access is unchanged:
-`requireFundRole` / `requireFundRoleOrGroupLeader` in `lib/helpers.ts` still
-let any community admin through a fund gate, and `fundRoles` is untouched.
-Nothing an admin could do on a *specific fund* stopped working — only the
-community-wide surfaces moved. Revoking is de-escalation and stays reachable
-with the `group-giving` kill switch off, matching `revokeFundRole` and the
-card freeze/cancel carve-out in `lib/finance/flag.ts`.
+**Not tightened in Phase 0; tightened in Phase 3.** Phase 0 deliberately left
+fund-level access alone — `requireFundRole` / `requireFundRoleOrGroupLeader` in
+`lib/helpers.ts` still let any community admin through a fund gate, and
+`fundRoles` was untouched. Phase 3 then moved the three fund surfaces that are
+not operations but APPOINTMENTS (`createFundCard`, `grantFundRole`,
+`revokeFundRole`) to this same community gate; see Phase 3 in §6 for why the
+self-grant guard those relied on was never enough. The helpers themselves are
+still unchanged, and every genuinely operational fund surface still runs
+through them. Revoking is de-escalation and stays reachable with the
+`group-giving` kill switch off, matching the card freeze/cancel carve-out in
+`lib/finance/flag.ts`.
 
 **Consequence, accepted:** a plain community admin who could reach finance
 onboarding yesterday cannot today. That is the point. The primary admin can
 restore it for any of them, and the audit trail records who did.
 
-**Sequencing, and the one thing to watch.** Phase 0 ships the grant *mutations*
-(`functions/finance/communityRoles.ts`) but no grant *screen* — that lands in
-Phase 1. Until it does, a grant has to be made through the Convex dashboard.
-This is safe only because `group-giving` is a superuser kill switch that is
-OFF by default: with the flag down nobody reaches these surfaces at all, so
-there is no one to lock out. **Before the flag is turned on for any community
-that has a non-primary admin running its finances, either the grant UI must
-exist or that admin must already hold a grant.** The error copy names the
-primary admin rather than a settings screen precisely because the screen is
-not there yet.
+**Sequencing, and the one thing to watch.** Phase 0 shipped the grant
+*mutations* (`functions/finance/communityRoles.ts`) but no grant *screen*, so a
+grant had to be made through the Convex dashboard. That was safe only because
+`group-giving` is a superuser kill switch that is OFF by default: with the flag
+down nobody reaches these surfaces, so there was no one to lock out. **The
+screen landed in Phase 3** (`FinancialControlsScreen`), which closes the gap —
+and it had to, because Phase 3 also moved card issuing and fund-role grants
+behind this same gate, which widens the set of people a missing screen would
+strand from "community onboarding" to "anyone who used to issue a card".
+
+The error copy still names the primary admin rather than the screen, which is
+now a choice rather than a constraint: the person hitting the refusal cannot
+reach the screen either (only the primary admin can grant), so pointing them at
+it would send them somewhere they can only read.
 
 ### 6. Phases
 
@@ -327,14 +369,96 @@ does not push, and the settlement path moved from `increaseCardId` onto
 alongside a mobile release. Surface the dedicated-account guidance at connect
 time.
 
-**Phase 2 — pooled-balance attribution.** The bookkeeping that stands in for
-`hardFundIsolation` when a provider lacks it: per-fund allocation against a
-pooled balance, over-attribution detection, and the reconcile invariant
-re-stated for a topology where the bank cannot enforce it.
+**Phase 2 — the second BYOC adapter (BILL Spend & Expense).** One BILL budget
+per fund, cardholders matched by email against BILL's own user directory,
+fetch-to-verify on an unsigned webhook, and the hourly transaction poll that
+backstops both BYO providers.
 
-**Phase 3 — provider switching.** Move a community between issuers without
+**Phase 3 — the fund boundary, the gate, and the screens.** Four changes that
+had to land together, because each of the first three is what makes the fourth
+safe to put in front of a church.
+
+*Groups OPERATE, community finance ADMINISTERS.* `createFundCard`,
+`grantFundRole` and `revokeFundRole` moved from fund gates to
+`requireCommunityFinanceAccess`. §5 separated "can run the community" from "can
+run its money"; this closes the other half of the same hole. ADR-032 §4 let a
+group leader grant a finance role on their own fund, guarded only against
+naming *themselves* — but two leaders of one group could grant each other, and
+at a BYO provider the card that grant produces spends the CHURCH's pooled
+account rather than a per-fund one the bank keeps separate. The whole ladder
+ran inside one group with nobody outside it in the loop. Everything
+OPERATIONAL stays fund-scoped: cardholders use their cards, managers approve
+reimbursements, leaders see the roster, balance and transactions, and
+freeze/cancel keep their fund gate *and* their kill-switch exemption, because
+de-escalation must never need a phone call to someone outside the group.
+`revokeFundRole`'s "last finance_admin" guard is deleted rather than kept —
+every caller is now a community finance holder, i.e. exactly the class the old
+guard exempted, so it could only ever evaluate to "allowed", and a guard that
+cannot fire reads as protection that isn't there.
+
+*Managed lifetime limits.* The honest answer to `hardFundIsolation: false` at
+Privacy. A per-card, per-PERIOD cap hands the card the fund's balance again
+next month whether or not the fund was ever credited that much; Privacy's
+`FOREVER` window is the one that never resets, which makes it usable as an
+ACCUMULATOR rather than an allowance. The cap is recomputed from the fund's own
+ledger as
+
+```
+L = lifetime CREDITS − non-card DEBITS
+```
+
+`card_capture` debits are excluded because the provider is already counting
+that spend against the lifetime cap; subtracting here too would charge every
+purchase twice. The consequence is the property the whole mechanism exists for:
+`remaining at the provider == the fund's balance`. Two preconditions make the
+number true and both are enforced — ONE live card per fund (`maxCardsPerFund`,
+because the cap is per card and two cards would each carry the fund's whole
+allowance), and every card charge reaching the ledger (it does; a missed one
+errs *tighter*, never looser, because the provider still counted it). The sync
+is scheduled from ONE seam, inside `postLedgerEntry`, rather than from the four
+mutations that post entries — the next path someone adds gets it for free, and
+the failure mode of forgetting is a card that quietly under-spends its fund
+weeks later. It recomputes from the whole ledger every run, which is what makes
+it idempotent and order-independent, and a failed push is left for the hourly
+`finance-card-txn-poll` (which carries the resync AFTER its import, so it
+computes against a current ledger). An admin may pin a LOWER cap
+(`cards.controls.manualCapCents`); raising above the fund is refused with both
+numbers, because "invalid" only makes someone try a slightly smaller one.
+
+`NormalizedLimitPeriod` gains `"lifetime"` for the wire between `cards.ts` and
+an adapter, and deliberately NOT for `cards.limitPeriod` — "resets weekly" and
+"never resets" are not two settings of one control, so a managed card stores
+the amount with no period and declares itself through `controls.managedLimit`.
+An adapter that cannot express a lifetime cap THROWS rather than degrading:
+every degradation of "never resets" is a window that does.
+
+*Receipt forwarding.* `forwardReceipt` is added to the adapter interface and
+implemented for BILL alone (its documented three-step upload), declared as
+`capabilities.receiptForwarding`. Shipping it required the missing WRITE half
+of ADR-032's receipt-nudge flow: `attachExpenseReceipt`, the mutation behind a
+"No receipt" badge that had been rendering with nothing to set it, because a
+card charge is created by the settlement webhook before anyone has the paper.
+Forwarding is best-effort by contract — the receipt is already durable in
+Togather and the church's books are complete without the copy at the issuer, so
+a failure is an audit row and never undoes the attachment. Dedupe is a
+staleness check rather than a marker column (`expenses` has no free-form field
+and the schema is not being widened): one run is enqueued per attachment, and
+the action stops unless `receiptKey` is still the key it was scheduled with.
+
+*The screens.* The connect flow, the financial-controls grant screen §5's
+sequencing note promised, and the capability-driven card copy — including the
+fix for the `cardCloseReversible` TODO left in Phase 2, where a cancel dialog
+said "this can't be undone" on a provider where it demonstrably can. Card
+surfaces INSIDE a group are provider-ANONYMOUS: the community holds the vendor
+relationship, a group's members did not choose it and cannot act on its name,
+so they are told the behaviour ("you can reopen this from your provider") and
+not the brand. The community-level settings screen names it, because that is
+where the choice was made.
+
+**Phase 4 — provider switching.** Move a community between issuers without
 losing card history: close at the old provider, re-issue at the new one, keep
-`cards` rows continuous through `provider` + `providerCardId`.
+`cards` rows continuous through `provider` + `providerCardId`. Until it exists,
+`saveCardProviderConnection` refuses a switch that would strand live cards.
 
 ## Consequences
 
@@ -348,8 +472,17 @@ losing card history: close at the old provider, re-issue at the new one, keep
   becomes an operationally critical secret (losing it makes every stored
   credential unrecoverable — recoverable only by reconnecting each provider).
 - Providers without `hardFundIsolation` move a real guarantee from the bank
-  into our code. Phase 2 is not optional before shipping such a provider, and
-  the dedicated-account recommendation is what bounds the risk meanwhile.
+  into our code. Phase 3's managed lifetime limit is what stands in for it at
+  Privacy, and the dedicated-account recommendation is what bounds the rest.
+  The substitution is honest but weaker in one named way: it is a cumulative
+  cap, not a real-time authorization decision, so two charges racing before
+  either settles are judged against the cap Privacy currently holds rather than
+  against the fund. That is the conservative direction, and it is not the same
+  thing as the bank refusing to let a card touch another fund's money.
+- BILL has no equivalent: its per-fund container is a budget, which is a
+  spending policy rather than segregated money, so `managedFundLimit` is false
+  there and the budget's own cap is the boundary. A church on BILL is relying
+  on a number it set in BILL, and the connect screen says so.
 - `cards.status` now carries two vocabularies (normalized in the adapter,
   legacy in the database) until Phase 1. That is a documented seam with a
   named owner, not an accident.

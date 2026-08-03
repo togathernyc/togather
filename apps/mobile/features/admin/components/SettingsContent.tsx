@@ -428,6 +428,7 @@ export function SettingsContent() {
               one group, so it's a top-level leader-tools route rather than
               nested under a specific group's giving screens. */}
           {groupGivingEnabled ? (
+          <>
           <TouchableOpacity
             style={[styles.quickLinkItem, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
             onPress={() => router.push("/finance-setup")}
@@ -443,6 +444,50 @@ export function SettingsContent() {
             </View>
             <Ionicons name="chevron-forward" size={20} color={colors.textTertiary} />
           </TouchableOpacity>
+          {/* ADR-033 Phase 3: the two community-level finance surfaces sit
+              beside the onboarding one rather than in the You tab's Admin
+              group, so every entry point into community finance is in one
+              place — and so they work in BOTH shells (this component renders
+              inside the legacy AdminScreen as well as /(user)/you/admin/community,
+              and a `you/admin` route redirects flag-off admins away).
+
+              Both rows are shown to any community admin, not only to people
+              who hold financial controls: "primary admin OR an active grant"
+              has no cheap client-side signal, and each destination opens on an
+              explicit "you need financial-controls access — ask your primary
+              admin" state, which is a better answer than a row that silently
+              isn't there. */}
+          <TouchableOpacity
+            style={[styles.quickLinkItem, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
+            onPress={() => router.push("/finance-setup/card-provider")}
+          >
+            <View style={[styles.quickLinkIcon, { backgroundColor: colors.surface }]}>
+              <Ionicons name="card-outline" size={20} color={themePrimaryColor} />
+            </View>
+            <View style={styles.quickLinkInfo}>
+              <Text style={[styles.quickLinkName, { color: colors.text }]}>Card provider</Text>
+              <Text style={[styles.quickLinkDescription, { color: colors.textSecondary }]}>
+                Issue group-fund cards on your own card account
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color={colors.textTertiary} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.quickLinkItem, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
+            onPress={() => router.push("/finance-setup/financial-controls")}
+          >
+            <View style={[styles.quickLinkIcon, { backgroundColor: colors.surface }]}>
+              <Ionicons name="key-outline" size={20} color={themePrimaryColor} />
+            </View>
+            <View style={styles.quickLinkInfo}>
+              <Text style={[styles.quickLinkName, { color: colors.text }]}>Financial controls</Text>
+              <Text style={[styles.quickLinkDescription, { color: colors.textSecondary }]}>
+                Who can connect providers and issue cards
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color={colors.textTertiary} />
+          </TouchableOpacity>
+          </>
           ) : null}
           {settings?.churchFeatures?.prayerEnabled ? (
             <TouchableOpacity

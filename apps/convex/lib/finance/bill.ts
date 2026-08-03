@@ -636,6 +636,79 @@ export async function getBillTransaction(
 }
 
 // ============================================================================
+// Receipts — the documented three-step upload
+// ============================================================================
+
+/**
+ * Attach a receipt image to a BILL transaction (ADR-033 Phase 3).
+ *
+ * BILL's documented flow is three calls and cannot be collapsed into fewer
+ * (developer.bill.com "Transaction management", confirmed 2026-08-03):
+ *
+ *   1. POST /v3/spend/transactions/receipt-upload-url   -> `{ url }`
+ *   2. PUT  <that url>  with the raw image bytes and its Content-Type
+ *   3. POST /v3/spend/transactions/{uuid}/receipts  { url: <that same url> }
+ *
+ * The url from step 1 is BOTH the destination and the handle: step 3 names the
+ * same string it was uploaded to. That is why this is one function rather than
+ * three exported ones — the url has no meaning outside the sequence, and an
+ * API that let a caller hold it between steps would invite passing the wrong
+ * one.
+ *
+ * STEP 2 DOES NOT GO THROUGH `billRequest`, deliberately. That helper hardcodes
+ * `Content-Type: application/json`, `JSON.stringify`s the body, and attaches
+ * the apiToken header. All three are wrong here: the destination is a
+ * pre-signed storage URL (sending a live spending credential to it would be a
+ * credential leak to a host that is not BILL's API), the body is binary, and
+ * the content type must be the image's.
+ *
+ * FORMAT: BILL accepts JPG and PNG only. A caller holding anything else should
+ * not reach here — see the BILL adapter's `forwardReceipt`.
+ */
+export async function uploadBillReceipt(
+  client: BillClient,
+  params: {
+    transactionUuid: string;
+    bytes: ArrayBuffer;
+    contentType: string;
+  },
+): Promise<void> {
+  const generated = await billRequestRequired<{ url?: string }>(
+    client,
+    "/v3/spend/transactions/receipt-upload-url",
+    { method: "POST", body: {} },
+  );
+  const uploadUrl = generated.url;
+  if (!uploadUrl) {
+    throw new BillApiError(
+      "BILL returned no upload url for the receipt",
+      200,
+    );
+  }
+
+  const put = await fetch(uploadUrl, {
+    method: "PUT",
+    headers: { "Content-Type": params.contentType },
+    body: params.bytes,
+  });
+  if (!put.ok) {
+    // The upload host is not BILL's API and its body is not vendor text we
+    // want to surface; the status is the actionable part. No token to redact
+    // here because none was sent.
+    throw new BillApiError(
+      `BILL receipt upload failed (${put.status})`,
+      put.status,
+    );
+  }
+
+  await billRequest(
+    client,
+    `/v3/spend/transactions/${encodeURIComponent(params.transactionUuid)}/receipts`,
+    { method: "POST", body: { url: uploadUrl } },
+  );
+}
+
+// ============================================================================
 // Webhook subscriptions — POST /v3/subscriptions
 // ============================================================================
 

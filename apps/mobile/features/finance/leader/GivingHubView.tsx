@@ -282,11 +282,7 @@ export function GivingHubView({
                   key={card.id}
                   icon="card-outline"
                   title={`${card.name} ·· ${card.last4}`}
-                  description={`${card.holderName} · ${formatCardLimit(
-                    card.spendLimitCents,
-                    card.limitPeriod,
-                    formatCents,
-                  )}`}
+                  description={`${card.holderName} · ${formatCardLimit(card, formatCents)}`}
                   onPress={() => onViewCard(card.id)}
                   testID={`giving-hub-card-${card.id}`}
                   trailingAccessory={

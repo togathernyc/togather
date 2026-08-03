@@ -276,6 +276,11 @@ function toFundCard(raw: any): FundCard {
     status: raw.status,
     spendLimitCents: raw.spendLimitCents ?? null,
     limitPeriod: raw.limitPeriod ?? null,
+    // ADR-033 Phase 3: on a managed provider the limit is computed from the
+    // fund's balance and carries no period, so `formatCardLimit` needs both of
+    // these to render anything other than "$400 / undefined".
+    managedLimit: !!raw.managedLimit,
+    manualCapCents: raw.manualCapCents ?? null,
     createdAt: raw.createdAt,
   };
 }

@@ -9,6 +9,9 @@ const candidates: CardholderCandidate[] = [
 ];
 
 const baseProps = {
+  state: "ready" as const,
+  managedLimit: false,
+  cardSlotFull: false,
   fundName: "Just the 2 of us",
   fundBalanceCents: 128450,
   candidates,
@@ -133,6 +136,53 @@ describe("CreateCardView", () => {
     const onSubmit = jest.fn();
     render(<CreateCardView {...baseProps} onSubmit={onSubmit} canSubmit={false} />);
 
+    fireEvent.press(screen.getByText("Create card"));
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  // ADR-033 Phase 3: issuing moved to COMMUNITY finance access, so a group
+  // leader who deep-links here must be told why rather than shown a form that
+  // can only fail on submit.
+  it("explains the community-finance gate instead of rendering the form", () => {
+    render(<CreateCardView {...baseProps} state="not-allowed" />);
+
+    expect(screen.getByTestId("create-card-not-allowed")).toBeTruthy();
+    expect(
+      screen.getByText(/Only someone with your community's financial controls/i),
+    ).toBeTruthy();
+    expect(screen.queryByTestId("cardholder-option-user-1")).toBeNull();
+    expect(screen.queryByText("Create card")).toBeNull();
+  });
+
+  describe("managed-limit providers", () => {
+    it("drops the period control entirely rather than disabling it", () => {
+      render(<CreateCardView {...baseProps} managedLimit />);
+
+      expect(screen.getByTestId("managed-limit-section")).toBeTruthy();
+      expect(screen.queryByTestId("limit-option-week")).toBeNull();
+      expect(screen.queryByTestId("limit-option-month")).toBeNull();
+      expect(screen.queryByTestId("limit-option-none")).toBeNull();
+      expect(
+        screen.getByText("This card's limit follows the fund's balance"),
+      ).toBeTruthy();
+    });
+
+    it("keeps the amount field as an optional lower cap", () => {
+      render(<CreateCardView {...baseProps} managedLimit />);
+
+      expect(screen.getByText("Set a lower cap (optional)")).toBeTruthy();
+      expect(screen.getByPlaceholderText("$0.00")).toBeTruthy();
+      // The typed-limit copy claims a bank window this provider doesn't have.
+      expect(screen.queryByText(/Resets every Monday/)).toBeNull();
+      expect(screen.queryByText(/bank declines anything over this limit/i)).toBeNull();
+    });
+  });
+
+  it("blocks submission and explains when the fund is at its provider's card cap", () => {
+    const onSubmit = jest.fn();
+    render(<CreateCardView {...baseProps} canSubmit cardSlotFull onSubmit={onSubmit} />);
+
+    expect(screen.getByTestId("create-card-slot-full")).toBeTruthy();
     fireEvent.press(screen.getByText("Create card"));
     expect(onSubmit).not.toHaveBeenCalled();
   });

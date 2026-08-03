@@ -99,6 +99,16 @@ function toIncreaseLimit(
   limit: NormalizedLimit | null,
 ): IncreaseCardSpendingLimit | null {
   if (!limit) return null;
+  if (limit.period === "lifetime") {
+    // Increase's `spending_limits[].interval` has no lifetime window, and
+    // degrading one to `per_year` would silently reset a cap that is supposed
+    // never to. Unreachable in practice — a lifetime limit only comes from the
+    // managed-limit path, and `INCREASE_CAPABILITIES.managedFundLimit` is false
+    // — so this is the adapter refusing to guess rather than a live branch.
+    throw new Error(
+      "Increase has no lifetime spending limit — a managed fund limit cannot be applied to an Increase card",
+    );
+  }
   return {
     interval: LIMIT_PERIOD_TO_INCREASE_INTERVAL[limit.period],
     settlementAmountCents: limit.limitCents,
@@ -178,6 +188,16 @@ export const INCREASE_CAPABILITIES: ProviderCapabilities = {
   declineFeed: "webhook",
   // No documented per-month card cap.
   maxCardsPerMonth: null,
+  // No reason to cap: the fund owns its Account, so a second card is a second
+  // instrument on the SAME bank-enforced boundary rather than a second copy of
+  // it. Two cards on an Increase fund can still only ever spend that fund.
+  maxCardsPerFund: null,
+  // Nothing to manage. `hardFundIsolation` already makes "up to the fund's
+  // balance" literally true at the bank, so a Togather-computed cap would add
+  // a second, weaker copy of a guarantee that already holds.
+  managedFundLimit: false,
+  // No receipt API. Increase's card transactions carry no document upload.
+  receiptForwarding: false,
   // The card spends the fund's real Increase Account balance — money we
   // already hold. There is nothing to prefund and no statement to repay.
   repaymentVisibility: "n/a",

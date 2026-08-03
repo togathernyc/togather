@@ -64,8 +64,31 @@ export type CardStateRequest = Extract<
  */
 export interface NormalizedLimit {
   limitCents: number;
-  period: CardLimitPeriod;
+  period: NormalizedLimitPeriod;
 }
+
+/**
+ * The windows a limit can cover, in Togather's words.
+ *
+ * `CardLimitPeriod` — `week | month | charge` — is what a finance ADMIN picks
+ * and what `cards.limitPeriod` stores. `"lifetime"` is deliberately NOT in that
+ * union and is deliberately NOT storable there:
+ *
+ * - It is not a choice. A lifetime cap only ever appears on a MANAGED card,
+ *   where the number is computed from the fund's ledger rather than typed
+ *   (`capabilities.managedFundLimit`, lib/finance/managedCardLimit.ts).
+ * - `cards.limitPeriod`'s validator is `week | month | charge` and schema.ts is
+ *   not being widened for this. A managed card therefore stores
+ *   `spendLimitCents` with NO period, and says so through
+ *   `cards.controls.managedLimit` — which is the honest shape anyway, because
+ *   "resets weekly" and "never resets" are not two settings of one control.
+ *
+ * So `lifetime` lives on the wire between `cards.ts` and an adapter, and
+ * nowhere else. An adapter that cannot express it must THROW rather than
+ * degrade: every degradation of "never resets" is a window that does reset,
+ * which is unboundedly more permissive over the life of a card.
+ */
+export type NormalizedLimitPeriod = CardLimitPeriod | "lifetime";
 
 // ============================================================================
 // Capabilities
@@ -118,6 +141,45 @@ export interface ProviderCapabilities {
 
   /** Hard cap on new cards per calendar month, or `null` for no documented cap. */
   maxCardsPerMonth: number | null;
+
+  /**
+   * How many LIVE cards Togather will keep on one fund at this provider, or
+   * `null` for "as many as the fund wants".
+   *
+   * Not a vendor limit — Privacy would happily issue ten. It is a limit the
+   * MANAGED-LIMIT mechanism requires (see `managedFundLimit`): that mechanism
+   * expresses "this card may spend the fund's balance" as one lifetime cap on
+   * one card, and a lifetime cap is per card. Two cards each capped at the
+   * fund's balance can spend it twice. So at a provider whose only honest
+   * fund control is the lifetime limit, one card per fund is not a policy
+   * preference — it is the precondition that makes the number true.
+   */
+  maxCardsPerFund: number | null;
+
+  /**
+   * Does Togather MANAGE this provider's spend limit from the fund's ledger,
+   * rather than leaving it as a number a finance admin typed?
+   *
+   * True where the provider offers a lifetime ("forever") cap and no hard fund
+   * isolation: the cap is then recomputed from the fund's own credits and
+   * non-card debits so that what remains at the provider equals the fund's
+   * balance. See `lib/finance/managedCardLimit.ts` for the formula.
+   *
+   * The UI must read this: on a managed card the limit is not editable in the
+   * usual sense (it follows the fund), and saying "$400 / forever" without
+   * saying why is how a finance admin ends up trying to "fix" it.
+   */
+  managedFundLimit: boolean;
+
+  /**
+   * Can we forward a receipt Togather already holds to the provider, so the
+   * church's expense record at the issuer is complete too?
+   *
+   * Only BILL has a receipt API. Where this is false the receipt lives in
+   * Togather alone, and the upload copy must say so ("Saved to the fund")
+   * rather than implying the card provider got it.
+   */
+  receiptForwarding: boolean;
 
   /**
    * How the provider's balance is funded and repaid.
@@ -322,6 +384,32 @@ export interface CardProviderAdapter {
    * line, not a failed connection (see `connectCardProvider`).
    */
   registerWebhook?(notificationUrl: string): Promise<void>;
+
+  /**
+   * Send a receipt Togather already holds to the provider, against the
+   * transaction it belongs to.
+   *
+   * Present only where the issuer HAS a receipt API — today that is BILL alone,
+   * declared as `capabilities.receiptForwarding`. The capability is what UI copy
+   * reads ("Saved to the fund" vs "Saved and sent to your card provider"), and
+   * it must not be inferred from the method's presence: a caller that guessed
+   * would promise the wrong thing to every future provider that adds one before
+   * we wire it.
+   *
+   * BEST EFFORT BY CONTRACT. The receipt is already durable in Togather by the
+   * time this runs, and the church's books are complete without the copy at the
+   * issuer. So a throw here means "the provider didn't take it", which the
+   * caller LOGS — it must never undo the receipt, fail the expense, or block
+   * the person who uploaded it.
+   *
+   * `bytes` is the raw image. Providers restrict formats (BILL: JPG/PNG only),
+   * so an adapter refuses what it cannot send rather than uploading something
+   * the issuer will silently drop.
+   */
+  forwardReceipt?(
+    providerTransactionId: string,
+    receipt: { bytes: ArrayBuffer; contentType: string; filename: string },
+  ): Promise<void>;
 
   /**
    * Prove the stored credential still works, and say whose account it is.

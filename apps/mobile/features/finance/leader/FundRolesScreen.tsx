@@ -52,16 +52,23 @@ export function FundRolesScreen() {
   const [revokeTargetRoleId, setRevokeTargetRoleId] = useState<string | null>(null);
   const [isRevoking, setIsRevoking] = useState(false);
 
-  // grantFundRole/revokeFundRole are FUND gates, so the community-admin
-  // override still applies — but read it from the server signal, which is
-  // computed for the FUND's community. `user?.is_admin` is scoped to the
-  // viewer's ACTIVE community and was the wrong answer whenever those differ.
-  const canManageRoles = !!(
-    myFundRole?.role === "finance_admin" ||
-    myFundRole?.isGroupLeader ||
-    myFundRole?.canManageCommunityFinance ||
-    myFundRole?.hasCommunityAdminFundOverride
-  );
+  // ADR-033 Phase 3: granting and revoking a fund role are COMMUNITY acts now
+  // (groups operate, community finance administers), so this is the one signal
+  // that matches what `grantFundRole` / `revokeFundRole` actually enforce.
+  //
+  // The three that used to be here are all gone on purpose. `isGroupLeader` and
+  // a fund `finance_admin` no longer pass the mutation at all — leaving either
+  // in would render grant and revoke controls for a leader who can only be
+  // refused, which is the CTA-that-only-errors bug this flag exists to prevent.
+  // `hasCommunityAdminFundOverride` is the FUND-level signal and is still right
+  // for fund-scoped controls elsewhere; it is wrong here precisely because a
+  // plain community admin gets different answers to "can act on this fund" and
+  // "can run this community's money" (see getMyFundRole's own docstring).
+  //
+  // Read from the server signal, not `user?.is_admin`: that flag is scoped to
+  // the viewer's ACTIVE community and is the wrong answer whenever it differs
+  // from the fund's.
+  const canManageRoles = !!myFundRole?.canManageCommunityFinance;
 
   const roles: FundRoleRow[] = useMemo(
     () => (rolesRaw ?? []).filter((r: any) => r.isActive).map(toFundRoleRow),

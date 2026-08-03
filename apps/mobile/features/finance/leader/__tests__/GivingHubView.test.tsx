@@ -37,6 +37,8 @@ function makeCard(overrides: Partial<FundCard> = {}): FundCard {
     status: "active",
     spendLimitCents: 25000,
     limitPeriod: "week",
+    managedLimit: false,
+    manualCapCents: null,
     createdAt: Date.now(),
     ...overrides,
   };
@@ -175,6 +177,23 @@ describe("GivingHubView", () => {
 
       expect(screen.getByText("Groceries & supplies ·· 4921")).toBeTruthy();
       expect(screen.getByText("Carol Williams · $250.00 / week")).toBeTruthy();
+      expect(screen.getByText("Active")).toBeTruthy();
+    });
+
+    // A managed card has an amount and NO period; the pre-ADR-033 formatter
+    // rendered that as "$400.00 / undefined".
+    it("renders a managed card's limit as what's left, not as a window", () => {
+      render(
+        <GivingHubView
+          {...baseProps}
+          cards={[makeCard({ managedLimit: true, limitPeriod: null, spendLimitCents: 40000 })]}
+        />,
+      );
+
+      expect(
+        screen.getByText("Carol Williams · $400.00 left — follows the fund balance"),
+      ).toBeTruthy();
+      expect(screen.queryByText(/undefined/)).toBeNull();
       expect(screen.getByText("Active")).toBeTruthy();
     });
 

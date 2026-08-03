@@ -43,12 +43,12 @@ import {
   type PrivacySpendLimitDuration,
   type PrivacyTransaction,
 } from "../privacy";
-import type { CardLimitPeriod } from "../cardPolicy";
 import type {
   CardProviderAdapter,
   CardState,
   CardStateRequest,
   NormalizedLimit,
+  NormalizedLimitPeriod,
   ProviderCapabilities,
   ProviderCard,
   ProviderTxn,
@@ -83,16 +83,22 @@ import type {
  * a silent implementation detail.
  */
 export const LIMIT_PERIOD_TO_PRIVACY_DURATION: Record<
-  CardLimitPeriod,
+  NormalizedLimitPeriod,
   PrivacySpendLimitDuration
 > = {
   week: "MONTHLY",
   month: "MONTHLY",
   charge: "TRANSACTION",
+  // The MANAGED limit (ADR-033 Phase 3). `FOREVER` is the only Privacy window
+  // that can stand in for the per-fund isolation this provider lacks: a cap
+  // that never resets, recomputed from the fund's ledger, so that what is LEFT
+  // at Privacy equals the fund's balance. Every resetting window would hand the
+  // card the fund's balance again next month. See lib/finance/managedCardLimit.ts.
+  lifetime: "FOREVER",
 };
 
 /** True when the requested period cannot be expressed natively — the caller may want to disclose it. */
-export function isDegradedLimitPeriod(period: CardLimitPeriod): boolean {
+export function isDegradedLimitPeriod(period: NormalizedLimitPeriod): boolean {
   return period === "week";
 }
 
@@ -329,6 +335,20 @@ export const PRIVACY_CAPABILITIES: ProviderCapabilities = {
   // not know this account's cap, so we must not pretend to enforce one.
   // A rejected creation surfaces Privacy's own message instead.
   maxCardsPerMonth: null,
+  // ONE live card per fund (ADR-033 Phase 3). Privacy would issue as many as
+  // the church's tier allows; this is Togather's cap, and it exists because
+  // `managedFundLimit` below is only true while it holds. The managed cap is a
+  // per-card LIFETIME limit sized to the fund's balance, so a second card on
+  // the same fund would carry a second copy of that allowance and the pair
+  // could spend the fund twice. One card is what makes the number honest.
+  maxCardsPerFund: 1,
+  // Privacy's `FOREVER` duration is the one control that can stand in for the
+  // fund isolation this provider lacks: a lifetime cap, recomputed from the
+  // fund's ledger, so that what is LEFT at Privacy equals the fund's balance.
+  // See lib/finance/managedCardLimit.ts.
+  managedFundLimit: true,
+  // No receipt/document API on transactions.
+  receiptForwarding: false,
   // Cards draw a funding source the church already owns; Togather neither
   // prefunds nor settles a statement. Same answer as Increase, different
   // reason — there is simply no money of ours in the loop.
