@@ -197,6 +197,29 @@ export async function getCardProviderByName(
   }
 }
 
+/**
+ * An adapter for a key that has NOT been stored yet.
+ *
+ * `connectCardProvider` has to prove a key works BEFORE it is encrypted and
+ * written — otherwise a typo becomes a saved connection that fails at the
+ * worst possible moment, on someone's first card. That is the only legitimate
+ * caller: everywhere else, the credential must come from the database through
+ * `getCardProviderByName`, so there is exactly one place a raw key enters the
+ * system and it is a function whose name says so.
+ */
+export async function createUnsavedProvider(
+  name: "privacy" | "bill",
+  apiKey: string,
+): Promise<CardProviderAdapter> {
+  if (name === "privacy") {
+    const { createPrivacyCardProvider } = await import("./privacy");
+    return createPrivacyCardProvider(apiKey);
+  }
+  throw new ConvexError(
+    `The "${name}" card provider isn't available yet — nothing can be connected to it`,
+  );
+}
+
 /** Does this provider bring its own, community-held credential? */
 export function isBringYourOwnProvider(
   name: CardProviderName,
