@@ -1024,6 +1024,67 @@ describe("finance-card-txn-poll", () => {
     expect(healed!.lastError).toBeUndefined();
   });
 
+  test("a backlog past the page cap is recorded as a VISIBLE error, not a silent repeat", async () => {
+    // The cursor is deliberately held (advancing would assume a page ordering
+    // Privacy hasn't confirmed), which means the next run re-reads the same
+    // window and never reaches what lies beyond it. With lastSyncAt ticking
+    // and the status still "active" that is invisible — so the adapter says
+    // `truncated` and the poller turns it into something an operator can see.
+    const t = convexTest(schema, modules);
+    await connectedWithCard(t);
+    // 20 full pages, and the feed claims there are more.
+    const full = Array.from({ length: 100 }, (_, j) => ({
+      ...SETTLED_TXN,
+      token: `txn_bulk_${j}`,
+    }));
+    privacy.listPrivacyTransactions.mockResolvedValue({
+      data: full,
+      page: 1,
+      total_pages: 99,
+    } as any);
+
+    await t.action(
+      internal.functions.finance.jobs.pollCardProviderTransactions,
+      {},
+    );
+
+    const row = await t.run(async (ctx) =>
+      ctx.db.query("cardProviderConnections").first(),
+    );
+    expect(row!.lastError).toMatch(/backlog exceeds one poll/i);
+    // The credential is fine — the VOLUME isn't — so the connection stays
+    // usable and next hour tries again.
+    expect(row!.status).toBe("active");
+    expect(row!.syncCursor).toBeUndefined();
+  });
+
+  test("an unverified card token cannot forge a log line", async () => {
+    // Everything logged before the HMAC check is attacker-supplied: the
+    // endpoint is unauthenticated by construction, because the signing key can
+    // only be found via the payload's own card token.
+    const t = convexTest(schema, modules);
+    await connectedWithCard(t);
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const injected = {
+      ...SETTLED_TXN,
+      card_token: `x\n[finance] FORGED ENTRY ${"A".repeat(500)}`,
+    };
+
+    const res = await postWebhook(
+      t,
+      injected,
+      await signPrivacyWebhook(injected, API_KEY),
+    );
+    expect(res.status).toBe(200);
+
+    const logged = spy.mock.calls.flat().join(" ");
+    spy.mockRestore();
+    expect(logged).toContain("[PrivacyWebhook]");
+    // Newline escaped, and the flood bounded.
+    expect(logged).not.toContain("\n[finance] FORGED ENTRY");
+    expect(logged).not.toContain("A".repeat(200));
+  });
+
   test("a poll that finishes after a disconnect cannot resurrect the connection", async () => {
     // The poll is an HTTP round trip long. An admin who revokes a compromised
     // key inside that window must stay revoked — a stale success patching

@@ -31,6 +31,7 @@ import {
 } from "../lib/finance/cardProviders/privacy";
 import {
   canonicalJsonStringify,
+  redactApiKey,
   signPrivacyWebhook,
   verifyPrivacyWebhookSignature,
   type PrivacyTransaction,
@@ -443,6 +444,31 @@ describe("canonicalJsonStringify", () => {
     expect(canonicalJsonStringify({ m: "Café" })).toBe('{"m":"Café"}');
   });
 
+  test("a NON-FINITE number is refused, not folded onto null", () => {
+    // `1e400` is valid JSON that JSON.parse turns into Infinity, and
+    // JSON.stringify(Infinity) is "null". Folding them together would mean a
+    // signature computed over `{"a":null}` also authenticates `{"a":1e400}` —
+    // a semantic change passing authentication, and on `settled_amount` an
+    // infinite expense. Throwing makes it a rejected delivery.
+    expect(() => canonicalJsonStringify({ a: Infinity })).toThrow(/non-finite/);
+    expect(() => canonicalJsonStringify({ a: NaN })).toThrow(/non-finite/);
+  });
+
+  test("swapping null for 1e400 does NOT verify under the original signature", async () => {
+    const payload = { token: "t", settled_amount: null };
+    const sig = await signPrivacyWebhook(payload, API_KEY);
+    expect(await verifyPrivacyWebhookSignature(payload, sig, API_KEY)).toBe(
+      true,
+    );
+    expect(
+      await verifyPrivacyWebhookSignature(
+        JSON.parse('{"token":"t","settled_amount":1e400}'),
+        sig,
+        API_KEY,
+      ),
+    ).toBe(false);
+  });
+
   test("numbers use JS formatting — the assumption, stated", () => {
     // Privacy's amounts are integer cents, so none of these shapes can occur
     // in a real transaction payload. Pinned anyway, because "JS renders the
@@ -667,6 +693,46 @@ describe("listTransactions", () => {
     expect(calls).toHaveLength(20); // PRIVACY_MAX_PAGES
     expect(page.transactions).toHaveLength(2000);
     expect(page.nextCursor).toBe("2026-08-01T00:00:00Z");
+    // …and SAYS so. A held cursor is a poll that repeats the same window every
+    // hour and never reaches page 21; without this flag it would be
+    // indistinguishable from a healthy run forever.
+    expect(page.truncated).toBe(true);
+  });
+
+  test("a normal pull is not flagged truncated", async () => {
+    reply(txnPage([{ token: "t1", created: "2026-08-01T10:00:00Z" }], 1));
+    const page = await adapter().listTransactions!("2026-08-01T09:00:00Z");
+    expect(page.truncated).toBe(false);
+  });
+});
+
+// ============================================================================
+// Credential hygiene
+// ============================================================================
+
+describe("error bodies never carry the credential", () => {
+  test("a reflected API key is redacted out of the thrown message", async () => {
+    // Privacy has no reason to echo the Authorization header, but this message
+    // travels to a finance admin's screen AND into a persisted `lastError` —
+    // an intermediary that reflects request headers would put a live spending
+    // key in both. Scrubbed at the one place every response body passes.
+    reply({ error: `bad token: api-key ${API_KEY}` }, 401);
+    const error = await adapter()
+      .checkConnection!()
+      .then(
+        () => null,
+        (e: unknown) => e as Error,
+      );
+    expect(error).not.toBeNull();
+    expect(error!.message).not.toContain(API_KEY);
+    expect(error!.message).toContain("[redacted]");
+  });
+
+  test("redactApiKey ignores implausibly short keys rather than mangling text", () => {
+    expect(redactApiKey("the cat sat", "at")).toBe("the cat sat");
+    expect(redactApiKey("key=abcdefgh here", "abcdefgh")).toBe(
+      "key=[redacted] here",
+    );
   });
 });
 

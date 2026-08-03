@@ -178,6 +178,20 @@ export interface ProviderTxnPage {
   transactions: ProviderTxn[];
   /** Opaque, stored on `cardProviderConnections.syncCursor`. `null` means "caught up". */
   nextCursor: string | null;
+  /**
+   * The adapter hit its own page budget before reaching the end of the feed,
+   * and therefore did NOT advance `nextCursor`.
+   *
+   * Reportable rather than merely commented, because a cursor that cannot
+   * advance is a poll that repeats the same window every hour forever:
+   * everything past the budget never arrives, and with `lastSyncAt` ticking
+   * and the status still "active" there is nothing an operator could notice.
+   * `pollOneConnection` turns this into a recorded, visible error. It is
+   * deliberately NOT an advance-anyway — skipping ahead assumes a page
+   * ordering the adapter's own docs list as unverified, and a loud stall beats
+   * a silent hole in a church's books.
+   */
+  truncated?: boolean;
 }
 
 // ============================================================================

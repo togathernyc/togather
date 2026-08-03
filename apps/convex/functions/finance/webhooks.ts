@@ -560,6 +560,19 @@ interface PrivacyWebhookPayload {
 }
 
 /**
+ * Make an UNVERIFIED payload field safe to put in a log line.
+ *
+ * Everything the Privacy route logs before the HMAC check is attacker-supplied
+ * — the endpoint is unauthenticated by construction (the signing key can only
+ * be found via the payload's own card token). Quoting through `JSON.stringify`
+ * escapes newlines and control characters, so a token cannot forge a second
+ * log entry, and the length bound stops one request from flooding the log.
+ */
+function forLog(value: string): string {
+  return JSON.stringify(value.length > 64 ? `${value.slice(0, 64)}…` : value);
+}
+
+/**
  * Privacy.com transaction webhook.
  *
  * Privacy posts the FULL Transaction object (no event envelope) for five
@@ -609,7 +622,7 @@ export async function handlePrivacyWebhookRequest(
   );
   if (!resolved) {
     console.log(
-      `[PrivacyWebhook] No Togather card (or no active connection) for card ${cardToken} — ignoring`,
+      `[PrivacyWebhook] No Togather card (or no active connection) for card ${forLog(cardToken)} — ignoring`,
     );
     return new Response(JSON.stringify({ received: true, ignored: true }), {
       status: 200,
@@ -642,7 +655,7 @@ export async function handlePrivacyWebhookRequest(
   // bytes are not the signed message — see lib/finance/privacy.ts.
   const signature = request.headers.get(PRIVACY_HMAC_HEADER);
   if (!(await provider.verifyWebhook(payload, signature))) {
-    console.error(`[PrivacyWebhook] Invalid signature for card ${cardToken}`);
+    console.error(`[PrivacyWebhook] Invalid signature for card ${forLog(cardToken)}`);
     return new Response("Invalid signature", { status: 401 });
   }
 

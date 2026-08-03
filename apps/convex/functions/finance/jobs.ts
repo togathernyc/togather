@@ -1837,6 +1837,28 @@ async function pollOneConnection(
     }
   }
 
+  if (page.truncated) {
+    // The adapter could not read to the end of the feed, so it left the cursor
+    // where it was — the next run will re-read this same window and never
+    // reach what lies beyond it. Recorded as an error (which, per
+    // `isCredentialRejection`, does NOT deactivate the connection: the
+    // credential is fine, the volume isn't) so it shows on the connection
+    // screen instead of looking like a healthy hourly poll forever.
+    const message = `Transaction backlog exceeds one poll — read ${page.transactions.length} and stopped; the cursor is held at ${connection.syncCursor ?? "the initial lookback"} until the backlog clears`;
+    console.error(
+      `[finance] card txn poll truncated for community ${connection.communityId}: ${message}`,
+    );
+    await ctx.runMutation(
+      internal.functions.finance.cardProviderConnections.recordConnectionSync,
+      {
+        connectionId: connection.connectionId,
+        error: message,
+        expectedUpdatedAt: loaded.updatedAt,
+      },
+    );
+    return recorded;
+  }
+
   await ctx.runMutation(
     internal.functions.finance.cardProviderConnections.recordConnectionSync,
     {

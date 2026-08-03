@@ -425,10 +425,16 @@ export function createPrivacyCardProvider(
      * transaction token, and one duplicate read is a much better trade than a
      * one-second gap that silently drops a charge.
      *
-     * IF THE BACKLOG EXCEEDS `PRIVACY_MAX_PAGES`, the cursor does NOT advance.
-     * The next poll re-reads the same window rather than skipping ahead — a
-     * stall an operator will notice, instead of a hole in a church's books
-     * that nobody will. Everything fetched is still returned and recorded.
+     * IF THE BACKLOG EXCEEDS `PRIVACY_MAX_PAGES`, the cursor does NOT advance
+     * and `truncated` comes back true. The next poll re-reads the same window
+     * rather than skipping ahead: advancing would assume a page ordering
+     * Privacy has not confirmed (see this file's header), and guessing wrong
+     * there drops transactions permanently. But a non-advancing cursor is a
+     * poll that repeats the same 2,000 rows every hour and never reaches page
+     * 21, so `truncated` is what makes the stall VISIBLE — the poller records
+     * it as an error on the connection. Without that flag it would look
+     * identical to a healthy poll forever. Everything fetched is still
+     * returned and recorded.
      *
      * Returns the unchanged cursor rather than `null` when there is nothing
      * new. The interface documents `null` as "caught up", but for a
@@ -477,7 +483,7 @@ export function createPrivacyCardProvider(
         }
       }
 
-      return { transactions, nextCursor };
+      return { transactions, nextCursor, truncated: !exhausted };
     },
 
     /**

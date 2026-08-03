@@ -100,6 +100,19 @@ interface PrivacyRequestOptions {
 }
 
 /**
+ * Remove the API key from text that is about to be shown, logged, or stored.
+ *
+ * A plain `split`/`join` rather than a regex: the key is arbitrary text and
+ * would need escaping to be a safe pattern. Short keys are ignored — a
+ * credential shorter than 8 characters is not a real Privacy key, and blindly
+ * replacing a 3-character string would mangle unrelated error text.
+ */
+export function redactApiKey(text: string, apiKey: string): string {
+  if (apiKey.length < 8) return text;
+  return text.split(apiKey).join("[redacted]");
+}
+
+/**
  * One request.
  *
  * Auth is `Authorization: api-key <key>` — Privacy's own scheme, NOT
@@ -139,7 +152,15 @@ async function privacyRequest<T>(
   );
 
   if (!response.ok) {
-    const text = await response.text();
+    // The vendor's own words, with the credential scrubbed. Privacy has no
+    // reason to echo the `Authorization` header back, but this message travels
+    // a long way — a ConvexError to a finance admin on the connect path, and
+    // `console.error` + a persisted `lastError` + `getCardProviderStatus` on
+    // the poll path. An intermediary (WAF, proxy, corporate MITM) that reflects
+    // request headers in an error body would put a live spending key in every
+    // one of those places at once. Scrubbing here, at the one point every
+    // response body passes through, is cheaper than trusting four callers.
+    const text = redactApiKey(await response.text(), client.apiKey);
     throw new PrivacyApiError(
       response.status,
       `Privacy.com API ${options.method} ${path} failed (${response.status}): ${text}`,
@@ -399,6 +420,18 @@ export const PRIVACY_HMAC_HEADER = "X-Privacy-HMAC";
  *   be the divergence, not the fix.
  */
 export function canonicalJsonStringify(value: unknown): string {
+  if (typeof value === "number" && !Number.isFinite(value)) {
+    // REFUSE, don't normalize. `JSON.stringify(Infinity)` is "null", and JSON
+    // has no literal for infinity — but `1e400` is valid JSON that `JSON.parse`
+    // turns into `Infinity`. Folding it onto "null" would mean a signature
+    // computed over `{"a":null}` also verifies `{"a":1e400}`, which is a
+    // semantic change sailing through authentication; on `settled_amount` that
+    // is an infinite expense. Throwing makes it a rejected delivery instead:
+    // `verifyPrivacyWebhookSignature` catches and returns false.
+    throw new Error(
+      "canonicalJsonStringify: refusing to sign a non-finite number — it has no JSON representation distinct from null",
+    );
+  }
   if (value === null || typeof value !== "object") {
     // Numbers, strings, booleans, null. `undefined`/function/symbol return
     // undefined from JSON.stringify — normalize to "null" so a caller never
