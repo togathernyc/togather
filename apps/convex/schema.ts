@@ -3952,7 +3952,16 @@ export default defineSchema({
     // so a partially-refunded gift is only ever transferred/counted at what
     // is actually left of it.
     refundedCents: v.optional(v.number()),
-    recurringId: v.optional(v.string()), // Stripe subscription/recurring-donation id, if recurring
+    // The `recurringDonations` row this gift was billed under, when it came
+    // from a monthly subscription rather than a one-off gift. Reserved: no
+    // code writes it yet — the `invoice.paid` handler that records a monthly
+    // charge as a donation is the PR that starts stamping it, and it will
+    // store that row's `_id` stringified. NOTE: the type stays `v.string()`
+    // rather than `v.id("recurringDonations")` because the field predates the
+    // table and re-typing an existing validator is not an additive schema
+    // change; readers must `ctx.db.get(recurringId as Id<"recurringDonations">)`
+    // and cannot rely on Convex to type- or existence-check the reference.
+    recurringId: v.optional(v.string()),
     receiptEmailStatus: v.string(), // "pending" | "sent" | "failed" — Resend receipt from the church's name/EIN
     // The Stripe payout this donation was matched into by planAllocations
     // (functions/finance/jobs.ts). Stamped once, at plan time, and never
@@ -3989,6 +3998,74 @@ export default defineSchema({
     .index("by_fund", ["fundId"])
     .index("by_stripePaymentIntentId", ["stripePaymentIntentId"])
     .index("by_allocationStatus", ["allocationStatus"]),
+
+  /**
+   * A donor's standing monthly gift to a fund — the Stripe Subscription
+   * behind it, not the money it has moved. Individual monthly charges are
+   * recorded as ordinary `donations` rows when `invoice.paid` fires, so the
+   * ledger, receipts, allocation and transparency views all keep working
+   * unchanged and this table never needs a balance of its own. Everything
+   * Stripe-side lives on the community's CONNECTED account (ADR-032 §1) —
+   * the same account one-off donations charge on.
+   *
+   * `communityId` is denormalized from the fund at write time, following
+   * `ledgerEntries`' precedent, so a row carries its community without a
+   * lookup through `funds`. NOTE: there is deliberately no `by_community`
+   * index yet — nothing queries this table community-wide, and an index costs
+   * write throughput on every subscription event. The first community-scoped
+   * read must add one rather than filter the table.
+   */
+  recurringDonations: defineTable({
+    fundId: v.id("funds"),
+    communityId: v.id("communities"), // Denormalized from funds.communityId
+    donorUserId: v.id("users"), // Required: a subscription needs an account to manage/cancel it
+    amountCents: v.number(), // Base monthly gift
+    feeCoverCents: v.number(), // Donor's voluntary fee-cover add-on, billed with each invoice (never a mandatory surcharge — ADR-031)
+    // Absent until Checkout completes — the Subscription doesn't exist while
+    // the donor is still on Stripe's hosted page.
+    stripeSubscriptionId: v.optional(v.string()),
+    // Customer on the CONNECTED account, NOT the platform account. Donors
+    // have no platform Customer at all (only communities do, for SaaS
+    // billing — `communities.stripeCustomerId`), so this id is only ever
+    // meaningful when used with `stripeAccount: stripeConnectedAccountId`.
+    // Absent until Checkout creates the Customer.
+    stripeCustomerId: v.optional(v.string()),
+    stripeConnectedAccountId: v.string(), // The community's Connect account this subscription lives on
+    // Binds the Checkout return (and the completed-session webhook) to this
+    // row in the window before a subscription id exists — it is the only
+    // handle we have between "row created" and "subscription created".
+    checkoutSessionId: v.string(),
+    status: v.union(
+      v.literal("pending"), // Row created, donor still in Checkout
+      v.literal("active"),
+      v.literal("past_due"),
+      v.literal("canceled"), // Terminal
+    ),
+    currentPeriodEnd: v.optional(v.number()), // Unix timestamp ms — next bill date, mirrored from Stripe
+    canceledAt: v.optional(v.number()), // Unix timestamp ms
+    createdAt: v.number(), // Unix timestamp ms
+    updatedAt: v.number(), // Unix timestamp ms
+  })
+    // Webhook entry point: Connect subscription/invoice events identify
+    // themselves by subscription id and nothing else.
+    //
+    // CAUTION: the field is optional, so every `pending` row shares the same
+    // missing value on this index. `q.eq("stripeSubscriptionId", undefined)`
+    // matches all of them, which means a lookup with an absent id would
+    // return an arbitrary stranger's pending subscription. Every reader MUST
+    // guard on a non-empty id before querying this index.
+    .index("by_stripeSubscriptionId", ["stripeSubscriptionId"])
+    // One active monthly gift per donor per fund. Convex has no unique
+    // constraint — this index is only the lookup the create path checks
+    // before starting a second Checkout; the rule lives in that code.
+    .index("by_donor_fund", ["donorUserId", "fundId"])
+    .index("by_fund", ["fundId"]) // Fund's recurring-giving view
+    // Donor's "my giving" management list. Not redundant with by_donor_fund
+    // despite the shared prefix: this one orders a donor's subscriptions by
+    // _creationTime, where by_donor_fund orders by fundId first.
+    .index("by_donor", ["donorUserId"])
+    // Resolves the Checkout return/webhook before stripeSubscriptionId exists.
+    .index("by_checkoutSessionId", ["checkoutSessionId"]),
 
   /**
    * An Increase virtual/physical card bound to a fund's Increase Account.

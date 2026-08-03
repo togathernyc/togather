@@ -51,7 +51,11 @@ export interface GiveSuccessDisplay {
   amountLabel: string | null;
   /** e.g. "First Church Inc. says thank you", or the community-agnostic fallback. */
   thankYouLine: string;
-  /** e.g. "to Young Adults — Manhattan", or `null` when `fund` is missing. */
+  /**
+   * e.g. "to Young Adults — Manhattan" — or "every month to …" for a monthly
+   * gift, which is the one thing that number under it doesn't say on its own.
+   * `null` when neither a fund nor `recurring` is set.
+   */
   fundLine: string | null;
 }
 
@@ -81,10 +85,14 @@ export function parseGiveSuccessParams(params: {
   amount?: string | string[];
   fund?: string | string[];
   community?: string | string[];
+  /** `"1"` for a monthly gift — set by `buildGiveReturnUrls` and by
+   * `GiveScreen`'s own recurring watcher. Anything else reads as one-off. */
+  recurring?: string | string[];
 }): GiveSuccessDisplay {
   const amountRaw = firstParam(params.amount);
   const fund = firstParam(params.fund);
   const community = firstParam(params.community);
+  const recurring = firstParam(params.recurring) === "1";
 
   // `Number("")` is 0 and `Number(" 12 ")` is 12, so the string is validated by
   // shape first — only digits — rather than by whatever Number() tolerates.
@@ -99,7 +107,25 @@ export function parseGiveSuccessParams(params: {
     amountLabel,
     // "Thank you 🎉" is the community-agnostic fallback: with no community
     // name there is no one to speak for, so the screen thanks in its own voice.
-    thankYouLine: community ? `${community} says thank you` : "Thank you 🎉",
-    fundLine: fund ? `to ${fund}` : null,
+    //
+    // A monthly gift gets its own thanks because the donor just committed to
+    // something ongoing, and a thank-you identical to a one-off's leaves the
+    // biggest thing they did unacknowledged.
+    thankYouLine: recurring
+      ? community
+        ? `${community} says thank you for giving monthly`
+        : "Thank you for giving monthly 🎉"
+      : community
+        ? `${community} says thank you`
+        : "Thank you 🎉",
+    // The amount above this line is one month's charge, not a total — without
+    // "every month" the screen reads as a one-off for the same money.
+    fundLine: recurring
+      ? fund
+        ? `every month to ${fund}`
+        : "every month"
+      : fund
+        ? `to ${fund}`
+        : null,
   };
 }

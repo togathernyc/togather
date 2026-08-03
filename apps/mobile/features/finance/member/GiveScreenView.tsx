@@ -12,7 +12,10 @@
  * the moment the money lands, so the waiting step's own buttons (Reopen /
  * Cancel) are the manual fallback, not the happy path. There is deliberately
  * no "Done": a donor tapping it mid-payment would leave with no idea whether
- * their gift went through. The one exception is `canAutoAdvance === false`
+ * their gift went through. A MONTHLY gift takes the same route with a
+ * different watcher (`GiveScreen` subscribes to the recurring row rather than
+ * a PaymentIntent — subscription-mode Checkout has none), so every state on
+ * this screen is shared. The one exception is `canAutoAdvance === false`
  * (Stripe returned no PaymentIntent, so nothing is watching) — there the
  * screen can never resolve itself, and an exit that doesn't cancel the gift
  * is the only thing standing between the donor and a duplicate donation.
@@ -38,6 +41,7 @@ import {
   WaInsetGroup,
   WaCell,
   WA_GROUP_MARGIN,
+  WA_GROUP_RADIUS,
   WA_GROUP_SPACING,
   WA_CELL_PADDING,
   WA_TYPE_FOOTNOTE,
@@ -49,9 +53,18 @@ import {
 import { formatCents } from "../format";
 import { estimateCoverFeesCents, resolveGiveAmountCents } from "./amount";
 import { GIVING_GOLD, GIVING_GOLD_TINT } from "./giveTheme";
+import { formatMonthlyRate } from "./recurring";
 import type { CheckoutSession, GivingContext } from "./types";
 
 export type GiveStep = "amount" | "confirmation";
+
+/**
+ * One time vs monthly. Chosen ABOVE the amount, not below it: the amount a
+ * donor picks depends on how often they're being asked for it, and a
+ * frequency control discovered after the fact makes the number they already
+ * typed wrong.
+ */
+export type GiveFrequency = "once" | "monthly";
 
 /** Typed-amount display size — the give sheet's one hero number. */
 const AMOUNT_SIZE = 56;
@@ -60,6 +73,7 @@ export interface GiveScreenViewProps {
   /** `undefined` while loading, `null` when giving isn't set up for this group. */
   context: GivingContext | null | undefined;
   step: GiveStep;
+  frequency: GiveFrequency;
   selectedPresetCents: number | null;
   customAmountText: string;
   coverFees: boolean;
@@ -73,6 +87,7 @@ export interface GiveScreenViewProps {
    */
   canAutoAdvance: boolean;
   onBack: () => void;
+  onSelectFrequency: (frequency: GiveFrequency) => void;
   onSelectPreset: (cents: number) => void;
   onCustomAmountChange: (text: string) => void;
   onToggleCoverFees: (value: boolean) => void;
@@ -80,11 +95,14 @@ export interface GiveScreenViewProps {
   onReopenCheckout: () => void;
   /** Leaves the give flow for the fund without touching the gift in flight. */
   onFinishManually: () => void;
+  /** Opens the monthly-giving manage screen for the gift they already have. */
+  onManageRecurringPress: () => void;
 }
 
 export function GiveScreenView({
   context,
   step,
+  frequency,
   selectedPresetCents,
   customAmountText,
   coverFees,
@@ -93,20 +111,32 @@ export function GiveScreenView({
   checkoutSession,
   canAutoAdvance,
   onBack,
+  onSelectFrequency,
   onSelectPreset,
   onCustomAmountChange,
   onToggleCoverFees,
   onContinue,
   onReopenCheckout,
   onFinishManually,
+  onManageRecurringPress,
 }: GiveScreenViewProps) {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
 
+  const monthly = frequency === "monthly";
   const amountCents = resolveGiveAmountCents(selectedPresetCents, customAmountText);
   const feeCents = coverFees && amountCents ? estimateCoverFeesCents(amountCents) : 0;
   const totalCents = (amountCents ?? 0) + feeCents;
-  const canContinue = !!amountCents && !submitting;
+  // One active monthly per fund is a BACKEND rule — the create action rejects a
+  // second one. The CTA steps aside rather than letting the donor find that out
+  // from an error after a tap; switching back to One time brings it straight
+  // back, so nothing here is a dead end.
+  const existingRecurring = context?.existingRecurring ?? null;
+  const blockedByExistingRecurring = monthly && !!existingRecurring;
+  const canContinue = !!amountCents && !submitting && !blockedByExistingRecurring;
+  const ctaLabel = amountCents
+    ? `Give ${formatCents(totalCents)}${monthly ? " monthly" : ""}`
+    : "Give";
 
   // The big display IS the input: a tapped preset writes its dollars into the
   // same field the donor types in, so there is one amount on screen and one
@@ -146,6 +176,7 @@ export function GiveScreenView({
         <WaitingStep
           fundName={context.fundName}
           totalCents={totalCents}
+          monthly={monthly}
           canReopen={!!checkoutSession}
           canAutoAdvance={canAutoAdvance}
           onReopenCheckout={onReopenCheckout}
@@ -166,6 +197,48 @@ export function GiveScreenView({
             <Text style={[styles.kicker, { color: colors.textSecondary }]}>
               Tax-deductible gift to {context.communityLegalName}
             </Text>
+
+            {/* Frequency first, then the amount — same chip vocabulary as the
+                presets below (fill = chosen), so the whole form reads as one
+                row of choices rather than two unrelated controls. */}
+            <View style={styles.frequencyRow}>
+              {(
+                [
+                  ["once", "One time"],
+                  ["monthly", "Monthly"],
+                ] as const
+              ).map(([value, label]) => {
+                const selected = frequency === value;
+                return (
+                  <Pressable
+                    key={value}
+                    onPress={() => onSelectFrequency(value)}
+                    accessibilityRole="button"
+                    accessibilityLabel={label}
+                    accessibilityState={{ selected }}
+                    testID={`give-frequency-${value}`}
+                    style={({ pressed }) => [
+                      styles.presetChip,
+                      {
+                        backgroundColor: selected
+                          ? colors.buttonPrimary
+                          : colors.surfaceGrouped,
+                      },
+                      pressed && styles.pressed,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.presetChipText,
+                        { color: selected ? colors.buttonPrimaryText : colors.text },
+                      ]}
+                    >
+                      {label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
 
             <WaInsetGroup>
               <View style={styles.amountCard}>
@@ -249,29 +322,53 @@ export function GiveScreenView({
               doesn't have, and it fills with the community accent where the
               approved design calls for the neutral dark primary. */}
           <View style={[styles.ctaBar, { paddingBottom: insets.bottom + 12 }]}>
-            <Pressable
-              onPress={onContinue}
-              disabled={!canContinue}
-              accessibilityRole="button"
-              accessibilityLabel={amountCents ? `Give ${formatCents(totalCents)}` : "Give"}
-              accessibilityState={{ disabled: !canContinue }}
-              style={({ pressed }) => [
-                styles.ctaPill,
-                {
-                  backgroundColor: canContinue ? colors.buttonPrimary : colors.buttonDisabled,
-                },
-                pressed && styles.pressed,
-              ]}
-            >
-              <Text
-                style={[
-                  styles.ctaLabel,
-                  { color: canContinue ? colors.buttonPrimaryText : colors.textSecondary },
+            {blockedByExistingRecurring ? (
+              <View
+                testID="give-existing-recurring-notice"
+                style={[styles.noticeCard, { backgroundColor: colors.surfaceGrouped }]}
+              >
+                <Text style={[styles.noticeText, { color: colors.text }]}>
+                  You already give {formatMonthlyRate(existingRecurring.amountCents)}{" "}
+                  to this fund
+                </Text>
+                <Pressable
+                  onPress={onManageRecurringPress}
+                  accessibilityRole="button"
+                  accessibilityLabel="Manage your monthly gift"
+                  style={({ pressed }) => [styles.noticeLink, pressed && styles.pressed]}
+                >
+                  <Text style={[styles.noticeLinkText, { color: GIVING_GOLD }]}>
+                    Manage
+                  </Text>
+                </Pressable>
+              </View>
+            ) : (
+              <Pressable
+                onPress={onContinue}
+                disabled={!canContinue}
+                accessibilityRole="button"
+                accessibilityLabel={ctaLabel}
+                accessibilityState={{ disabled: !canContinue }}
+                style={({ pressed }) => [
+                  styles.ctaPill,
+                  {
+                    backgroundColor: canContinue
+                      ? colors.buttonPrimary
+                      : colors.buttonDisabled,
+                  },
+                  pressed && styles.pressed,
                 ]}
               >
-                {amountCents ? `Give ${formatCents(totalCents)}` : "Give"}
-              </Text>
-            </Pressable>
+                <Text
+                  style={[
+                    styles.ctaLabel,
+                    { color: canContinue ? colors.buttonPrimaryText : colors.textSecondary },
+                  ]}
+                >
+                  {ctaLabel}
+                </Text>
+              </Pressable>
+            )}
           </View>
         </>
       )}
@@ -290,6 +387,7 @@ export function GiveScreenView({
 function WaitingStep({
   fundName,
   totalCents,
+  monthly,
   canReopen,
   canAutoAdvance,
   onReopenCheckout,
@@ -299,6 +397,7 @@ function WaitingStep({
 }: {
   fundName: string;
   totalCents: number;
+  monthly: boolean;
   canReopen: boolean;
   canAutoAdvance: boolean;
   onReopenCheckout: () => void;
@@ -335,7 +434,10 @@ function WaitingStep({
 
       <View style={styles.group}>
         <WaInsetGroup separatorInset={0}>
-          <KeyValueRow label="Amount" value={formatCents(totalCents)} />
+          <KeyValueRow
+            label="Amount"
+            value={monthly ? formatMonthlyRate(totalCents) : formatCents(totalCents)}
+          />
           <KeyValueRow label="Fund" value={fundName} />
         </WaInsetGroup>
       </View>
@@ -531,6 +633,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: WA_GROUP_MARGIN,
   },
 
+  // Same margin as a `WaInsetGroup` card so the chips line up with the amount
+  // card's edges rather than floating loose above it.
+  frequencyRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginHorizontal: WA_GROUP_MARGIN,
+    marginBottom: 16,
+  },
+
   amountCard: { paddingHorizontal: WA_CELL_PADDING, paddingTop: 20, paddingBottom: 16 },
   amountRow: { flexDirection: "row", alignItems: "flex-start", justifyContent: "center" },
   amountPrefix: {
@@ -578,6 +689,22 @@ const styles = StyleSheet.create({
     fontWeight: WA_WEIGHT_SEMIBOLD,
     fontVariant: ["tabular-nums"],
   },
+
+  // Sits in the CTA's slot, at the CTA's height, so the bar doesn't jump when
+  // the donor toggles between One time and Monthly.
+  noticeCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    minHeight: 50,
+    borderRadius: WA_GROUP_RADIUS,
+    paddingHorizontal: WA_CELL_PADDING,
+    paddingVertical: 10,
+    gap: 12,
+  },
+  noticeText: { fontSize: WA_TYPE_SUBTITLE, flexShrink: 1 },
+  noticeLink: { paddingVertical: 4 },
+  noticeLinkText: { fontSize: WA_TYPE_SUBTITLE, fontWeight: WA_WEIGHT_SEMIBOLD },
 
   waitingCard: { alignItems: "center", paddingHorizontal: WA_CELL_PADDING, paddingVertical: 28 },
   lockTile: {

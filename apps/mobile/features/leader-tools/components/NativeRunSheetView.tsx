@@ -60,7 +60,7 @@ const CURRENT_ITEM_BG_DARK = "#2a2700";
 const CURRENT_ITEM_BORDER = "#D4A017";
 
 /** When an item happens relative to the event's service times. */
-type Segment = "before" | "during" | "after";
+export type Segment = "before" | "during" | "after";
 const SEGMENT_OPTIONS: Array<{ key: Segment; label: string }> = [
   { key: "before", label: "Before event" },
   { key: "during", label: "During event" },
@@ -74,7 +74,7 @@ type PlanSummary = {
   times: Array<{ label: string; startsAt: number }>;
 };
 
-type RunSheetItem = {
+export type RunSheetItem = {
   _id: Id<"eventItems">;
   segment: string;
   type: string;
@@ -258,7 +258,7 @@ export function PlanRunSheet({
    */
   embedded?: boolean;
 }) {
-  const { colors, isDark } = useTheme();
+  const { colors } = useTheme();
   const { primaryColor } = useCommunityTheme();
   const { isNetworkAvailable } = useConnectionStatus();
   const { user } = useAuth();
@@ -425,63 +425,10 @@ export function PlanRunSheet({
     [effItems],
   );
 
-  // Expandable rows: which items have their description/notes revealed.
-  const [expandedItemIds, setExpandedItemIds] = useState<Set<string>>(
-    () => new Set(),
-  );
-  const toggleItemExpanded = useCallback((itemId: string) => {
-    setExpandedItemIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(itemId)) next.delete(itemId);
-      else next.add(itemId);
-      return next;
-    });
-  }, []);
-
-  // Collapsible sections: header ids whose following items are hidden.
-  // Persisted to AsyncStorage per group (native-specific key so it never
-  // collides with the PCO viewer's collapse state) and restored on reopen.
-  const [collapsedHeaders, setCollapsedHeaders] = useState<Set<string>>(
-    () => new Set(),
-  );
-  const [collapsedHeadersLoaded, setCollapsedHeadersLoaded] = useState(false);
-  const toggleHeaderCollapsed = useCallback((headerId: string) => {
-    setCollapsedHeaders((prev) => {
-      const next = new Set(prev);
-      if (next.has(headerId)) next.delete(headerId);
-      else next.add(headerId);
-      return next;
-    });
-  }, []);
-
-  const collapsedStorageKey = `native_runsheet_collapsed_${groupId}`;
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const saved = await AsyncStorage.getItem(collapsedStorageKey);
-        if (!cancelled && saved) {
-          setCollapsedHeaders(new Set(JSON.parse(saved)));
-        }
-      } catch (err) {
-        console.error("Failed to load collapsed state:", err);
-      } finally {
-        if (!cancelled) setCollapsedHeadersLoaded(true);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [collapsedStorageKey]);
-  useEffect(() => {
-    // Don't persist until the initial load finishes, to avoid clobbering
-    // saved state with the empty default on first render.
-    if (!collapsedHeadersLoaded) return;
-    AsyncStorage.setItem(
-      collapsedStorageKey,
-      JSON.stringify(Array.from(collapsedHeaders)),
-    ).catch((err) => console.error("Failed to save collapsed state:", err));
-  }, [collapsedHeaders, collapsedHeadersLoaded, collapsedStorageKey]);
+  // Owned here, above the loading/empty early returns below, so a transient
+  // `items === undefined` doesn't wipe what the user has expanded — see the
+  // hook's note.
+  const expansion = useRunSheetExpansion(groupId);
 
   // Live "current item": match the item whose computed [start, start +
   // durationSec) window contains `now` (ticked above). Because `clockTimes` is
@@ -619,62 +566,207 @@ export function PlanRunSheet({
             })}
           </View>
 
-          {viewMode === "mine" && !mineHasContent ? (
-            <View style={styles.mineEmptyState}>
-              <Ionicons name="person-outline" size={22} color={colors.textTertiary} />
-              <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-                {hasAnyViewerRole
-                  ? "None of the run sheet items are tagged with your roles yet."
-                  : "You're not assigned a role on this plan yet."}
-              </Text>
-            </View>
-          ) : (
-            SEGMENT_OPTIONS.map((seg) => {
-              const segItems = itemsBySegment[seg.key];
-              const modeItems =
-                viewMode === "mine"
-                  ? segItems.filter((it) => runSheetItemMatchesViewer(it, viewerRoleIds))
-                  : segItems;
-              if (modeItems.length === 0) return null;
-              // In "Mine", a segment whose only matches are headers has no
-              // actual content to show — skip the whole segment rather than
-              // render a label + bare header row (see runSheetViewerFilter).
-              if (
-                viewMode === "mine" &&
-                !segmentHasContentForViewer(segItems, viewerRoleIds)
-              ) {
-                return null;
-              }
-              // Hide items that follow a collapsed header (positional: a header
-              // owns the rows after it until the next header in the segment).
-              const visibleItems = filterVisible(modeItems, collapsedHeaders);
-              return (
-                <View key={seg.key}>
-                  <Text style={[styles.segmentLabel, { color: colors.textSecondary }]}>
-                    {seg.label.toUpperCase()}
-                  </Text>
-                  {visibleItems.map((item) => (
-                    <ReadOnlyRow
-                      key={item._id}
-                      item={item}
-                      clockMs={clockTimes[item._id]}
-                      peopleByRole={peopleByRole}
-                      colors={colors}
-                      isDark={isDark}
-                      isCurrent={item._id === currentItemId}
-                      isExpanded={expandedItemIds.has(item._id)}
-                      onToggleExpand={() => toggleItemExpanded(item._id)}
-                      isCollapsed={collapsedHeaders.has(item._id)}
-                      onToggleCollapse={() => toggleHeaderCollapsed(item._id)}
-                    />
-                  ))}
-                </View>
-              );
-            })
-          )}
+          <RunSheetItemList
+            itemsBySegment={itemsBySegment}
+            clockTimes={clockTimes}
+            peopleByRole={peopleByRole}
+            viewMode={viewMode}
+            viewerRoleIds={viewerRoleIds}
+            hasAnyViewerRole={hasAnyViewerRole}
+            mineHasContent={mineHasContent}
+            currentItemId={currentItemId}
+            expansion={expansion}
+          />
         </>
       )}
     </Root>
+  );
+}
+
+export type RunSheetExpansion = {
+  /** Item ids whose description/notes are revealed. */
+  expandedItemIds: Set<string>;
+  toggleItemExpanded: (itemId: string) => void;
+  /** Header ids whose following rows are hidden. */
+  collapsedHeaders: Set<string>;
+  toggleHeaderCollapsed: (headerId: string) => void;
+};
+
+/**
+ * Which run sheet rows are expanded, and which section headers are collapsed.
+ *
+ * This MUST be owned by the data-fetching wrapper, not by `RunSheetItemList` —
+ * the list only renders once items have arrived, so holding the state there
+ * would tie it to the list's mount. Any bounce back to the loading branch (an
+ * offline→online flip or an auth-token refresh both return the Convex query to
+ * `undefined` for a beat) would then unmount it and silently collapse every row
+ * the user had opened. Owning it above the loading branch also means the
+ * AsyncStorage restore below starts in parallel with the query, while the
+ * spinner is up, instead of racing the user's first tap on a live list.
+ *
+ * Collapsed headers are persisted per group under a native-specific key so they
+ * never collide with the PCO viewer's collapse state.
+ */
+export function useRunSheetExpansion(groupId: Id<"groups">): RunSheetExpansion {
+  const [expandedItemIds, setExpandedItemIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const toggleItemExpanded = useCallback((itemId: string) => {
+    setExpandedItemIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(itemId)) next.delete(itemId);
+      else next.add(itemId);
+      return next;
+    });
+  }, []);
+
+  const [collapsedHeaders, setCollapsedHeaders] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [collapsedHeadersLoaded, setCollapsedHeadersLoaded] = useState(false);
+  const toggleHeaderCollapsed = useCallback((headerId: string) => {
+    setCollapsedHeaders((prev) => {
+      const next = new Set(prev);
+      if (next.has(headerId)) next.delete(headerId);
+      else next.add(headerId);
+      return next;
+    });
+  }, []);
+
+  const collapsedStorageKey = `native_runsheet_collapsed_${groupId}`;
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const saved = await AsyncStorage.getItem(collapsedStorageKey);
+        if (!cancelled && saved) {
+          setCollapsedHeaders(new Set(JSON.parse(saved)));
+        }
+      } catch (err) {
+        console.error("Failed to load collapsed state:", err);
+      } finally {
+        if (!cancelled) setCollapsedHeadersLoaded(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [collapsedStorageKey]);
+  useEffect(() => {
+    // Don't persist until the initial load finishes, to avoid clobbering
+    // saved state with the empty default on first render.
+    if (!collapsedHeadersLoaded) return;
+    AsyncStorage.setItem(
+      collapsedStorageKey,
+      JSON.stringify(Array.from(collapsedHeaders)),
+    ).catch((err) => console.error("Failed to save collapsed state:", err));
+  }, [collapsedHeaders, collapsedHeadersLoaded, collapsedStorageKey]);
+
+  return {
+    expandedItemIds,
+    toggleItemExpanded,
+    collapsedHeaders,
+    toggleHeaderCollapsed,
+  };
+}
+
+/**
+ * The run sheet's item list: segment labels, collapsible headers and expandable
+ * rows, plus the "Mine" empty state. Presentational — its expand/collapse state
+ * comes in from `useRunSheetExpansion`.
+ *
+ * Split out of `PlanRunSheet` so the expand/collapse behaviour can be rendered
+ * from fixtures without a Convex backend (`/ui-test/run-sheet-expand`, driven by
+ * `tests/e2e/run-sheet-expand.spec.ts`) — the data-fetching wrapper stays above.
+ */
+export function RunSheetItemList({
+  itemsBySegment,
+  clockTimes,
+  peopleByRole,
+  viewMode,
+  viewerRoleIds,
+  hasAnyViewerRole,
+  mineHasContent,
+  currentItemId,
+  expansion,
+}: {
+  itemsBySegment: Record<Segment, RunSheetItem[]>;
+  clockTimes: Record<string, number | null>;
+  peopleByRole: Record<string, string[]>;
+  viewMode: ViewMode;
+  viewerRoleIds: Set<string>;
+  hasAnyViewerRole: boolean;
+  mineHasContent: boolean;
+  currentItemId: string | null;
+  /** From `useRunSheetExpansion`, owned by the caller — see that hook's note. */
+  expansion: RunSheetExpansion;
+}) {
+  const { colors, isDark } = useTheme();
+  const {
+    expandedItemIds,
+    toggleItemExpanded,
+    collapsedHeaders,
+    toggleHeaderCollapsed,
+  } = expansion;
+
+  if (viewMode === "mine" && !mineHasContent) {
+    return (
+      <View style={styles.mineEmptyState}>
+        <Ionicons name="person-outline" size={22} color={colors.textTertiary} />
+        <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+          {hasAnyViewerRole
+            ? "None of the run sheet items are tagged with your roles yet."
+            : "You're not assigned a role on this plan yet."}
+        </Text>
+      </View>
+    );
+  }
+
+  return (
+    <>
+      {SEGMENT_OPTIONS.map((seg) => {
+        const segItems = itemsBySegment[seg.key];
+        const modeItems =
+          viewMode === "mine"
+            ? segItems.filter((it) => runSheetItemMatchesViewer(it, viewerRoleIds))
+            : segItems;
+        if (modeItems.length === 0) return null;
+        // In "Mine", a segment whose only matches are headers has no actual
+        // content to show — skip the whole segment rather than render a label +
+        // bare header row (see runSheetViewerFilter).
+        if (
+          viewMode === "mine" &&
+          !segmentHasContentForViewer(segItems, viewerRoleIds)
+        ) {
+          return null;
+        }
+        // Hide items that follow a collapsed header (positional: a header owns
+        // the rows after it until the next header in the segment).
+        const visibleItems = filterVisible(modeItems, collapsedHeaders);
+        return (
+          <View key={seg.key}>
+            <Text style={[styles.segmentLabel, { color: colors.textSecondary }]}>
+              {seg.label.toUpperCase()}
+            </Text>
+            {visibleItems.map((item) => (
+              <ReadOnlyRow
+                key={item._id}
+                item={item}
+                clockMs={clockTimes[item._id]}
+                peopleByRole={peopleByRole}
+                colors={colors}
+                isDark={isDark}
+                isCurrent={item._id === currentItemId}
+                isExpanded={expandedItemIds.has(item._id)}
+                onToggleExpand={() => toggleItemExpanded(item._id)}
+                isCollapsed={collapsedHeaders.has(item._id)}
+                onToggleCollapse={() => toggleHeaderCollapsed(item._id)}
+              />
+            ))}
+          </View>
+        );
+      })}
+    </>
   );
 }
 
@@ -761,6 +853,7 @@ function ReadOnlyRow({
 
   return (
     <View
+      testID={`run-sheet-row-${item._id}`}
       style={[
         styles.row,
         { backgroundColor: colors.surfaceSecondary },

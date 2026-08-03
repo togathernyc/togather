@@ -9,7 +9,11 @@
  * - `handleFinanceStripeEvent` — called from the EXISTING `/stripe-webhook`
  *   route's switch (functions/ee/billing.ts's billing events already live
  *   there) for whatever billing's switch doesn't handle itself, i.e.
- *   `account.updated`.
+ *   `account.updated`, plus the four types that are AMBIGUOUS between SaaS
+ *   billing and recurring giving (`checkout.session.completed`,
+ *   `customer.subscription.updated`/`.deleted`, `invoice.payment_failed`),
+ *   which http.ts routes here on `event.account` — see
+ *   lib/finance/webhookRouting.ts.
  *
  * Replay safety: Increase (and Stripe) can redeliver the same event more
  * than once. We don't keep a table of handled event ids (schema.ts is out of
@@ -600,6 +604,239 @@ export function splitDonationAmounts(
   };
 }
 
+// ============================================================================
+// Recurring-giving event shapes.
+//
+// Stripe moved several fields between API versions and the connected account
+// decides which version its events are serialized with, so each of these is
+// read from BOTH the pre-2025-03-31 location and the current one. Getting
+// this wrong doesn't fail loudly — it silently drops a donor's monthly gift —
+// so the readers are tolerant by design and each returns null rather than
+// guessing.
+// ============================================================================
+
+/** `data.object` of a `checkout.session.completed` we might own. */
+interface StripeCheckoutSessionObject {
+  id: string;
+  mode?: string;
+  subscription?: string | { id: string } | null;
+  customer?: string | { id: string } | null;
+}
+
+/** `data.object` of an `invoice.*` event. */
+interface StripeInvoiceObject {
+  id?: string;
+  amount_paid?: number;
+  /** Pre-2025-03-31 API versions put the subscription here. */
+  subscription?: string | { id: string } | null;
+  /**
+   * Pre-2025-03-31 sibling of `subscription`, carrying an immutable snapshot
+   * of the subscription's metadata taken when the invoice was finalized.
+   */
+  subscription_details?: { metadata?: Record<string, string> | null } | null;
+  /** 2025-03-31+ moved both under `parent.subscription_details`. */
+  parent?: {
+    subscription_details?: {
+      subscription?: string | { id: string } | null;
+      metadata?: Record<string, string> | null;
+    } | null;
+  } | null;
+  /** Pre-2025-03-31 API versions put the PaymentIntent here. */
+  payment_intent?: string | { id: string } | null;
+  /** 2025-03-31+ moved it into the `payments` sub-list. */
+  payments?: {
+    data?: Array<{
+      payment?: { payment_intent?: string | { id: string } | null } | null;
+    }>;
+  } | null;
+  lines?: { data?: Array<{ period?: { end?: number } | null }> } | null;
+}
+
+/** `data.object` of a `customer.subscription.*` event. */
+interface StripeSubscriptionObject {
+  id: string;
+  status?: string;
+  /** Pre-2025-03-31; newer versions put it on each item instead. */
+  current_period_end?: number;
+  cancel_at_period_end?: boolean;
+  metadata?: Record<string, string> | null;
+  items?: {
+    data?: Array<{
+      current_period_end?: number;
+      price?: { unit_amount?: number | null } | null;
+    }>;
+  } | null;
+}
+
+/** Unwraps Stripe's "id string OR expanded object" union. */
+function stripeId(value: string | { id: string } | null | undefined): string | null {
+  if (typeof value === "string") return value || null;
+  return value?.id ?? null;
+}
+
+/** The subscription an invoice belongs to, across API versions. */
+export function resolveInvoiceSubscriptionId(
+  invoice: StripeInvoiceObject,
+): string | null {
+  return (
+    stripeId(invoice.subscription) ??
+    stripeId(invoice.parent?.subscription_details?.subscription)
+  );
+}
+
+/**
+ * The `recurringDonations` row id we stamped on the subscription, as echoed
+ * back on the invoice, across API versions.
+ *
+ * A LOCATOR ONLY — never an amount, a fund, or a donor. Stripe does not
+ * guarantee webhook ORDER, so `invoice.paid` for the very first month can
+ * arrive before `checkout.session.completed` has bound the subscription id to
+ * the row, and a subscription-id lookup would then find nothing and silently
+ * drop a real payment. This is the second way to find the same row; what that
+ * row SAYS is still the only thing trusted about the gift, and the caller
+ * re-checks `event.account` against it exactly as it does on the normal path.
+ */
+export function resolveInvoiceRecurringDonationId(
+  invoice: StripeInvoiceObject,
+): string | null {
+  const id =
+    invoice.subscription_details?.metadata?.recurringDonationId ??
+    invoice.parent?.subscription_details?.metadata?.recurringDonationId;
+  return typeof id === "string" && id.length > 0 ? id : null;
+}
+
+/**
+ * The PaymentIntent that paid an invoice, across API versions. This is the
+ * idempotency key a recurring donation is recorded under — the same key a
+ * one-off gift uses — so a redelivered `invoice.paid` can't double-credit.
+ */
+export function resolveInvoicePaymentIntentId(
+  invoice: StripeInvoiceObject,
+): string | null {
+  const legacy = stripeId(invoice.payment_intent);
+  if (legacy) return legacy;
+  for (const entry of invoice.payments?.data ?? []) {
+    const id = stripeId(entry.payment?.payment_intent);
+    if (id) return id;
+  }
+  return null;
+}
+
+/**
+ * Last resort for an invoice's PaymentIntent: ask Stripe for the invoice
+ * again, with `payments` expanded.
+ *
+ * `Invoice.payments` is typed OPTIONAL by the SDK — unlike `lines`,
+ * `amount_paid` and `parent`, which are not — the convention for a field that
+ * may only arrive when expanded, and webhook payloads are never expanded. When
+ * the delivered payload does carry it, `resolveInvoicePaymentIntentId` already
+ * answered and this never runs. When it doesn't, the alternative is dropping a
+ * monthly gift Stripe really did collect, which is far worse than one extra
+ * API call on a path that fires once a month per donor.
+ *
+ * Returns null on any failure — the caller then logs loudly and declines to
+ * record, rather than inventing an idempotency key.
+ */
+async function fetchInvoicePaymentIntentId(
+  invoiceId: string | undefined,
+  eventAccount: string | undefined,
+): Promise<string | null> {
+  if (!invoiceId || !eventAccount) return null;
+  try {
+    const Stripe = (await import("stripe")).default;
+    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
+      apiVersion: "2026-02-25.clover",
+    });
+    const fresh = (await stripe.invoices.retrieve(
+      invoiceId,
+      { expand: ["payments"] },
+      { stripeAccount: eventAccount },
+    )) as StripeInvoiceObject;
+    return resolveInvoicePaymentIntentId(fresh);
+  } catch (error) {
+    console.error(
+      `[finance] invoice.paid: could not re-read invoice ${invoiceId} for its PaymentIntent`,
+      error,
+    );
+    return null;
+  }
+}
+
+/** When the paid-for period ends, in ms — the donor-facing "next bill" date. */
+export function resolveInvoicePeriodEndMs(
+  invoice: StripeInvoiceObject,
+): number | undefined {
+  const end = invoice.lines?.data?.[0]?.period?.end;
+  return typeof end === "number" ? end * 1000 : undefined;
+}
+
+/**
+ * Stripe's subscription status vocabulary mapped onto the four states
+ * `recurringDonations.status` models.
+ *
+ * `incomplete` means the very first payment hasn't succeeded yet, which is
+ * exactly what our "pending" already means — returning null leaves the row
+ * where it is rather than inventing a transition. Everything that means "we
+ * are not collecting from this card right now" collapses to `past_due`,
+ * because that is the only state the donor-facing copy distinguishes.
+ */
+export function mapStripeSubscriptionStatus(
+  status: string | undefined,
+): "active" | "past_due" | "canceled" | null {
+  switch (status) {
+    case "active":
+    case "trialing":
+      return "active";
+    case "past_due":
+    case "unpaid":
+    case "paused":
+      return "past_due";
+    case "canceled":
+    case "incomplete_expired":
+      return "canceled";
+    default:
+      return null; // "incomplete" and anything Stripe adds later.
+  }
+}
+
+/** The period end a subscription object reports, in ms, across API versions. */
+export function resolveSubscriptionPeriodEndMs(
+  subscription: StripeSubscriptionObject,
+): number | undefined {
+  const end =
+    subscription.current_period_end ??
+    subscription.items?.data?.[0]?.current_period_end;
+  return typeof end === "number" ? end * 1000 : undefined;
+}
+
+/**
+ * The gift/fee-cover split a subscription now charges, or null.
+ *
+ * Only trusted when the metadata WE set adds up to the price the subscription
+ * actually bills. A donor changing their amount updates both in one Stripe
+ * call (`updateRecurringAmount`), so a disagreement means the metadata is
+ * stale or was written by something else — in which case leaving the row
+ * alone beats recording a split the donor isn't being billed.
+ */
+export function resolveSubscriptionAmounts(
+  subscription: StripeSubscriptionObject,
+): { amountCents: number; feeCoverCents: number } | null {
+  const unitAmount = subscription.items?.data?.[0]?.price?.unit_amount;
+  if (typeof unitAmount !== "number") return null;
+  const amountCents = Number(subscription.metadata?.amountCents);
+  const feeCoverCents = Number(subscription.metadata?.feeCoverCents);
+  if (
+    !Number.isInteger(amountCents) ||
+    !Number.isInteger(feeCoverCents) ||
+    amountCents <= 0 ||
+    feeCoverCents < 0 ||
+    amountCents + feeCoverCents !== unitAmount
+  ) {
+    return null;
+  }
+  return { amountCents, feeCoverCents };
+}
+
 export async function handleFinanceStripeEvent(
   ctx: ActionCtx,
   event: StripeFinanceEvent,
@@ -681,6 +918,129 @@ export async function handleFinanceStripeEvent(
           amountCents: baseCents,
           feeCoverCents,
           communityId: metadata.communityId,
+        },
+      );
+      return;
+    }
+
+    // ------------------------------------------------------------------
+    // Recurring giving. http.ts routes these here only when
+    // `isConnectEvent(event)` — the platform-account versions belong to SaaS
+    // billing (see lib/finance/webhookRouting.ts).
+    // ------------------------------------------------------------------
+
+    case "checkout.session.completed": {
+      const session = event.data.object as StripeCheckoutSessionObject;
+      // A one-off donation Checkout needs nothing here: its money is
+      // recorded from `payment_intent.succeeded`, and it has no row to bind.
+      if (session.mode !== "subscription") {
+        return;
+      }
+      const subscriptionId = stripeId(session.subscription);
+      if (!subscriptionId) {
+        console.error(
+          `[finance] checkout.session.completed: subscription-mode session ${session.id} has no subscription`,
+        );
+        return;
+      }
+      await ctx.runMutation(
+        internal.functions.finance.giving.bindRecurringSubscription,
+        {
+          checkoutSessionId: session.id,
+          stripeSubscriptionId: subscriptionId,
+          stripeCustomerId: stripeId(session.customer) ?? undefined,
+          eventAccount: event.account,
+        },
+      );
+      return;
+    }
+
+    case "invoice.paid": {
+      // THE money event for monthly giving. A subscription's PaymentIntent
+      // carries no metadata of ours (subscription mode forbids
+      // `payment_intent_data`), so `payment_intent.succeeded` ignores it and
+      // this is where a recurring charge becomes a `donations` row.
+      const invoice = event.data.object as StripeInvoiceObject;
+      const subscriptionId = resolveInvoiceSubscriptionId(invoice);
+      if (!subscriptionId) {
+        return; // A one-off invoice — not a monthly gift.
+      }
+      const paymentIntentId =
+        resolveInvoicePaymentIntentId(invoice) ??
+        (await fetchInvoicePaymentIntentId(invoice.id, event.account));
+      if (!paymentIntentId) {
+        // Without it there is no idempotency key, and recording anyway would
+        // risk double-crediting on redelivery. Loud, because a real monthly
+        // gift landing here means money collected but not credited.
+        console.error(
+          `[finance] invoice.paid: invoice ${invoice.id ?? "?"} for subscription ${subscriptionId} has no payment_intent — not recording`,
+        );
+        return;
+      }
+      await ctx.runMutation(
+        internal.functions.finance.giving.recordRecurringDonationPaid,
+        {
+          stripeSubscriptionId: subscriptionId,
+          paymentIntentId,
+          amountPaidCents: invoice.amount_paid,
+          currentPeriodEnd: resolveInvoicePeriodEndMs(invoice),
+          eventAccount: event.account,
+          // Only used if the subscription id hasn't been bound to a row yet —
+          // see resolveInvoiceRecurringDonationId.
+          recurringDonationIdHint:
+            resolveInvoiceRecurringDonationId(invoice) ?? undefined,
+        },
+      );
+      return;
+    }
+
+    case "invoice.payment_failed": {
+      const invoice = event.data.object as StripeInvoiceObject;
+      const subscriptionId = resolveInvoiceSubscriptionId(invoice);
+      if (!subscriptionId) {
+        return;
+      }
+      // No dunning email in this pass — the row going `past_due` is what the
+      // donor-facing management screen renders from.
+      await ctx.runMutation(
+        internal.functions.finance.giving.applyRecurringSubscriptionState,
+        {
+          stripeSubscriptionId: subscriptionId,
+          status: "past_due",
+          eventAccount: event.account,
+          reason: "invoice.payment_failed",
+        },
+      );
+      return;
+    }
+
+    case "customer.subscription.updated": {
+      const subscription = event.data.object as StripeSubscriptionObject;
+      const amounts = resolveSubscriptionAmounts(subscription);
+      await ctx.runMutation(
+        internal.functions.finance.giving.applyRecurringSubscriptionState,
+        {
+          stripeSubscriptionId: subscription.id,
+          status: mapStripeSubscriptionStatus(subscription.status) ?? undefined,
+          currentPeriodEnd: resolveSubscriptionPeriodEndMs(subscription),
+          amountCents: amounts?.amountCents,
+          feeCoverCents: amounts?.feeCoverCents,
+          eventAccount: event.account,
+          reason: "customer.subscription.updated",
+        },
+      );
+      return;
+    }
+
+    case "customer.subscription.deleted": {
+      const subscription = event.data.object as StripeSubscriptionObject;
+      await ctx.runMutation(
+        internal.functions.finance.giving.applyRecurringSubscriptionState,
+        {
+          stripeSubscriptionId: subscription.id,
+          status: "canceled",
+          eventAccount: event.account,
+          reason: "customer.subscription.deleted",
         },
       );
       return;
