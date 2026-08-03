@@ -714,13 +714,22 @@ describe("getCardProvider", () => {
     ).resolves.toBe("none");
   });
 
-  test("a provider whose adapter isn't built yet fails loudly, not silently onto Increase", async () => {
+  /**
+   * The BILL adapter EXISTS now (ADR-033 Phase 2), so this case moved from
+   * "the code isn't there" to "the credential isn't there" — same as Privacy
+   * below, and for the same reason: the message decides whether an admin goes
+   * to paste a token or goes to ask an engineer about a deploy.
+   *
+   * What must NOT happen either way is the fall-through to Increase, which
+   * would issue a card at Togather's bank for a church that chose their own.
+   */
+  test("bill with no connection fails on the credential, not onto Increase", async () => {
     const t = convexTest(schema, modules);
     const f = await seed(t, { cardProvider: "bill" });
 
     await expect(
       t.run(async (ctx) => getCardProvider(ctx, f.communityId)),
-    ).rejects.toThrow(/isn't available yet/i);
+    ).rejects.toThrow(/BILL Spend & Expense account isn't connected/i);
   });
 
   /**
