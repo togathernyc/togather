@@ -29,6 +29,7 @@ import {
   PRIVACY_CAPABILITIES,
   toPrivacyLimit,
 } from "../lib/finance/cardProviders/privacy";
+import { supportsWeeklyLimits } from "../lib/finance/cardProviders";
 import {
   canonicalJsonStringify,
   redactApiKey,
@@ -133,6 +134,16 @@ describe("limit mapping", () => {
     expect(isDegradedLimitPeriod("week")).toBe(true);
     expect(isDegradedLimitPeriod("month")).toBe(false);
     expect(isDegradedLimitPeriod("charge")).toBe(false);
+  });
+
+  test("the name-keyed capability agrees with the adapter's own", () => {
+    // `supportsWeeklyLimits` exists because the mutations that gate a limit
+    // have no credential to build an adapter from. Two sources of the same
+    // truth is a drift risk, so pin them together.
+    expect(supportsWeeklyLimits("privacy")).toBe(
+      PRIVACY_CAPABILITIES.weeklyLimits,
+    );
+    expect(supportsWeeklyLimits("increase")).toBe(true);
   });
 
   test("no limit is stated EXPLICITLY, not omitted", () => {
@@ -697,6 +708,53 @@ describe("listTransactions", () => {
     // hour and never reaches page 21; without this flag it would be
     // indistinguishable from a healthy run forever.
     expect(page.truncated).toBe(true);
+  });
+
+  test("the cursor stops BELOW an unsettled transaction, however new the rest is", async () => {
+    // Privacy accumulates a clearing onto the SAME transaction without moving
+    // `created`. A plain high-water mark would step past a still-pending
+    // authorization, and if its clearing webhook were then missed, nothing
+    // would ever import the settled charge.
+    reply({
+      data: [
+        {
+          token: "t_pending",
+          card_token: "card_abc123",
+          amount: 500,
+          status: "PENDING",
+          created: "2026-08-01T10:00:00Z",
+          merchant: { descriptor: "SHOP" },
+        },
+        {
+          token: "t_settled",
+          card_token: "card_abc123",
+          amount: 900,
+          settled_amount: 900,
+          status: "SETTLED",
+          created: "2026-08-01T18:00:00Z",
+          merchant: { descriptor: "SHOP" },
+        },
+      ],
+      page: 1,
+      total_pages: 1,
+    });
+    const page = await adapter().listTransactions!("2026-08-01T09:00:00Z");
+    // NOT 18:00 — the next poll must still see t_pending.
+    expect(page.nextCursor).toBe("2026-08-01T09:00:00Z");
+  });
+
+  test("with everything terminal, the cursor advances normally", async () => {
+    reply(
+      txnPage(
+        [
+          { token: "t1", created: "2026-08-01T10:00:00Z" },
+          { token: "t2", created: "2026-08-01T18:00:00Z" },
+        ],
+        1,
+      ),
+    );
+    const page = await adapter().listTransactions!("2026-08-01T09:00:00Z");
+    expect(page.nextCursor).toBe("2026-08-01T18:00:00.000Z");
   });
 
   test("a normal pull is not flagged truncated", async () => {

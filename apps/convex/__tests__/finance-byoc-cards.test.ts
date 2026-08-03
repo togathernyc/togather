@@ -559,6 +559,36 @@ describe("issuing a card on a BYO provider", () => {
     );
   });
 
+  test("a WEEKLY limit is refused, not silently widened to a month", async () => {
+    // The adapter would map week -> MONTHLY at the same number (safe for the
+    // money), but the card screen renders "/ week" with a Monday reset — so
+    // the cardholder would learn the truth by being declined for three weeks.
+    const t = convexTest(schema, modules);
+    const f = await seed(t);
+    await connect(t, f);
+
+    await expect(
+      t.mutation(api.functions.finance.cards.createFundCard, {
+        token: await tokenFor(f.primaryAdminUserId),
+        fundId: f.fundId,
+        holderUserId: f.cardholderUserId,
+        name: "Supplies",
+        spendLimitCents: 10_000,
+        limitPeriod: "week",
+      }),
+    ).rejects.toThrow(/no weekly spending limit/i);
+
+    const cardId = await issueCard(t, f);
+    await expect(
+      t.mutation(api.functions.finance.cards.setCardLimit, {
+        token: await tokenFor(f.primaryAdminUserId),
+        cardId,
+        spendLimitCents: 20_000,
+        limitPeriod: "week",
+      }),
+    ).rejects.toThrow(/no weekly spending limit/i);
+  });
+
   test("without a connection, creation is refused with a route forward", async () => {
     const t = convexTest(schema, modules);
     const f = await seed(t);

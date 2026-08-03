@@ -80,6 +80,7 @@ import {
   isBringYourOwnProvider,
   loadActiveProviderConnection,
   resolveCardProviderName,
+  supportsWeeklyLimits,
 } from "../../lib/finance/cardProviders";
 import type {
   CardState,
@@ -226,6 +227,26 @@ async function describeCardIssuingReadiness(
   return fund.increaseAccountId ? null : "This fund's bank account isn't ready yet";
 }
 
+/**
+ * Refuse a limit period the community's issuer cannot actually enforce.
+ *
+ * Privacy has no weekly window, and the adapter would quietly widen "$100 per
+ * week" to "$100 per MONTH" — strictly tighter for the money, but the card
+ * screen still reads "/ week" with a Monday reset, so the cardholder finds out
+ * by being declined for the rest of the month. Refusing here, where the
+ * finance admin is choosing, is the version of this that doesn't lie.
+ */
+function assertLimitPeriodSupported(
+  providerName: Awaited<ReturnType<typeof resolveCardProviderName>>,
+  limitPeriod: CardLimitPeriod | undefined,
+): void {
+  if (limitPeriod !== "week") return;
+  if (supportsWeeklyLimits(providerName)) return;
+  throw new Error(
+    `${providerName} has no weekly spending limit — choose "Per month" or "Per transaction"`,
+  );
+}
+
 export const createFundCard = mutation({
   args: {
     token: v.string(),
@@ -275,6 +296,7 @@ export const createFundCard = mutation({
     if (readiness) {
       throw new Error(readiness);
     }
+    assertLimitPeriodSupported(providerName, args.limitPeriod);
 
     // The holder must ACTUALLY hold cardholder+ on the fund's own fundRoles
     // grant — deliberately not `requireFundRole`'s community-admin override,
@@ -828,6 +850,10 @@ export const setCardLimit = mutation({
     await requireFundRole(ctx, fund._id, userId, "finance_admin");
 
     validateCardLimit(args.spendLimitCents, args.limitPeriod);
+    assertLimitPeriodSupported(
+      await resolveCardProviderName(ctx, fund.communityId),
+      args.limitPeriod,
+    );
 
     // The same fund/card readiness gates `createFundCard` applies. Changing a
     // limit is mostly a spending-power GRANT (that's why it's finance_admin

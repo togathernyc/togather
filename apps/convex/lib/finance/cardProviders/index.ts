@@ -231,6 +231,26 @@ export async function createUnsavedProvider(
   );
 }
 
+/**
+ * Can this provider enforce a per-WEEK spend limit natively?
+ *
+ * Kept here, keyed on the NAME, because the callers that need it are mutations
+ * with no credential to build an adapter from — and this must never be the
+ * kind of question that requires decrypting a church's API key to answer.
+ * MUST agree with the adapter's own `capabilities.weeklyLimits`; a test pins
+ * that the two cannot drift.
+ *
+ * Why refuse rather than degrade: Privacy has TRANSACTION | MONTHLY | ANNUALLY
+ * | FOREVER and no week. Mapping "$100/week" onto "$100/month" is strictly
+ * tighter, which is the safe direction for the money — but the card screen
+ * still says "/ week" with a Monday reset, so the cardholder learns the truth
+ * by being declined for three weeks. An honest refusal at the gate beats a
+ * safe number under a false label.
+ */
+export function supportsWeeklyLimits(name: CardProviderName): boolean {
+  return name !== "privacy";
+}
+
 /** Does this provider bring its own, community-held credential? */
 export function isBringYourOwnProvider(
   name: CardProviderName,

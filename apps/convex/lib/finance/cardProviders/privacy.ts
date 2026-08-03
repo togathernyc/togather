@@ -62,6 +62,14 @@ import type {
 /**
  * Togather period -> Privacy `spend_limit_duration`.
  *
+ * NOTE: `week` is now REFUSED at the gate — `supportsWeeklyLimits` in
+ * lib/finance/cardProviders/index.ts stops a weekly limit reaching a Privacy
+ * card at all, because the UI renders "/ week" with a Monday reset and a
+ * silently monthly cap makes that copy a lie the cardholder discovers by being
+ * declined. This mapping stays as the floor beneath that gate: if a weekly
+ * limit ever does arrive here, it must degrade in the STRICTER direction, not
+ * be dropped.
+ *
  * `week` IS THE LOSSY ONE. Privacy has no weekly window, so a "$100 per week"
  * card becomes "$100 per MONTH" — the same number, a longer window. That
  * direction is chosen deliberately: it can only ever be STRICTER than what the
@@ -471,12 +479,33 @@ export function createPrivacyCardProvider(
 
       const transactions = collected.map(normalizePrivacyTransaction);
 
+      // A PENDING transaction is one we deliberately did not record, and
+      // Privacy accumulates its clearing onto the SAME transaction without
+      // changing `created`. So a high-water mark taken over everything would
+      // step past an authorization that has not cleared yet, and if its
+      // clearing webhook is then missed, the settled charge is never imported
+      // by anything — the exact hole this backstop exists to prevent.
+      //
+      // The cursor therefore stops BELOW the oldest transaction that can still
+      // change state. Terminal ones (settled, declined/voided) are safe to
+      // pass: settled is already recorded, and a later RETURN on it is refund
+      // work the recorder skips either way.
+      let holdBackFrom: number | null = null;
+      for (const txn of transactions) {
+        if (txn.state !== "pending") continue;
+        if (Number.isNaN(txn.occurredAtMs)) continue;
+        if (holdBackFrom === null || txn.occurredAtMs < holdBackFrom) {
+          holdBackFrom = txn.occurredAtMs;
+        }
+      }
+
       // Only advance past what we know we've seen ALL of.
       let nextCursor = cursor;
       if (exhausted) {
         for (const txn of collected) {
           const parsed = Date.parse(txn.created);
           if (Number.isNaN(parsed)) continue;
+          if (holdBackFrom !== null && parsed >= holdBackFrom) continue;
           if (nextCursor === null || parsed > Date.parse(nextCursor)) {
             nextCursor = new Date(parsed).toISOString();
           }

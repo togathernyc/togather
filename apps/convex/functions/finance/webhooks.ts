@@ -365,7 +365,16 @@ export const auditOverLimitCardCharge = internalMutation({
       const charges = await ctx.db
         .query("expenses")
         .withIndex("by_card_created", (q) =>
-          q.eq("cardId", args.cardId).gte("createdAt", windowStart),
+          q
+            .eq("cardId", args.cardId)
+            .gte("createdAt", windowStart)
+            // UPPER bound, and it is `atMs` rather than the window's end: the
+            // question is "had this card spent past its limit AT THE MOMENT
+            // this charge settled?", so charges that had not happened yet are
+            // not evidence. It also stops a backfilled July charge — which the
+            // poll can import in August — from summing August's spending into
+            // July's window and raising a limit_exceeded that never happened.
+            .lte("createdAt", args.atMs),
         )
         .collect();
       windowTotalCents = charges
