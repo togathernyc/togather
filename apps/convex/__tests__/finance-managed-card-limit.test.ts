@@ -271,7 +271,16 @@ async function connect(t: ReturnType<typeof convexTest>, f: Fixture) {
   );
 }
 
-/** Ledger rows written directly, so a fixture never queues provider calls. */
+/**
+ * Ledger rows written directly, so a fixture never queues provider calls.
+ *
+ * A `card_capture` entry takes a `cardId`, because in production one never
+ * exists without it: `recordCardSettlement` writes the debit and the
+ * `card_charge` expense together, and the expense is how the managed-limit
+ * formula tells THIS card's spend (which the provider already counted) from a
+ * previous card's (which it did not). Seeding the debit alone would model a
+ * charge belonging to no card at all.
+ */
 async function seedLedger(
   t: ReturnType<typeof convexTest>,
   f: Fixture,
@@ -279,6 +288,7 @@ async function seedLedger(
     direction: "credit" | "debit";
     kind: "donation" | "reimbursement" | "card_capture" | "fee";
     amountCents: number;
+    cardId?: Id<"cards">;
   }>,
 ) {
   await t.run(async (ctx) => {
@@ -294,6 +304,19 @@ async function seedLedger(
         idempotencyKey: `seed:${f.fundId}:${i}:${Math.random()}`,
         createdAt: Date.now(),
       });
+      if (entry.kind === "card_capture" && entry.cardId) {
+        const timestamp = Date.now();
+        await ctx.db.insert("expenses", {
+          fundId: f.fundId,
+          submitterId: f.cardholderUserId,
+          amountCents: entry.amountCents,
+          kind: "card_charge",
+          status: "pending",
+          cardId: entry.cardId,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        });
+      }
       balance +=
         entry.direction === "credit" ? entry.amountCents : -entry.amountCents;
     }
@@ -325,10 +348,13 @@ async function issueCard(
 /** Every `syncManagedCardLimit` run currently queued on the scheduler. */
 async function queuedSyncs(t: ReturnType<typeof convexTest>): Promise<number> {
   return await t.run(async (ctx) => {
-    const scheduled = await ctx.db.system.query("_scheduled_functions").collect();
+    const scheduled = await ctx.db.system
+      .query("_scheduled_functions")
+      .collect();
     return scheduled.filter(
       (row) =>
-        row.name.includes("syncManagedCardLimit") && row.state.kind === "pending",
+        row.name.includes("syncManagedCardLimit") &&
+        row.state.kind === "pending",
     ).length;
   });
 }
@@ -355,8 +381,6 @@ describe("creating a managed card", () => {
     await seedLedger(t, f, [
       { direction: "credit", kind: "donation", amountCents: 50_000 },
       { direction: "debit", kind: "reimbursement", amountCents: 10_000 },
-      // Already counted by Privacy against the lifetime cap — excluded.
-      { direction: "debit", kind: "card_capture", amountCents: 25_000 },
     ]);
 
     const cardId = await issueCard(t, f);
@@ -372,10 +396,97 @@ describe("creating a managed card", () => {
     expect(card!.limitPeriod).toBeUndefined();
     expect(card!.controls).toEqual({ managedLimit: true });
 
-    // The equality the whole mechanism exists for.
+    // The equality the whole mechanism exists for. The card spends 25,000,
+    // which Privacy counts against the 40,000 lifetime cap itself — so what
+    // remains there is the fund's balance, to the cent.
+    await seedLedger(t, f, [
+      { direction: "debit", kind: "card_capture", amountCents: 25_000, cardId },
+    ]);
     const fund = await t.run(async (ctx) => ctx.db.get(f.fundId));
     expect(card!.spendLimitCents! - 25_000).toBe(fund!.balanceCents);
     expect(fund!.balanceCents).toBe(15_000);
+  });
+
+  test("a REPLACEMENT card is capped at the fund's balance, not the closed card's headroom", async () => {
+    // The provider's lifetime counter belongs to a card id and dies with the
+    // card. A fund-wide `credits − nonCardDebits` would hand the replacement
+    // every cent the closed card already spent, a second time.
+    const t = convexTest(schema, modules);
+    const f = await seed(t);
+    await connect(t, f);
+    await seedLedger(t, f, [
+      { direction: "credit", kind: "donation", amountCents: 50_000 },
+    ]);
+    const firstCardId = await issueCard(t, f);
+    await seedLedger(t, f, [
+      {
+        direction: "debit",
+        kind: "card_capture",
+        amountCents: 25_000,
+        cardId: firstCardId,
+      },
+    ]);
+
+    await t.mutation(api.functions.finance.cards.cancelCard, {
+      token: await tokenFor(f.primaryAdminUserId),
+      cardId: firstCardId,
+    });
+    await t.action(internal.functions.finance.cards.applyCardStatus, {
+      cardId: firstCardId,
+      state: "closed",
+    });
+
+    privacy.createPrivacyCard.mockClear();
+    const replacementId = await issueCard(t, f);
+
+    const [, params] = privacy.createPrivacyCard.mock.calls[0] as any[];
+    expect(params.spend_limit).toBe(25_000);
+
+    const [replacement, fund] = await t.run(async (ctx) => [
+      await ctx.db.get(replacementId),
+      await ctx.db.get(f.fundId),
+    ]);
+    expect(replacement!.spendLimitCents).toBe(25_000);
+    // A card that has spent nothing yet may spend exactly the fund's balance.
+    expect(fund!.balanceCents).toBe(25_000);
+  });
+
+  test("a manual cap on a replacement is measured against the fund, not the old card", async () => {
+    const t = convexTest(schema, modules);
+    const f = await seed(t);
+    await connect(t, f);
+    await seedLedger(t, f, [
+      { direction: "credit", kind: "donation", amountCents: 50_000 },
+    ]);
+    const firstCardId = await issueCard(t, f);
+    await seedLedger(t, f, [
+      {
+        direction: "debit",
+        kind: "card_capture",
+        amountCents: 40_000,
+        cardId: firstCardId,
+      },
+    ]);
+    await t.mutation(api.functions.finance.cards.cancelCard, {
+      token: await tokenFor(f.primaryAdminUserId),
+      cardId: firstCardId,
+    });
+    await t.action(internal.functions.finance.cards.applyCardStatus, {
+      cardId: firstCardId,
+      state: "closed",
+    });
+
+    // The fund holds 10,000. A 30,000 cap was reachable under the old
+    // fund-wide formula and is refused now.
+    await expect(
+      t.mutation(api.functions.finance.cards.createFundCard, {
+        token: await tokenFor(f.primaryAdminUserId),
+        fundId: f.fundId,
+        holderUserId: f.cardholderUserId,
+        name: "Replacement",
+        spendLimitCents: 30_000,
+      }),
+    ).rejects.toThrow(/\$100\.00 left to spend/);
   });
 
   test("a second card on the same fund is refused, with the reason", async () => {
@@ -491,7 +602,7 @@ describe("syncing the managed limit", () => {
     // A CARD charge moves nothing: Privacy already counted it.
     privacy.updatePrivacyCard.mockClear();
     await seedLedger(t, f, [
-      { direction: "debit", kind: "card_capture", amountCents: 30_000 },
+      { direction: "debit", kind: "card_capture", amountCents: 30_000, cardId },
     ]);
     await t.action(internal.functions.finance.cards.syncManagedCardLimit, {
       cardId,
@@ -610,13 +721,16 @@ describe("postLedgerEntry schedules the sync", () => {
     });
     expect(await queuedSyncs(t)).toBe(0);
 
-    await t.mutation(internal.functions.finance.giving.recordDonationSucceeded, {
-      paymentIntentId: `pi_${Math.random()}`,
-      fundId: f.fundId,
-      amountCents: 20_000,
-      feeCoverCents: 0,
-      communityId: f.communityId,
-    });
+    await t.mutation(
+      internal.functions.finance.giving.recordDonationSucceeded,
+      {
+        paymentIntentId: `pi_${Math.random()}`,
+        fundId: f.fundId,
+        amountCents: 20_000,
+        feeCoverCents: 0,
+        communityId: f.communityId,
+      },
+    );
 
     expect(await queuedSyncs(t)).toBe(1);
     expect(cardId).toBeDefined();
@@ -713,7 +827,10 @@ describe("the manual cap", () => {
 
     expect(lastPatchedLimit()).toBe(20_000);
     const card = await t.run(async (ctx) => ctx.db.get(cardId));
-    expect(card!.controls).toEqual({ managedLimit: true, manualCapCents: 20_000 });
+    expect(card!.controls).toEqual({
+      managedLimit: true,
+      manualCapCents: 20_000,
+    });
     expect(card!.spendLimitCents).toBe(20_000);
   });
 

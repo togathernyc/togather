@@ -24,30 +24,42 @@
  *
  *   C   = Σ  every CREDIT entry on the fund, all time
  *   Dn  = Σ  every DEBIT entry whose kind is NOT "card_capture"
- *   Dc  = Σ  every "card_capture" DEBIT (i.e. what the card has spent)
+ *   Dt  = Σ  every "card_capture" DEBIT on THIS card (what the provider counts)
+ *   Do  = Σ  every "card_capture" DEBIT on the fund's OTHER cards
  *
- *   fundBalance          = C − Dn − Dc          (ledger.ts's deriveBalance)
- *   ledgerDerivedLimit L = C − Dn               ← what we send the provider
- *   remainingAtProvider  = L − Dc               (the provider's own arithmetic)
- *                        = C − Dn − Dc
+ *   fundBalance          = C − Dn − Dt − Do     (ledger.ts's deriveBalance)
+ *   ledgerDerivedLimit L = C − Dn − Do          ← what we send the provider
+ *   remainingAtProvider  = L − Dt               (the provider's own arithmetic)
+ *                        = C − Dn − Do − Dt
  *                        = fundBalance          ∎
  *
- * `card_capture` debits are EXCLUDED from the subtraction precisely because the
- * provider already subtracts them: it is counting the same spend against the
- * lifetime cap. Subtracting them here too would charge every purchase twice and
- * walk the card's headroom to zero at double speed.
+ * THIS card's `card_capture` debits are EXCLUDED from the subtraction precisely
+ * because the provider already subtracts them: it is counting the same spend
+ * against the lifetime cap. Subtracting them here too would charge every
+ * purchase twice and walk the card's headroom to zero at double speed.
+ *
+ * Every OTHER card's are NOT excluded, and that asymmetry is the whole reason
+ * the formula is per-CARD rather than per-fund. The provider's lifetime counter
+ * belongs to one card id: a card that is closed and replaced hands its
+ * successor a counter starting at zero, so a fund-wide `C − Dn` would give the
+ * new card headroom the old card already spent. `assertFundCardSlotFree` stops
+ * two cards being alive at once; only `Do` stops them being alive in sequence.
  *
  * Worked example (the one the tests pin): a fund takes $500 in donations, pays
  * out a $100 reimbursement, and the card spends $250.
- *   L = 500 − 100 = 400 → the number sent to Privacy
+ *   L = 500 − 100 − 0 = 400 → the number sent to Privacy
  *   remaining at Privacy = 400 − 250 = 150
  *   fund balance         = 500 − 100 − 250 = 150   ✓
+ * Close that card and issue a replacement, and the replacement's Do is the
+ * closed card's $250: L = 500 − 100 − 250 = 150, which is the fund's balance
+ * and exactly what a card that has spent nothing yet may spend.
  *
  * ## The preconditions, both load-bearing
  *
  * 1. **ONE live card per fund** (`capabilities.maxCardsPerFund: 1`). The cap is
  *    per CARD. Two cards would each carry the fund's whole allowance and the
- *    pair could spend it twice. `createFundCard` enforces this.
+ *    pair could spend it twice. `createFundCard` enforces this. (A card that is
+ *    closed and REPLACED is handled by `Do` above, not by this precondition.)
  * 2. **Every card charge reaches the ledger** as a `card_capture` debit. It
  *    does — functions/finance/webhooks.ts's `recordCardSettlement`, backstopped
  *    by the hourly poll — and if one were ever missed, the error is in the SAFE
@@ -61,6 +73,16 @@
  * the right conservative answer but not a per-transaction fund check. And not a
  * substitute for `hardFundIsolation`: the money is still pooled, so a bug here
  * misattributes rather than being caught by the bank.
+ *
+ * Not exact across a MERCHANT REFUND, either, and that is a known gap rather
+ * than an oversight. A credit transaction on the card reverses the provider's
+ * own lifetime counter, but webhooks.ts skips it loudly instead of posting a
+ * ledger entry ("refund reversal is not implemented yet" — ADR-033's TODO), so
+ * `Dt` stays high while the provider's count drops. The identity then reads
+ * `remainingAtProvider = fundBalance + refunded`: the card can re-spend the
+ * refund. The money is genuinely back in the pooled account, so nothing is
+ * overdrawn at the bank — it is the LEDGER that is understating the fund — but
+ * the equality above does not hold again until refund reversal lands.
  */
 
 import type { Doc, Id } from "../../_generated/dataModel";
@@ -83,7 +105,11 @@ const PROVIDER_COUNTED_DEBIT_KINDS: ReadonlySet<LedgerKind> = new Set([
 export interface ManagedLimitInputs {
   /** Σ credits, all time. */
   lifetimeCreditsCents: number;
-  /** Σ debits the provider does NOT already count against the lifetime cap. */
+  /**
+   * Σ debits the provider does NOT already count against THIS card's lifetime
+   * cap — every non-`card_capture` debit (`Dn`), plus every `card_capture`
+   * debit belonging to one of the fund's other cards (`Do`).
+   */
   nonCardDebitsCents: number;
 }
 
@@ -124,11 +150,11 @@ export function effectiveManagedLimitCents(
 // ============================================================================
 
 interface LedgerReadCtx {
-  db: { query: (table: "ledgerEntries") => any };
+  db: { query: (table: "ledgerEntries" | "expenses") => any };
 }
 
 /**
- * Sum a fund's whole ledger into the two terms of the formula.
+ * Sum a fund's whole ledger into the two terms of the formula, FOR ONE CARD.
  *
  * A FULL read of the fund's entries, deliberately: the cap is cumulative, so
  * there is no window to bound it to — any bound would silently drop the oldest
@@ -137,6 +163,12 @@ interface LedgerReadCtx {
  * gift, charge, reimbursement and fee), and it runs only when a managed card
  * exists on that fund.
  *
+ * `cardId` is the card the cap is being computed FOR, and omitting it means "a
+ * card that has spent nothing at the provider yet" — the case `createFundCard`
+ * is in, where the row does not exist. Its own charges (`Dt`) are left out of
+ * the subtraction because the provider counts them; every other card's (`Do`)
+ * are subtracted, because that provider counter died with the card.
+ *
  * Recomputed from scratch every time rather than incremented, which is what
  * makes `syncManagedCardLimit` idempotent: two runs of the same event, or a run
  * that lands out of order, converge on the same number instead of compounding.
@@ -144,6 +176,7 @@ interface LedgerReadCtx {
 export async function readManagedLimitInputs(
   ctx: LedgerReadCtx,
   fundId: Id<"funds">,
+  cardId?: Id<"cards">,
 ): Promise<ManagedLimitInputs> {
   const entries: Array<Doc<"ledgerEntries">> = await ctx.db
     .query("ledgerEntries")
@@ -152,14 +185,47 @@ export async function readManagedLimitInputs(
 
   let lifetimeCreditsCents = 0;
   let nonCardDebitsCents = 0;
+  let cardDebitsCents = 0;
   for (const entry of entries) {
     if (entry.direction === "credit") {
       lifetimeCreditsCents += entry.amountCents;
-    } else if (!PROVIDER_COUNTED_DEBIT_KINDS.has(entry.kind as LedgerKind)) {
+    } else if (PROVIDER_COUNTED_DEBIT_KINDS.has(entry.kind as LedgerKind)) {
+      cardDebitsCents += entry.amountCents;
+    } else {
       nonCardDebitsCents += entry.amountCents;
     }
   }
-  return { lifetimeCreditsCents, nonCardDebitsCents };
+
+  return {
+    lifetimeCreditsCents,
+    // `Do` = every card_capture debit on the fund MINUS the ones this card is
+    // responsible for. Read from the expense rows rather than the ledger
+    // because a ledger entry carries no card id, and `recordCardSettlement`
+    // writes the expense and the debit together from the same amount.
+    //
+    // Floored at zero: the two tables can only disagree through a bug, and the
+    // safe direction for a spending cap is "assume this card spent all of it".
+    nonCardDebitsCents:
+      nonCardDebitsCents +
+      Math.max(0, cardDebitsCents - (await sumCardCharges(ctx, cardId))),
+  };
+}
+
+/** Σ settled `card_charge` expenses on one card — `Dt`, or 0 if there is no card yet. */
+async function sumCardCharges(
+  ctx: LedgerReadCtx,
+  cardId: Id<"cards"> | undefined,
+): Promise<number> {
+  if (!cardId) return 0;
+  const charges: Array<Doc<"expenses">> = await ctx.db
+    .query("expenses")
+    .withIndex("by_card", (q: any) => q.eq("cardId", cardId))
+    .collect();
+  return charges.reduce(
+    (sum, expense) =>
+      expense.kind === "card_charge" ? sum + expense.amountCents : sum,
+    0,
+  );
 }
 
 // ============================================================================
@@ -186,7 +252,9 @@ export interface ManagedCardControls {
 
 /** True when this card's limit is Togather-computed rather than admin-typed. */
 export function isManagedCard(card: Pick<Doc<"cards">, "controls">): boolean {
-  return (card.controls as ManagedCardControls | undefined)?.managedLimit === true;
+  return (
+    (card.controls as ManagedCardControls | undefined)?.managedLimit === true
+  );
 }
 
 /** The admin-pinned ceiling on a managed card, if one was set. */

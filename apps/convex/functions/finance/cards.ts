@@ -240,14 +240,19 @@ export const listFundCards = query({
       .withIndex("by_fund", (q) => q.eq("fundId", args.fundId))
       .collect();
 
-    const holders = await Promise.all(cards.map((c) => ctx.db.get(c.holderUserId)));
+    const holders = await Promise.all(
+      cards.map((c) => ctx.db.get(c.holderUserId)),
+    );
 
     const providerName = await resolveCardProviderName(ctx, fund.communityId);
     const capabilities = describeProviderCapabilities(providerName);
 
     return {
       cards: cards.map((card, i) =>
-        toCardSummary(card, getDisplayName(holders[i]?.firstName, holders[i]?.lastName)),
+        toCardSummary(
+          card,
+          getDisplayName(holders[i]?.firstName, holders[i]?.lastName),
+        ),
       ),
       // The UI must gate "New card" on the SAME check createFundCard enforces.
       // ADR-033 Phase 3 moved that from "finance_admin on this fund" to
@@ -297,14 +302,19 @@ async function describeCardIssuingReadiness(
     return "This community hasn't set up a card provider yet — connect one in Community Settings → Finance";
   }
   if (isBringYourOwnProvider(providerName)) {
-    const connection = await loadActiveProviderConnection(ctx, fund.communityId);
+    const connection = await loadActiveProviderConnection(
+      ctx,
+      fund.communityId,
+    );
     return connection
       ? null
       : `This community's ${providerName} account isn't connected — reconnect it in Community Settings → Finance`;
   }
   // Increase: the fund's own Account is the card's boundary, so no Account
   // means no card that could be safely scoped to this fund.
-  return fund.increaseAccountId ? null : "This fund's bank account isn't ready yet";
+  return fund.increaseAccountId
+    ? null
+    : "This fund's bank account isn't ready yet";
 }
 
 /**
@@ -512,6 +522,11 @@ export const createFundCard = mutation({
           "This card's limit follows the fund's balance and never resets, so it can't be set per week or per month — leave the period blank, or set a lower fixed cap instead",
         );
       }
+      // No card id: this card does not exist yet, so its lifetime counter at
+      // the provider starts at zero and EVERY card charge the fund has ever
+      // taken belongs to a previous card. That makes the derived cap the
+      // fund's balance exactly, which is what a replacement card must get —
+      // see `Do` in lib/finance/managedCardLimit.ts.
       const derivedCents = ledgerDerivedLimitCents(
         await readManagedLimitInputs(ctx, args.fundId),
       );
@@ -550,7 +565,11 @@ export const createFundCard = mutation({
     // grant — deliberately not `requireFundRole`'s community-admin override,
     // since the holder is the card's target, not the caller: an admin with
     // no explicit grant shouldn't silently qualify as a valid holder.
-    const holderRole = await getActiveRoleRow(ctx, args.fundId, args.holderUserId);
+    const holderRole = await getActiveRoleRow(
+      ctx,
+      args.fundId,
+      args.holderUserId,
+    );
     if (!hasFundRole(holderRole, "cardholder")) {
       throw new Error(
         "The card holder must have at least cardholder access on this fund",
@@ -608,9 +627,13 @@ export const createFundCard = mutation({
       },
     });
 
-    await ctx.scheduler.runAfter(0, internal.functions.finance.cards.provisionCard, {
-      cardId,
-    });
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.finance.cards.provisionCard,
+      {
+        cardId,
+      },
+    );
 
     return cardId;
   },
@@ -875,22 +898,28 @@ export const provisionCard = internalAction({
         // close the gap between the row's insert and this call.
         limit: toCardLimit(card),
       });
-      await ctx.runMutation(internal.functions.finance.cards.recordCardProvisioned, {
-        cardId: args.cardId,
-        provider: provider.name,
-        providerCardId: providerCard.providerCardId,
-        last4: providerCard.last4,
-        status: cardStateToStoredStatus(providerCard.state),
-      });
+      await ctx.runMutation(
+        internal.functions.finance.cards.recordCardProvisioned,
+        {
+          cardId: args.cardId,
+          provider: provider.name,
+          providerCardId: providerCard.providerCardId,
+          last4: providerCard.last4,
+          status: cardStateToStoredStatus(providerCard.state),
+        },
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error(
         `[finance] provisionCard failed for card ${args.cardId}: ${message}`,
       );
-      await ctx.runMutation(internal.functions.finance.cards.recordCardProvisionFailed, {
-        cardId: args.cardId,
-        message: message.slice(0, 500),
-      });
+      await ctx.runMutation(
+        internal.functions.finance.cards.recordCardProvisionFailed,
+        {
+          cardId: args.cardId,
+          message: message.slice(0, 500),
+        },
+      );
     }
   },
 });
@@ -1073,7 +1102,11 @@ export const applyCardStatus = internalAction({
      * provider status string — "paused"/"closed", never "disabled"/"canceled".
      * The adapter owns that translation.
      */
-    state: v.union(v.literal("active"), v.literal("paused"), v.literal("closed")),
+    state: v.union(
+      v.literal("active"),
+      v.literal("paused"),
+      v.literal("closed"),
+    ),
   },
   handler: async (ctx, args) => {
     const loaded = await ctx.runQuery(
@@ -1151,7 +1184,7 @@ async function setManagedCardCap(
   }
 
   const derivedCents = ledgerDerivedLimitCents(
-    await readManagedLimitInputs(ctx, args.card.fundId),
+    await readManagedLimitInputs(ctx, args.card.fundId, args.card._id),
   );
   if (
     args.spendLimitCents !== undefined &&
@@ -1283,7 +1316,9 @@ export const setCardLimit = mutation({
     // "canceled" is irreversible and "failed"/"pending" have no card at the
     // bank to PATCH; only a live or frozen card has a limit worth changing.
     if (card.status !== "active" && card.status !== "disabled") {
-      throw new Error(`This card is ${card.status} — its limit can't be changed`);
+      throw new Error(
+        `This card is ${card.status} — its limit can't be changed`,
+      );
     }
 
     // The REQUEST, not the change — see this section's header. The applied
@@ -1439,14 +1474,17 @@ export const applyCardLimit = internalAction({
       console.error(
         `[finance] applyCardLimit: the provider refused the new limit for card ${args.cardId}: ${message}`,
       );
-      await ctx.runMutation(internal.functions.finance.cards.recordCardLimitFailed, {
-        cardId: args.cardId,
-        message: message.slice(0, 500),
-        providerApplied: false,
-        spendLimitCents: args.spendLimitCents,
-        limitPeriod: args.limitPeriod,
-        actorUserId: args.actorUserId,
-      });
+      await ctx.runMutation(
+        internal.functions.finance.cards.recordCardLimitFailed,
+        {
+          cardId: args.cardId,
+          message: message.slice(0, 500),
+          providerApplied: false,
+          spendLimitCents: args.spendLimitCents,
+          limitPeriod: args.limitPeriod,
+          actorUserId: args.actorUserId,
+        },
+      );
       return;
     }
 
@@ -1462,14 +1500,17 @@ export const applyCardLimit = internalAction({
       console.error(
         `[finance] applyCardLimit: the provider APPLIED the new limit for card ${args.cardId} but the mirror write failed — provider and app now disagree: ${message}`,
       );
-      await ctx.runMutation(internal.functions.finance.cards.recordCardLimitFailed, {
-        cardId: args.cardId,
-        message: message.slice(0, 500),
-        providerApplied: true,
-        spendLimitCents: args.spendLimitCents,
-        limitPeriod: args.limitPeriod,
-        actorUserId: args.actorUserId,
-      });
+      await ctx.runMutation(
+        internal.functions.finance.cards.recordCardLimitFailed,
+        {
+          cardId: args.cardId,
+          message: message.slice(0, 500),
+          providerApplied: true,
+          spendLimitCents: args.spendLimitCents,
+          limitPeriod: args.limitPeriod,
+          actorUserId: args.actorUserId,
+        },
+      );
     }
   },
 });
@@ -1499,7 +1540,7 @@ export const getManagedCardSyncTarget = internalQuery({
 
     const providerName = await resolveCardProviderName(ctx, fund.communityId);
     const derivedCents = ledgerDerivedLimitCents(
-      await readManagedLimitInputs(ctx, card.fundId),
+      await readManagedLimitInputs(ctx, card.fundId, card._id),
     );
 
     return {
@@ -1572,6 +1613,15 @@ export const syncManagedCardLimit = internalAction({
     // The no-op that makes this cheap to over-schedule. Two ledger entries in
     // one mutation queue two runs; the second finds the number already applied
     // and never touches the provider.
+    //
+    // It reads the MIRROR, not the provider, and the mirror is only a record of
+    // what some run last succeeded in pushing. Two runs whose targets differ
+    // can interleave so that the later target reaches the mirror while the
+    // earlier one reached the provider last, and this check will then agree
+    // with itself while the provider holds the older number. That resolves on
+    // the fund's next ledger movement (a new target ≠ the mirror pushes again),
+    // which is why it is a stale cap rather than a stuck one — but it is NOT
+    // corrected by the hourly backstop, which runs through this same check.
     if (target.currentLimitCents === target.targetLimitCents) {
       return { applied: false };
     }
@@ -1612,7 +1662,9 @@ export const listManagedCards = internalQuery({
   args: {},
   handler: async (ctx) => {
     const cards = await ctx.db.query("cards").collect();
-    return cards.filter((card) => managedCardIsSyncable(card)).map((c) => c._id);
+    return cards
+      .filter((card) => managedCardIsSyncable(card))
+      .map((c) => c._id);
   },
 });
 
@@ -1659,7 +1711,11 @@ export const getCardDetail = query({
     // never renders a control whose mutation would reject this viewer:
     // freeze = finance_admin OR the holder; unfreeze/cancel = finance_admin
     // only (a possibly-compromised holder must not re-enable their card).
-    const viewerIsFinanceAdmin = await isFundFinanceAdmin(ctx, card.fundId, userId);
+    const viewerIsFinanceAdmin = await isFundFinanceAdmin(
+      ctx,
+      card.fundId,
+      userId,
+    );
     const viewerIsHolder = card.holderUserId === userId;
 
     const fund = await ctx.db.get(card.fundId);
@@ -1668,7 +1724,10 @@ export const getCardDetail = query({
       : "none";
 
     return {
-      ...toCardSummary(card, getDisplayName(holder?.firstName, holder?.lastName)),
+      ...toCardSummary(
+        card,
+        getDisplayName(holder?.firstName, holder?.lastName),
+      ),
       holderProfileImage: getMediaUrl(holder?.profilePhoto),
       activity,
       viewerCanFreeze: viewerIsFinanceAdmin || viewerIsHolder,
