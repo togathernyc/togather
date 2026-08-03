@@ -335,6 +335,18 @@ export const BILL_CAPABILITIES: ProviderCapabilities = {
   // TRUE, and the word is doing work: there IS no close at BILL. "Closed" is
   // freeze + rename, and a freeze is reversible — so the honest answer is true
   // and the UI must not promise an irreversible destruction it cannot perform.
+  //
+  // TODO: THE UI DOES NOT HONOUR THIS YET, and it is a promise to a user rather
+  // than a detail. `capabilities` is server-side only — no client query exposes
+  // it — so `CardDetailView`'s cancel confirmation still says "This permanently
+  // disables … This can't be undone" for every provider, and a cancelled card
+  // offers no way back. For BILL both halves are false: an admin can unfreeze
+  // the card in BILL while Togather goes on showing it cancelled. Not yet
+  // reachable by anyone (no community is on BILL until one connects it), which
+  // is why it is a TODO and not a blocker — but it must land with, or before,
+  // the first church on this provider. The fix is a slice, not a copy edit:
+  // surface `cardCloseReversible` on the card query, then make the confirmation
+  // copy and the un-cancel affordance conditional on it.
   cardCloseReversible: true,
   cardFreezeReversible: true,
   // Subscriptions are PRODUCTION-ONLY (sandbox offers a test endpoint and no
