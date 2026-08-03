@@ -1,7 +1,21 @@
 import React from "react";
 import { render, screen, fireEvent } from "@testing-library/react-native";
 import { CardDetailView } from "../CardDetailView";
-import type { CardDetail } from "../types";
+import type { CardCapabilities, CardDetail } from "../types";
+
+/** Increase's row: nothing reversible, a typed limit, no receipt forwarding. */
+function makeCapabilities(overrides: Partial<CardCapabilities> = {}): CardCapabilities {
+  return {
+    cardCloseReversible: false,
+    cardFreezeReversible: true,
+    weeklyLimits: true,
+    limitRequired: false,
+    managedFundLimit: false,
+    maxCardsPerFund: null,
+    receiptForwarding: false,
+    ...overrides,
+  };
+}
 
 function makeCard(overrides: Partial<CardDetail> = {}): CardDetail {
   return {
@@ -13,8 +27,11 @@ function makeCard(overrides: Partial<CardDetail> = {}): CardDetail {
     status: "active",
     spendLimitCents: 25000,
     limitPeriod: "week",
+    managedLimit: false,
+    manualCapCents: null,
     createdAt: Date.now(),
     activity: [],
+    capabilities: makeCapabilities(),
     viewerCanFreeze: true,
     viewerCanUnfreeze: true,
     viewerCanCancel: true,
@@ -162,5 +179,169 @@ describe("CardDetailView", () => {
     render(<CardDetailView {...baseProps} card={makeCard({ viewerCanCancel: false })} />);
 
     expect(screen.queryByTestId("cancel-card-button")).toBeNull();
+  });
+
+  // ADR-033 Phase 3: "this can't be undone" is simply false at a provider that
+  // can reopen a closed card, and overstating finality pushes people towards
+  // leaving a card live instead of closing it.
+  describe("cancel copy follows the provider's capabilities", () => {
+    it("says it can't be undone when closing is irreversible", () => {
+      render(<CardDetailView {...baseProps} />);
+
+      fireEvent.press(screen.getByTestId("cancel-card-button"));
+      expect(screen.getByText(/This can't be undone/)).toBeTruthy();
+    });
+
+    it("says the provider can reopen it when closing is reversible", () => {
+      render(
+        <CardDetailView
+          {...baseProps}
+          card={makeCard({ capabilities: makeCapabilities({ cardCloseReversible: true }) })}
+        />,
+      );
+
+      fireEvent.press(screen.getByTestId("cancel-card-button"));
+      expect(screen.getByText(/can reopen a closed card/)).toBeTruthy();
+      expect(screen.queryByText(/This can't be undone/)).toBeNull();
+    });
+
+    // Group-level surface: the fund's members didn't choose the issuer.
+    it("never names the vendor", () => {
+      render(
+        <CardDetailView
+          {...baseProps}
+          card={makeCard({ capabilities: makeCapabilities({ cardCloseReversible: true }) })}
+        />,
+      );
+
+      fireEvent.press(screen.getByTestId("cancel-card-button"));
+      expect(screen.queryByText(/BILL/)).toBeNull();
+      expect(screen.queryByText(/Privacy\.com/)).toBeNull();
+      expect(screen.getByText(/your community's card provider/i)).toBeTruthy();
+    });
+  });
+
+  describe("managed limits", () => {
+    it("renders what's left rather than an amount-per-window", () => {
+      render(
+        <CardDetailView
+          {...baseProps}
+          card={makeCard({
+            managedLimit: true,
+            limitPeriod: null,
+            spendLimitCents: 40000,
+            capabilities: makeCapabilities({ managedFundLimit: true }),
+          })}
+        />,
+      );
+
+      expect(screen.getByText("$400.00 left — follows the fund balance")).toBeTruthy();
+      expect(screen.queryByText(/undefined/)).toBeNull();
+      expect(
+        screen.getByText(/keeps this card's limit equal to what's left in the fund/i),
+      ).toBeTruthy();
+    });
+
+    it("leads with the admin's cap when one is pinned", () => {
+      render(
+        <CardDetailView
+          {...baseProps}
+          card={makeCard({
+            managedLimit: true,
+            limitPeriod: null,
+            spendLimitCents: 15000,
+            manualCapCents: 15000,
+            capabilities: makeCapabilities({ managedFundLimit: true }),
+          })}
+        />,
+      );
+
+      expect(screen.getByText("Capped at $150.00 — follows the fund balance")).toBeTruthy();
+    });
+
+    it("does not claim a finance admin can change a managed limit", () => {
+      render(
+        <CardDetailView
+          {...baseProps}
+          card={makeCard({
+            managedLimit: true,
+            limitPeriod: null,
+            spendLimitCents: 40000,
+            capabilities: makeCapabilities({ managedFundLimit: true }),
+          })}
+        />,
+      );
+
+      expect(screen.queryByText(/Only finance admins can change it/)).toBeNull();
+    });
+  });
+
+  describe("receipt attachment", () => {
+    const chargeWithoutReceipt = {
+      id: "exp-1",
+      amountCents: 4000,
+      description: "TRADER JOE'S #552",
+      status: "pending" as const,
+      receiptAttached: false,
+      createdAt: Date.now(),
+    };
+
+    it("lets the card's holder add a receipt from the badge", () => {
+      render(
+        <CardDetailView
+          {...baseProps}
+          card={makeCard({ activity: [chargeWithoutReceipt] })}
+          currentUserId="user-1"
+          onAttachReceipt={jest.fn()}
+        />,
+      );
+
+      expect(screen.getByTestId("add-receipt-exp-1")).toBeTruthy();
+    });
+
+    it("stays a plain badge for anyone who isn't the holder", () => {
+      render(
+        <CardDetailView
+          {...baseProps}
+          card={makeCard({ activity: [chargeWithoutReceipt] })}
+          currentUserId="someone-else"
+          onAttachReceipt={jest.fn()}
+        />,
+      );
+
+      expect(screen.queryByTestId("add-receipt-exp-1")).toBeNull();
+      expect(screen.getByText("No receipt")).toBeTruthy();
+    });
+
+    it("promises only what the provider does with the file", () => {
+      const { rerender } = render(
+        <CardDetailView
+          {...baseProps}
+          card={makeCard({ activity: [chargeWithoutReceipt] })}
+          currentUserId="user-1"
+          onAttachReceipt={jest.fn()}
+        />,
+      );
+
+      fireEvent.press(screen.getByTestId("add-receipt-exp-1"));
+      expect(screen.getByText("Saved to the fund's record of this charge.")).toBeTruthy();
+
+      rerender(
+        <CardDetailView
+          {...baseProps}
+          card={makeCard({
+            activity: [chargeWithoutReceipt],
+            capabilities: makeCapabilities({ receiptForwarding: true }),
+          })}
+          currentUserId="user-1"
+          onAttachReceipt={jest.fn()}
+        />,
+      );
+      expect(
+        screen.getByText(
+          "Saved to the fund and sent on to your community's card provider.",
+        ),
+      ).toBeTruthy();
+    });
   });
 });

@@ -2,6 +2,22 @@
  * CreateCardView — presentational "New virtual card" sheet (group-fund cards
  * phase). Plain props only, no Convex — see CreateCardScreen.tsx for the
  * data wrapper.
+ *
+ * TWO LIMIT MODELS, and which applies is the community's provider's
+ * declaration rather than anything this sheet or its user chooses
+ * (`capabilities.managedFundLimit`, ADR-033 Phase 3):
+ *
+ *   TYPED    — the original: pick a window (week/month/charge) and an amount;
+ *              the bank declines anything over it.
+ *   MANAGED  — Togather keeps the limit equal to what's left in the fund. There
+ *              is no window to pick, so the segmented control is GONE rather
+ *              than disabled: a greyed "Weekly" implies a setting that could be
+ *              unlocked, and `createFundCard` refuses a `limitPeriod` outright
+ *              on these providers. The amount field survives as an optional
+ *              lower cap.
+ *
+ * Provider-anonymous throughout — this is a group-level surface. See
+ * CardDetailView.tsx's header.
  */
 import React from "react";
 import {
@@ -43,7 +59,20 @@ const LIMIT_HINTS: Record<LimitSelection, string | null> = {
   charge: "Applies to each individual charge",
 };
 
+export type CreateCardState = "loading" | "not-allowed" | "ready";
+
 export interface CreateCardViewProps {
+  /**
+   * `not-allowed` is for someone who deep-linked in: ADR-033 moved card
+   * issuing from "finance_admin on this fund" to COMMUNITY finance access, so
+   * a group leader (and even a fund's own finance_admin) can reach this route
+   * and must be told why rather than shown a form that can only fail.
+   */
+  state: CreateCardState;
+  /** The provider computes the limit from the fund's balance — no period to pick. */
+  managedLimit: boolean;
+  /** The fund is already at its provider's per-fund card cap. */
+  cardSlotFull: boolean;
   fundName: string;
   fundBalanceCents: number;
   candidates: CardholderCandidate[];
@@ -65,6 +94,9 @@ export interface CreateCardViewProps {
 }
 
 export function CreateCardView({
+  state,
+  managedLimit,
+  cardSlotFull,
   fundName,
   fundBalanceCents,
   candidates,
@@ -87,22 +119,54 @@ export function CreateCardView({
   const { colors } = useTheme();
   const { primaryColor } = useCommunityTheme();
 
+  const header = (
+    <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
+      <TouchableOpacity style={styles.closeButton} onPress={onClose} accessibilityLabel="Close">
+        <Ionicons name="close" size={22} color={colors.text} />
+      </TouchableOpacity>
+      <View style={styles.headerContent}>
+        <Text style={[styles.headerTitle, { color: colors.text }]}>New virtual card</Text>
+        <Text style={[styles.headerSubtitle, { color: colors.textSecondary }]} numberOfLines={1}>
+          {fundName} · fund balance {formatCents(fundBalanceCents)}
+        </Text>
+      </View>
+    </View>
+  );
+
+  if (state === "loading") {
+    return (
+      <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
+        {header}
+        <View style={styles.loadingPad}>
+          <Skeleton width="100%" height={110} borderRadius={16} />
+          <Skeleton width="100%" height={64} borderRadius={16} style={{ marginTop: 16 }} />
+        </View>
+      </View>
+    );
+  }
+
+  if (state === "not-allowed") {
+    return (
+      <View
+        style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}
+        testID="create-card-not-allowed"
+      >
+        {header}
+        <EmptyState
+          icon="lock-closed-outline"
+          title="You can't issue cards for this fund"
+          message="Only someone with your community's financial controls can issue a card — ask your community's primary admin."
+        />
+      </View>
+    );
+  }
+
   return (
     <KeyboardAvoidingView
       style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}
       behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
-      <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
-        <TouchableOpacity style={styles.closeButton} onPress={onClose} accessibilityLabel="Close">
-          <Ionicons name="close" size={22} color={colors.text} />
-        </TouchableOpacity>
-        <View style={styles.headerContent}>
-          <Text style={[styles.headerTitle, { color: colors.text }]}>New virtual card</Text>
-          <Text style={[styles.headerSubtitle, { color: colors.textSecondary }]} numberOfLines={1}>
-            {fundName} · fund balance {formatCents(fundBalanceCents)}
-          </Text>
-        </View>
-      </View>
+      {header}
 
       <ScrollView
         contentContainerStyle={styles.scrollContent}
@@ -185,7 +249,37 @@ export function CreateCardView({
           </View>
         </View>
 
-        {/* SPENDING LIMIT */}
+        {/* SPENDING LIMIT — managed: no window to pick, only an optional cap. */}
+        {managedLimit ? (
+          <View testID="managed-limit-section">
+            <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>Spending limit</Text>
+            <View style={[styles.group, styles.fieldGroup, { backgroundColor: colors.surface }]}>
+              <Text style={[styles.managedHeadline, { color: colors.text }]}>
+                This card's limit follows the fund's balance
+              </Text>
+              <Text style={[styles.fieldHint, { color: colors.textSecondary }]}>
+                Togather keeps it equal to what's left in the fund, so the card
+                can never outspend the group's money. There's no weekly or
+                monthly window to set — the limit just moves with the fund.
+              </Text>
+            </View>
+            <View style={[styles.group, styles.fieldGroup, { backgroundColor: colors.surface, marginTop: 10 }]}>
+              <Input
+                label="Set a lower cap (optional)"
+                placeholder="$0.00"
+                value={amountText}
+                onChangeText={onAmountChange}
+              />
+              <Text style={[styles.fieldHint, { color: colors.textSecondary }]}>
+                {/* Only ever tighter: the backend refuses a cap above the
+                    fund's balance, because a cap that exceeded it would be a
+                    number the card could never actually reach. */}
+                A cap can only make the card tighter than the fund — it can't be
+                more than the fund holds. Leave it blank to follow the balance.
+              </Text>
+            </View>
+          </View>
+        ) : (
         <View>
           <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>Spending limit</Text>
           <View style={[styles.segmented, { backgroundColor: colors.surface, borderColor: colors.border }]}>
@@ -235,6 +329,7 @@ export function CreateCardView({
               : "The bank declines anything over this limit, so it holds even if nobody's watching."}
           </Text>
         </View>
+        )}
 
         {/* WHAT HAPPENS AFTER A CHARGE */}
         <View>
@@ -243,13 +338,29 @@ export function CreateCardView({
           </Text>
         </View>
 
+        {/* The provider's per-fund cap, refused server-side by
+            `assertFundCardSlotFree`. Stated BEFORE the button rather than as a
+            submit error: the fix is on another screen (close the existing
+            card), so there's nothing to gain from letting the tap through. */}
+        {cardSlotFull ? (
+          <Text
+            style={[styles.footerNote, { color: colors.error }]}
+            testID="create-card-slot-full"
+          >
+            This fund already has a card. Your community's card provider sizes a
+            fund's spending to the card itself, so a second card would double
+            what this fund can spend — close the existing card first, or change
+            who holds it.
+          </Text>
+        ) : null}
+
         {!!error && <Text style={[styles.errorText, { color: colors.error }]}>{error}</Text>}
 
         <Button
           variant="primary"
           onPress={onSubmit}
           loading={isSubmitting}
-          disabled={!canSubmit}
+          disabled={!canSubmit || cardSlotFull}
           style={styles.submitButton}
         >
           Create card
@@ -275,6 +386,8 @@ const styles = StyleSheet.create({
   headerTitle: { fontSize: 20, fontWeight: "bold" },
   headerSubtitle: { fontSize: 14, marginTop: 2 },
   scrollContent: { padding: 16, paddingBottom: 48, gap: 20 },
+  loadingPad: { padding: 16 },
+  managedHeadline: { fontSize: 15.5, fontWeight: "600", marginBottom: 4 },
   sectionLabel: { fontSize: 13, marginBottom: 8, paddingHorizontal: 4 },
   group: { borderRadius: 16, overflow: "hidden" },
   fieldGroup: { padding: 14 },

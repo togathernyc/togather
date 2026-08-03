@@ -2,13 +2,25 @@
  * CardDetailView — presentational virtual-card detail screen (group-fund
  * cards phase). Plain props only, no Convex — see CardDetailScreen.tsx for
  * the data wrapper.
+ *
+ * PROVIDER-ANONYMOUS (ADR-033 §1). This is a GROUP-level surface: the fund's
+ * members didn't choose the community's card issuer and can't act on its name,
+ * so every sentence here says "your community's card provider" and never
+ * "BILL" or "Privacy". What they DO need is the issuer's behaviour, which
+ * arrives as `card.capabilities` — whether closing a card can be undone,
+ * whether the limit is theirs to set, whether an uploaded receipt travels
+ * anywhere. The community-level card-provider screen is where a vendor is
+ * named, because that community chose it.
  */
 import React, { useState } from "react";
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "@hooks/useTheme";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
-import { Badge, Skeleton, ConfirmModal } from "@components/ui";
+import { Badge, Skeleton, ConfirmModal, ImagePicker } from "@components/ui";
+// See GivingHubView.tsx for why Modal is imported from the concrete file
+// rather than the "@components/ui" barrel.
+import { CustomModal as Modal } from "@components/ui/Modal";
 import { formatCents } from "../format";
 import { formatCardLimit, CARD_CHARGE_SETTLEMENT_NOTE, type CardDetail } from "./types";
 
@@ -21,6 +33,12 @@ export interface CardDetailViewProps {
   onToggleFrozen: () => void;
   isCancelling: boolean;
   onCancelCard: () => void;
+  /** The viewer, so the holder — the person with the paper — can attach receipts. */
+  currentUserId?: string | null;
+  /** Picked-image URI for a charge that still needs a receipt. */
+  onAttachReceipt?: (expenseId: string, imageUri: string) => void;
+  /** Expense id currently uploading, for the sheet's spinner. */
+  attachingExpenseId?: string | null;
 }
 
 export function CardDetailView({
@@ -30,10 +48,14 @@ export function CardDetailView({
   onToggleFrozen,
   isCancelling,
   onCancelCard,
+  currentUserId,
+  onAttachReceipt,
+  attachingExpenseId,
 }: CardDetailViewProps) {
   const { colors } = useTheme();
   const { primaryColor } = useCommunityTheme();
   const [confirmingCancel, setConfirmingCancel] = useState(false);
+  const [attachTargetId, setAttachTargetId] = useState<string | null>(null);
 
   if (card === undefined) {
     return (
@@ -67,6 +89,11 @@ export function CardDetailView({
   const canUnfreeze = isFrozen && card.viewerCanUnfreeze;
   const showFreezeToggle = canFreeze || canUnfreeze;
   const canCancel = !isFailed && !isCanceled && card.viewerCanCancel;
+  // The holder is the person who physically has the receipt; `attachExpenseReceipt`
+  // also accepts a manager+, but nothing in `getCardDetail` reports that, and
+  // guessing it client-side would show a control that can only error.
+  const canAttachReceipt =
+    !!onAttachReceipt && !!currentUserId && currentUserId === card.holderUserId;
 
   return (
     <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
@@ -152,14 +179,21 @@ export function CardDetailView({
             <View style={styles.cell}>
               <Text style={[styles.cellTitle, { color: colors.text }]}>Limit</Text>
               <Text style={[styles.cellValue, { color: colors.text }]}>
-                {formatCardLimit(card.spendLimitCents, card.limitPeriod, formatCents)}
+                {formatCardLimit(card, formatCents)}
               </Text>
             </View>
           </View>
           <Text style={[styles.footerNote, { color: colors.textSecondary }]}>
-            {card.spendLimitCents == null
-              ? "No limit set, so this card can spend the fund's whole balance. Only finance admins can set one."
-              : "The bank declines anything over this limit. Only finance admins can change it."}
+            {card.managedLimit
+              ? // A managed limit isn't a number anyone typed: Togather keeps it
+                // equal to what the fund still has, so the honest thing to
+                // explain is where the number COMES FROM, not who can edit it.
+                card.manualCapCents != null
+                ? "This card is capped below the fund's balance. Togather keeps the limit at whichever is lower — the cap, or what's left in the fund — so the card can never outspend the group's money."
+                : "Togather keeps this card's limit equal to what's left in the fund, so it can never outspend the group's money. Spend from the fund and the limit falls with it."
+              : card.spendLimitCents == null
+                ? "No limit set, so this card can spend the fund's whole balance. Only finance admins can set one."
+                : "The bank declines anything over this limit. Only finance admins can change it."}
           </Text>
           <Text style={[styles.footerNote, { color: colors.textSecondary }]}>
             {CARD_CHARGE_SETTLEMENT_NOTE}
@@ -196,6 +230,19 @@ export function CardDetailView({
                   </View>
                   {entry.receiptAttached ? (
                     <Badge variant="success" size="small">✓</Badge>
+                  ) : canAttachReceipt ? (
+                    // The "No receipt" badge has been rendering since ADR-032
+                    // with nothing behind it. It's the only place the person
+                    // holding the receipt ever looks, so it's the affordance —
+                    // rather than a new row nobody would find.
+                    <TouchableOpacity
+                      onPress={() => setAttachTargetId(entry.id)}
+                      accessibilityRole="button"
+                      accessibilityLabel="Add receipt"
+                      testID={`add-receipt-${entry.id}`}
+                    >
+                      <Badge variant="danger" size="small">Add receipt</Badge>
+                    </TouchableOpacity>
                   ) : (
                     <Badge variant="danger" size="small">No receipt</Badge>
                   )}
@@ -227,7 +274,15 @@ export function CardDetailView({
       <ConfirmModal
         visible={confirmingCancel}
         title="Cancel this card"
-        message={`This permanently disables ${card.name}. This can't be undone.`}
+        // Capability-driven, because "this can't be undone" is simply FALSE at
+        // a provider where a closed card can be reopened — and copy that
+        // overstates how final an action is makes people avoid the safe move
+        // (close it) in favour of the unsafe one (leave it live).
+        message={
+          card.capabilities.cardCloseReversible
+            ? `${card.name} stops working straight away. Your community's card provider can reopen a closed card, so this isn't permanent — but Togather can't reopen it from here.`
+            : `This permanently disables ${card.name}. This can't be undone.`
+        }
         confirmText="Cancel card"
         destructive
         isLoading={isCancelling}
@@ -237,6 +292,29 @@ export function CardDetailView({
         }}
         onCancel={() => setConfirmingCancel(false)}
       />
+
+      <Modal
+        visible={!!attachTargetId}
+        onClose={() => setAttachTargetId(null)}
+        title="Add a receipt"
+      >
+        <View>
+          <Text style={[styles.attachNote, { color: colors.textSecondary }]}>
+            {card.capabilities.receiptForwarding
+              ? "Saved to the fund and sent on to your community's card provider."
+              : "Saved to the fund's record of this charge."}
+          </Text>
+          <ImagePicker
+            onImageSelected={(uri: string) => {
+              if (attachTargetId) onAttachReceipt?.(attachTargetId, uri);
+              setAttachTargetId(null);
+            }}
+            isUploading={!!attachingExpenseId}
+            buttonText="Attach receipt photo"
+            testID="card-receipt-picker"
+          />
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -353,6 +431,7 @@ const styles = StyleSheet.create({
   cellSub: { fontSize: 12.5, marginTop: 2 },
   cellValue: { fontSize: 14.5, fontWeight: "600" },
   activityAmount: { fontSize: 14.5, fontWeight: "700" },
+  attachNote: { fontSize: 13.5, lineHeight: 19, marginBottom: 12 },
   cancelCell: { padding: 16, alignItems: "center" },
   cancelText: { fontSize: 15.5, fontWeight: "600" },
 });

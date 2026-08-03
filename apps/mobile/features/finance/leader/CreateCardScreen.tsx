@@ -2,6 +2,12 @@
  * CreateCardScreen — data wrapper for the "New virtual card" sheet
  * (group-fund cards phase). Resolves the fund, eligible cardholders (fund
  * roles of cardholder or higher), and issues the card via `createFundCard`.
+ *
+ * ADR-033 Phase 3 moved the issuing gate from "finance_admin on this fund" to
+ * COMMUNITY finance access, so this screen now has to answer for someone who
+ * arrives without it. `GivingHubScreen` already hides the entry point
+ * (`listFundCards.viewerCanManageCards`), but a deep link routes straight here
+ * — hence the `not-allowed` state, driven by the same signal the server checks.
  */
 import React, { useMemo, useState } from "react";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -9,11 +15,15 @@ import { useAuthenticatedQuery, useAuthenticatedMutation, api } from "@services/
 import type { Id } from "@services/api/convex";
 import { ToastManager } from "@components/ui";
 import { formatError } from "@/utils/error-handling";
-import { CreateCardView, type LimitSelection } from "./CreateCardView";
+import { CreateCardView, type CreateCardState, type LimitSelection } from "./CreateCardView";
 import { financeDisplayName } from "./utils";
 import type { CardholderCandidate, CardLimitPeriod } from "./types";
 
 const CARDHOLDER_ROLES = new Set(["cardholder", "manager", "finance_admin"]);
+
+/** Card statuses that mean the card is dead and doesn't occupy a fund's slot —
+ * the client-side mirror of `DEAD_CARD_STATUSES` in cards.ts. */
+const DEAD_CARD_STATUSES = new Set(["canceled", "failed"]);
 
 export function CreateCardScreen() {
   const router = useRouter();
@@ -33,6 +43,19 @@ export function CreateCardScreen() {
 
   const rolesRaw = useAuthenticatedQuery(
     api.functions.finance.roles.listFundRoles,
+    fundId ? { fundId } : "skip",
+  );
+
+  const myFundRole = useAuthenticatedQuery(
+    api.functions.finance.roles.getMyFundRole,
+    fundId ? { fundId } : "skip",
+  );
+
+  // The provider's capabilities and the fund's existing cards both come from
+  // here, so the sheet's two provider-shaped decisions (managed limit, per-fund
+  // card cap) are the server's own answers rather than a client guess.
+  const cardsRaw = useAuthenticatedQuery(
+    api.functions.finance.cards.listFundCards,
     fundId ? { fundId } : "skip",
   );
 
@@ -62,12 +85,40 @@ export function CreateCardScreen() {
     [rolesRaw],
   );
 
-  const amountCents = limitSelection === "none" ? null : parseDollarsToCents(amountText);
+  const managedLimit = !!cardsRaw?.capabilities?.managedFundLimit;
+  const maxCardsPerFund = cardsRaw?.capabilities?.maxCardsPerFund ?? null;
+
+  const liveCardCount = useMemo(
+    () =>
+      (cardsRaw?.cards ?? []).filter((card: any) => !DEAD_CARD_STATUSES.has(card.status))
+        .length,
+    [cardsRaw],
+  );
+  const cardSlotFull = maxCardsPerFund !== null && liveCardCount >= maxCardsPerFund;
+
+  const state: CreateCardState =
+    myFundRole === undefined || cardsRaw === undefined
+      ? "loading"
+      : myFundRole.canManageCommunityFinance
+        ? "ready"
+        : "not-allowed";
+
+  // On a managed provider the typed amount is an optional CAP, not a limit
+  // with a window — so a blank one is valid and `limitSelection` is ignored.
+  const amountCents = managedLimit
+    ? amountText.trim()
+      ? parseDollarsToCents(amountText)
+      : null
+    : limitSelection === "none"
+      ? null
+      : parseDollarsToCents(amountText);
   const canSubmit =
     !!selectedHolderUserId &&
     name.trim().length > 0 &&
     !isSubmitting &&
-    (limitSelection === "none" || amountCents !== null);
+    (managedLimit
+      ? !amountText.trim() || amountCents !== null
+      : limitSelection === "none" || amountCents !== null);
 
   const handleBack = () => {
     if (router.canGoBack()) {
@@ -86,9 +137,18 @@ export function CreateCardScreen() {
         fundId,
         holderUserId: selectedHolderUserId as Id<"users">,
         name: name.trim(),
-        ...(limitSelection !== "none"
-          ? { spendLimitCents: amountCents as number, limitPeriod: limitSelection as CardLimitPeriod }
-          : {}),
+        // A managed provider REFUSES a `limitPeriod` outright (there is no
+        // window to honour), so the cap travels alone or not at all.
+        ...(managedLimit
+          ? amountCents !== null
+            ? { spendLimitCents: amountCents }
+            : {}
+          : limitSelection !== "none"
+            ? {
+                spendLimitCents: amountCents as number,
+                limitPeriod: limitSelection as CardLimitPeriod,
+              }
+            : {}),
       });
       ToastManager.success("Card created");
       router.replace(`/(user)/leader-tools/${groupId}/giving/cards/${cardId}` as any);
@@ -101,6 +161,9 @@ export function CreateCardScreen() {
 
   return (
     <CreateCardView
+      state={state}
+      managedLimit={managedLimit}
+      cardSlotFull={cardSlotFull}
       fundName={givingContext?.fundName || "this fund"}
       fundBalanceCents={overview?.balanceCents ?? 0}
       candidates={candidates}

@@ -91,7 +91,45 @@ export interface FundCard {
   status: CardStatus;
   spendLimitCents: number | null;
   limitPeriod: CardLimitPeriod | null;
+  /**
+   * The limit is COMPUTED from the fund's balance rather than typed
+   * (ADR-033 Phase 3). A managed card carries `spendLimitCents` with NO
+   * `limitPeriod`, which the "amount / period" shape can't express — see
+   * `formatCardLimit`, which is why this field has to travel with the card
+   * rather than be inferred from a null period.
+   */
+  managedLimit: boolean;
+  /** An admin-pinned ceiling BELOW the fund's balance, or null for "follow the fund". */
+  manualCapCents: number | null;
   createdAt: number;
+}
+
+/**
+ * What the community's card provider can and can't do, PROVIDER-ANONYMOUS
+ * (ADR-033 §1). Mirrors `ClientCardCapabilities` in
+ * `apps/convex/lib/finance/cardProviders/index.ts`.
+ *
+ * Group-level surfaces render behaviour, never the vendor's name: the fund's
+ * members didn't choose the issuer and have no standing to act on its name.
+ * What they do need is whether closing a card is reversible and whether the
+ * limit is theirs to type. The community-level card-provider screen is the one
+ * place a vendor gets named, because that community chose it.
+ */
+export interface CardCapabilities {
+  /** A closed card can be reopened at the provider. Drives the cancel copy. */
+  cardCloseReversible: boolean;
+  /** A paused card can be un-paused. */
+  cardFreezeReversible: boolean;
+  /** A per-week spend limit is expressible. */
+  weeklyLimits: boolean;
+  /** Every card must carry a spend limit (no hard fund isolation). */
+  limitRequired: boolean;
+  /** The limit is computed from the fund's ledger, not typed by an admin. */
+  managedFundLimit: boolean;
+  /** Live cards allowed per fund, or null for no cap. */
+  maxCardsPerFund: number | null;
+  /** A receipt uploaded here is also sent to the provider. */
+  receiptForwarding: boolean;
 }
 
 export interface CardActivityEntry {
@@ -105,6 +143,8 @@ export interface CardActivityEntry {
 
 export interface CardDetail extends FundCard {
   activity: CardActivityEntry[];
+  /** Provider behaviour this screen must tell the truth about. */
+  capabilities: CardCapabilities;
   /** Per-action capability flags — mirror the mutations' own gates, so the UI
    * never renders a control whose mutation would reject this viewer. Freeze =
    * finance_admin OR the card's holder; unfreeze/cancel = finance_admin only. */
@@ -119,6 +159,7 @@ export interface CardDetail extends FundCard {
 export interface ListFundCardsResult {
   cards: FundCard[];
   viewerCanManageCards: boolean;
+  capabilities: CardCapabilities;
 }
 
 /** A fund member eligible to hold a card — cardholder role or higher. */
@@ -134,14 +175,41 @@ export const CARD_LIMIT_PERIOD_LABELS: Record<CardLimitPeriod, string> = {
   charge: "charge",
 };
 
-/** "$250 / week" / "$500 / month" / "$40 / charge" / "No limit" for card rows. */
+/**
+ * The card's limit as one line: "$250 / week", "No limit", or — on a provider
+ * whose limit Togather manages — "$40.00 left — follows the fund balance".
+ *
+ * Takes the CARD rather than the two limit fields, which is the whole point of
+ * the change: a managed card stores an amount with no period, so the old
+ * `(amount, period)` pair rendered "$400 / undefined" for it. Which of the two
+ * limit models applies is a property of the card, so the card is what has to be
+ * passed for the answer to be right.
+ */
 export function formatCardLimit(
-  spendLimitCents: number | null,
-  limitPeriod: CardLimitPeriod | null,
+  card: Pick<
+    FundCard,
+    "spendLimitCents" | "limitPeriod" | "managedLimit" | "manualCapCents"
+  >,
   formatCents: (cents: number) => string,
 ): string {
-  if (spendLimitCents == null || limitPeriod == null) return "No limit";
-  return `${formatCents(spendLimitCents)} / ${CARD_LIMIT_PERIOD_LABELS[limitPeriod]}`;
+  if (card.managedLimit) {
+    // The pinned ceiling is what the admin chose and what the card will honour
+    // even as the fund grows, so it leads. "Follows the fund balance" still
+    // trails it: the cap only ever makes the card TIGHTER than the fund, never
+    // looser, and hiding that would imply spare headroom the card doesn't have.
+    if (card.manualCapCents != null) {
+      return `Capped at ${formatCents(card.manualCapCents)} — follows the fund balance`;
+    }
+    // What's LEFT, not what the limit "is": on a managed card the number is
+    // recomputed from the ledger, so it is a remaining-balance reading and
+    // reads as a lie if labelled as a fixed cap.
+    if (card.spendLimitCents != null) {
+      return `${formatCents(card.spendLimitCents)} left — follows the fund balance`;
+    }
+    return "Follows the fund balance";
+  }
+  if (card.spendLimitCents == null || card.limitPeriod == null) return "No limit";
+  return `${formatCents(card.spendLimitCents)} / ${CARD_LIMIT_PERIOD_LABELS[card.limitPeriod]}`;
 }
 
 /**
@@ -159,6 +227,67 @@ export function formatCardLimit(
  */
 export const CARD_CHARGE_SETTLEMENT_NOTE =
   "Charges settle straight away — nothing in the app can stop one. Each lands in the fund's activity as soon as the bank confirms it.";
+
+// ============================================================================
+// Community-level financial controls (ADR-033 Phase 3)
+// ============================================================================
+
+/** The card issuers a community can bring its own account at. */
+export type ByoCardProvider = "privacy" | "bill";
+
+/**
+ * What to call each provider to a human, and what its credential is called
+ * THERE. Mirrors `PROVIDER_LABELS` in
+ * `apps/convex/functions/finance/cardProviderConnections.ts` — "paste your
+ * Privacy.com API key" shown to someone connecting BILL is the small wrongness
+ * that makes a person paste the wrong secret.
+ */
+export const BYO_PROVIDER_LABELS: Record<
+  ByoCardProvider,
+  { name: string; credential: string }
+> = {
+  privacy: { name: "Privacy.com", credential: "API key" },
+  bill: { name: "BILL Spend & Expense", credential: "API token" },
+};
+
+export type CardProviderConnectionStatus = "active" | "error" | "revoked";
+
+/**
+ * The community's card-provider connection, as the settings screen sees it.
+ *
+ * There is no credential field here and there must never be one: the backend
+ * deliberately cannot read the key back, and a masked prefix is still live
+ * characters of a spending credential handed to whoever can read a response.
+ * `accountLabel` and `lastError` are the PROVIDER's own text — untrusted, and
+ * rendered as text only.
+ */
+export interface CardProviderConnection {
+  provider: ByoCardProvider;
+  accountLabel: string | null;
+  status: CardProviderConnectionStatus;
+  lastSyncAt: number | null;
+  lastError: string | null;
+  connectedAt: number;
+}
+
+/** One financial-controls grant on a community. */
+export interface CommunityFinanceRoleRow {
+  id: string;
+  userId: string;
+  grantedAt: number;
+  revokedAt?: number | null;
+  isActive: boolean;
+  user: FinanceUserSummary | null;
+}
+
+/**
+ * The rule the financial-controls screen exists to make legible, in one
+ * sentence. Stated on the screen because every question an admin arrives with
+ * ("why can't I press this?", "why isn't so-and-so in the list?") is answered
+ * by it.
+ */
+export const FINANCIAL_CONTROLS_NOTE =
+  "The community's primary admin always has financial controls and is the only person who can give or take them. Anyone they give them to must already be a community admin.";
 
 /**
  * Giving hub balance header + month-to-date stat tiles. Mirrors the fields
