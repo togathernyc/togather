@@ -364,6 +364,8 @@ export const BILL_UNVERIFIED_BEHAVIOURS = [
   "The exact status string a freshly created card comes back with (ACTIVATED is documented; a card awaiting activation may differ).",
   "Whether GET /v3/spend/users/current returns a company name we can use as the connection label.",
   "Whether GET /v3/spend/budgets' filters support name equality, which would replace the paged client-side match in findOrCreateBudget.",
+  "Whether POST /v3/spend/cards has any recurrence field at all. It documents none, which is why a monthly card is created and then PATCHed to renew; if a create field exists, that follow-up call collapses into the create.",
+  "Whether POST /v3/spend/cards accepts an idempotency header under any name. It documents none, so a lost response leaves an orphan card (see createCard).",
 ] as const;
 
 // ============================================================================
@@ -396,7 +398,20 @@ export function createBillCardProvider(apiToken: string): CardProviderAdapter {
         input.limit,
       );
 
-      const { limit, shareBudgetFunds } = toBillCardLimit(input.limit);
+      // `input.idempotencyKey` IS DROPPED, exactly as it is in the Privacy
+      // adapter and for the same reason: BILL documents no idempotency header
+      // for POST /v3/spend/cards, so there is nowhere to put it. The residual
+      // risk is bounded and identical to Privacy's — if the POST succeeds and
+      // the response is lost, BILL holds a live card Togather records as
+      // failed: an orphan on the church's own account, visible in their
+      // dashboard under the name below. It cannot become a DOUBLE issue today,
+      // because nothing retries this call — `createFundCard` schedules
+      // `provisionCard` exactly once and a failure is recorded and stays
+      // recorded (functions/finance/cards.ts).
+      // TODO: before any retry is added there, reconcile first — list the
+      // account's cards and match on name — or a lost response becomes two
+      // spending instruments instead of one orphan.
+      const { limit, shareBudgetFunds, recurring } = toBillCardLimit(input.limit);
       const card = await createBillCard(client, {
         // The name a church admin sees in THEIR BILL dashboard. Already carries
         // the fund and the card's own name (cards.ts builds it) — they have
@@ -416,6 +431,41 @@ export function createBillCardProvider(apiToken: string): CardProviderAdapter {
           "BILL created a card but returned no uuid — refusing to record a card Togather could never control again",
         );
       }
+
+      // THE CREATE BODY HAS NO RECURRENCE FIELD, so a monthly card is not
+      // monthly yet. `POST /v3/spend/cards` takes `limit` and
+      // `shareBudgetFunds` and nothing about periods (docs/virtual-cards); only
+      // `PATCH .../{uuid}` has `recurring` / `recurringLimit`
+      // (reference/updatecard). Left alone, a "$500 a month" card would spend
+      // $500 once and then stop for good — the failure mode nobody reports as a
+      // bug because a dead card just looks declined.
+      //
+      // So the recurrence is applied as a follow-up PATCH, with exactly the
+      // body `setSpendLimit` sends, rather than by guessing a create field the
+      // vendor doesn't document. Only for a recurring limit: a `week`/`charge`
+      // card is DELIBERATELY a flat non-resetting cap (see toBillCardLimit) and
+      // already correct as created.
+      //
+      // BEST EFFORT, and a warn rather than a throw: the card exists and is
+      // spendable for this period either way, so failing the provisioning now
+      // would record "failed" over a live card and orphan it — the one outcome
+      // the idempotency note above is about. A finance admin re-saving the
+      // limit issues this same PATCH.
+      if (recurring && limit !== undefined) {
+        try {
+          await updateBillCard(client, providerCard.providerCardId, {
+            recurring: true,
+            availableFunds: limit,
+            recurringLimit: limit,
+          });
+        } catch (error) {
+          console.warn(
+            `[BillAdapter] card ${providerCard.providerCardId} was created with a $${limit} limit but could not be set to RENEW each month — it will spend $${limit} once and then stop. Re-save the card's limit in Togather to retry:`,
+            error,
+          );
+        }
+      }
+
       return providerCard;
     },
 
@@ -431,7 +481,26 @@ export function createBillCardProvider(apiToken: string): CardProviderAdapter {
      */
     async setCardState(providerCardId, state) {
       const card = await applyBillCardState(client, providerCardId, state);
-      const providerCard = toProviderCard(card ?? {}, providerCardId);
+
+      if (!card) {
+        // A 204 / empty body on freeze or unfreeze. `billRequest` treats that as
+        // the SUCCESS it is rather than a parse error — but an empty object run
+        // through `toProviderCard` has no status, and an unknown status is
+        // `failed`. That would persist `cards.status = "failed"` for a pause
+        // BILL actually applied, and the card would read as broken in Togather
+        // while working perfectly at the bank.
+        //
+        // The request succeeded, so the card is in the state we asked for; say
+        // that. `providerStatus` stays empty on purpose — BILL told us no word,
+        // and inventing one would put a string in the "the vendor's own word,
+        // unedited" field that the vendor never said.
+        // `CardStateRequest` is a subset of `CardState`, so the requested state
+        // IS the resulting state — including `closed`, which needs no override
+        // here because nothing came back to be overridden.
+        return { providerCardId, state, providerStatus: "" };
+      }
+
+      const providerCard = toProviderCard(card, providerCardId);
 
       if (state !== "closed") return providerCard;
 

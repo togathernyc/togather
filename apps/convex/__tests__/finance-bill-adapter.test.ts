@@ -103,7 +103,13 @@ beforeEach(() => {
       });
     }
     const { status = 200, body = {} } = match.handler(call);
-    return new Response(status === 204 ? "" : JSON.stringify(body), { status });
+    // A 204 must be constructed with a NULL body — `new Response("", {status:
+    // 204})` throws in undici, which would make an empty-response test fail for
+    // a reason that has nothing to do with the adapter. `body: null` on any
+    // status is the other way to say "empty", which is what the client's
+    // `if (!text) return null` branch actually keys on.
+    const empty = status === 204 || body === null;
+    return new Response(empty ? null : JSON.stringify(body), { status });
   }) as unknown as typeof fetch;
 });
 
@@ -599,6 +605,56 @@ describe("createCard", () => {
     });
   });
 
+  test("A MONTHLY CARD IS PATCHED TO RENEW — the create body has no recurrence", async () => {
+    // `POST /v3/spend/cards` takes `limit` and `shareBudgetFunds` and nothing
+    // about periods; only PATCH has `recurring`/`recurringLimit`. Without this
+    // follow-up a "$500 a month" card spends $500 once and then stops forever —
+    // and a dead card just looks like a decline, so nobody reports it as a bug.
+    seedAccount();
+    route("PATCH", "/v3/spend/cards/crd_new", () => ({
+      body: { uuid: "crd_new", status: "ACTIVATED", lastFour: "4242" },
+    }));
+
+    await adapter().createCard(CREATE_INPUT);
+
+    const [patched] = callsTo("PATCH", "/v3/spend/cards/crd_new");
+    expect(patched.body).toEqual({
+      recurring: true,
+      // BOTH: this period's allowance and every future one, exactly as
+      // setSpendLimit sends them.
+      availableFunds: 500,
+      recurringLimit: 500,
+    });
+  });
+
+  test("a WEEK/CHARGE card is NOT made recurring — the flat cap is deliberate", async () => {
+    // toBillCardLimit degrades these to a non-resetting cap on purpose
+    // (stricter than asked, never looser). Making them recurring would hand the
+    // cardholder four weeks of runway under a "/ week" label.
+    seedAccount();
+    await adapter().createCard({
+      ...CREATE_INPUT,
+      limit: { limitCents: 20_000, period: "charge" as const },
+    });
+    expect(callsTo("PATCH", "/v3/spend/cards/crd_new")).toHaveLength(0);
+  });
+
+  test("a FAILED recurrence PATCH warns but still returns the live card", async () => {
+    // The card exists and is spendable this period. Throwing here would record
+    // "failed" over a live card and orphan it at the bank — strictly worse than
+    // a card that needs its limit re-saved.
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    seedAccount();
+    route("PATCH", "/v3/spend/cards/crd_new", () => ({
+      status: 500,
+      body: { message: "nope" },
+    }));
+
+    const card = await adapter().createCard(CREATE_INPUT);
+    expect(card.providerCardId).toBe("crd_new");
+    expect(warn.mock.calls.flat().join(" ")).toMatch(/spend \$500 once and then stop/);
+  });
+
   test("the token rides in an `apiToken` header, not Authorization", async () => {
     seedAccount();
     await adapter().createCard(CREATE_INPUT);
@@ -616,6 +672,21 @@ describe("createCard", () => {
     );
     expect(callsTo("POST", "/v3/spend/budgets")).toHaveLength(0);
     expect(callsTo("POST", "/v3/spend/cards")).toHaveLength(0);
+  });
+
+  test("A NUMERIC-ISH `id` IS NOT ACCEPTED AS A UUID", async () => {
+    // Every BILL write takes the prefixed uuid. A card recorded under the
+    // numeric `id` would never match the `cardUuid` on a webhook, so its
+    // settlements would route to nothing forever — with no error anywhere.
+    // Refusing is loud; the fallback was silent.
+    seedAccount();
+    route("POST", "/v3/spend/cards", () => ({
+      body: { id: "884422", status: "ACTIVATED", lastFour: "4242" },
+    }));
+
+    await expect(adapter().createCard(CREATE_INPUT)).rejects.toThrow(
+      /returned no uuid/i,
+    );
   });
 
   test("a card with no uuid is refused rather than recorded", async () => {
@@ -691,6 +762,28 @@ describe("setCardState", () => {
     route("PATCH", "/v3/spend/cards/crd_1", (call) => ({
       body: { uuid: "crd_1", name: call.body.name, status: "FROZEN", lastFour: "4242" },
     }));
+  });
+
+  test("AN EMPTY 204 SUCCESS IS THE REQUESTED STATE, not `failed`", async () => {
+    // The client treats an empty successful body as the success it is. An empty
+    // card has no status, and an unknown status is `failed` — so without this,
+    // a pause BILL really applied persists as a broken-looking card in Togather
+    // while working perfectly at the bank.
+    routes = [];
+    route("POST", "/v3/spend/cards/crd_1/freeze", () => ({ status: 204, body: null }));
+    route("POST", "/v3/spend/cards/crd_1/unfreeze", () => ({ status: 204, body: null }));
+
+    const paused = await adapter().setCardState("crd_1", "paused");
+    expect(paused).toEqual({
+      providerCardId: "crd_1",
+      state: "paused",
+      // BILL said no word, so we invent none for the field whose whole contract
+      // is to carry the vendor's word unedited.
+      providerStatus: "",
+    });
+
+    const active = await adapter().setCardState("crd_1", "active");
+    expect(active.state).toBe("active");
   });
 
   test("paused is a plain freeze", async () => {

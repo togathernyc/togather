@@ -298,11 +298,23 @@ export const BILL_MAX_PAGE_SIZE = 50;
  * including the create bodies whose fields are confusingly named `userId` and
  * `budgetId`. Reading `id` and sending it as `budgetId` is the mistake this
  * helper exists to make impossible to write by accident.
+ *
+ * WHICH IS WHY IT DOES NOT FALL BACK TO `id`. It used to, and that quietly
+ * granted exactly the thing the paragraph above forbids: a response carrying
+ * only the numeric-ish `id` would have been accepted as a user, budget or card
+ * uuid and sent straight back into a write. The card case is the worst of the
+ * three and is not even loud — a `cards.providerCardId` holding an `id` never
+ * matches the `cardUuid` on a webhook, so that card's settlements route to
+ * nothing, forever, with no error anywhere.
+ *
+ * `null` instead runs the explicit refusals the callers already have ("BILL
+ * created a card but returned no uuid — refusing to record a card Togather
+ * could never control again"), which fail where a human can see them.
  */
 export function billUuid(
   object: { uuid?: string; id?: string } | null | undefined,
 ): string | null {
-  return object?.uuid ?? object?.id ?? null;
+  return object?.uuid ?? null;
 }
 
 // ============================================================================
