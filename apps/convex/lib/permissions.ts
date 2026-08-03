@@ -231,6 +231,13 @@ export async function requirePrimaryAdmin(
  * be several (see PRIMARY_ADMIN_ROLE). Paths that fan out (notifications,
  * digests, escalations) should act on the whole array rather than one row.
  *
+ * COST: `roles`/`status` are post-index filters, so this reads every
+ * membership row in the community. That is inherent to "give me all of them"
+ * and is fine for the fan-out paths this exists for, but it means you should
+ * NOT call it just to pick one row — use `pickInheritingPrimaryAdmin`, which
+ * walks `by_community_createdAt` and stops at the first match instead of
+ * collecting the whole community.
+ *
  * @returns rows sorted oldest-first by `createdAt`, so `[0]` is the
  * longest-standing primary admin and the ordering is stable across runs.
  */
@@ -291,6 +298,19 @@ function comparePrimaryAdminSeniority(a: any, b: any): number {
  * - Defensible. Oldest membership is the founder / longest-standing admin —
  *   the person most likely to recognise an inherited event, and the one who
  *   was there before whoever was added last week.
+ * - Cheap. Walking `by_community_createdAt` means the index is ALREADY in the
+ *   order we want, so we stop at the first matching row rather than reading
+ *   every membership in the community. This matters: the caller is member
+ *   removal, and collecting the whole `userCommunities` range for a
+ *   thousand-member community would put a scan proportional to community size
+ *   on the removal path (Convex per-query read limits are a documented hazard
+ *   in this repo). In practice the founder is both the earliest `createdAt`
+ *   and a primary admin, so this usually matches on the very first row.
+ *
+ * Ties on `createdAt` fall back to index order, which is stable — same
+ * intent as `comparePrimaryAdminSeniority`, enforced by the index instead of
+ * by a sort. `getPrimaryAdmins(...)[0]` is the equivalent (and equally
+ * deterministic) whole-set form; this one just doesn't pay for the whole set.
  *
  * @returns null if the community has no active primary admin at all (possible
  * for archived or half-migrated communities); callers must handle that.
@@ -299,8 +319,18 @@ export async function pickInheritingPrimaryAdmin(
   ctx: { db: any },
   communityId: Id<"communities">
 ): Promise<any | null> {
-  const admins = await getPrimaryAdmins(ctx, communityId);
-  return admins[0] ?? null;
+  const row = await ctx.db
+    .query("userCommunities")
+    .withIndex("by_community_createdAt", (q: any) => q.eq("communityId", communityId))
+    .filter((q: any) =>
+      q.and(
+        q.eq(q.field("roles"), PRIMARY_ADMIN_ROLE),
+        q.eq(q.field("status"), 1)
+      )
+    )
+    .first();
+
+  return row ?? null;
 }
 
 /**

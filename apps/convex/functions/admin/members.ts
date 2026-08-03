@@ -444,11 +444,17 @@ export const updateMemberRole = mutation({
  *
  * One exception to "net size unchanged": if the TARGET already holds role 4,
  * promoting them is a no-op and the set shrinks by one (the caller), who has
- * in effect just demoted themselves. Still safe — the target remains an owner,
- * so this can never strand a community with zero primary admins — but if we
- * ever want to reject it, that is a product call (the UI would have to stop
- * offering an existing primary admin as a transfer target), not a correctness
- * fix.
+ * in effect just demoted themselves.
+ *
+ * That is DELIBERATE and must not be rejected. Both `updateMemberRole`
+ * mutations refuse to touch a role-4 row ("Cannot modify Primary Admin role.
+ * Use transfer instead."), so this mutation is the ONLY way out of the
+ * primary-admin set. In a community with several primary admins, transferring
+ * to a fellow primary admin is therefore the only way one of them can step
+ * down WITHOUT promoting some third person. Blocking an already-primary target
+ * would leave them permanently stuck at role 4. It is also safe: the target
+ * remains an owner, so it can never strand a community with zero primary
+ * admins.
  *
  * `targetWasAdmin` still holds under those semantics: it is read from the
  * TARGET's own row before the patch and only decides whether the target needs

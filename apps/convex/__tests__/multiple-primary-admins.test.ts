@@ -392,6 +392,43 @@ describe("transferPrimaryAdmin under multi semantics", () => {
     // does not invent a membership.
     expect(announcementLeader).toBeNull();
   });
+
+  test("transferring to a fellow primary admin is the step-down path, not an error", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const s = await seed(t);
+
+    // Both updateMemberRole mutations refuse to modify a role-4 row, so this
+    // mutation is the ONLY exit from the primary-admin set. With two primary
+    // admins, transferring to the other one is how one of them steps down
+    // without promoting a third person — it must NOT be rejected.
+    await t.mutation(api.functions.admin.members.transferPrimaryAdmin, {
+      token: s.laterPrimaryToken,
+      communityId: s.communityId,
+      targetUserId: s.founderId,
+    });
+
+    const roles = await t.run(async (ctx) => {
+      const roleOf = async (userId: Id<"users">) => {
+        const row = await ctx.db
+          .query("userCommunities")
+          .withIndex("by_user_community", (q) =>
+            q.eq("userId", userId).eq("communityId", s.communityId)
+          )
+          .first();
+        return row?.roles;
+      };
+      return {
+        founder: await roleOf(s.founderId),
+        later: await roleOf(s.laterPrimaryId),
+      };
+    });
+
+    // The set shrinks by the caller; the target was already in it and stays.
+    // A community can never be left with zero primary admins this way.
+    expect(roles.later).toBe(COMMUNITY_ROLES.ADMIN);
+    expect(roles.founder).toBe(COMMUNITY_ROLES.PRIMARY_ADMIN);
+  });
 });
 
 // ============================================================================
