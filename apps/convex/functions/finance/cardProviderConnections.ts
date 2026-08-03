@@ -50,11 +50,28 @@ import { createUnsavedProvider } from "../../lib/finance/cardProviders";
 /**
  * The providers a community can connect today.
  *
- * A union, not a bare string, so adding the second BYO issuer is a change
- * someone has to make deliberately in three places that must agree: here, the
- * schema, and the resolver.
+ * A union, not a bare string, so adding a BYO issuer is a change someone has to
+ * make deliberately in three places that must agree: here, the schema, and the
+ * resolver.
  */
-const byoProviderValidator = v.literal("privacy");
+const byoProviderValidator = v.union(v.literal("privacy"), v.literal("bill"));
+
+/**
+ * What to call each provider when talking to a human, and what its credential
+ * is called there.
+ *
+ * Exists because "Enter your Privacy.com API key" shown to a church connecting
+ * BILL is the kind of small wrongness that makes someone paste the wrong
+ * secret. BILL calls it an "API token" and it is self-served inside their
+ * product, which is a different thing to go looking for.
+ */
+const PROVIDER_LABELS: Record<
+  "privacy" | "bill",
+  { name: string; credential: string }
+> = {
+  privacy: { name: "Privacy.com", credential: "API key" },
+  bill: { name: "BILL Spend & Expense", credential: "API token" },
+};
 
 /**
  * Card statuses that mean "this card is DEAD and can be ignored when deciding
@@ -337,9 +354,10 @@ export const connectCardProvider = action({
       { token: args.token, communityId: args.communityId },
     );
 
+    const label = PROVIDER_LABELS[args.provider];
     const apiKey = args.apiKey.trim();
     if (!apiKey) {
-      throw new ConvexError("Enter your Privacy.com API key");
+      throw new ConvexError(`Enter your ${label.name} ${label.credential}`);
     }
 
     const provider = await createUnsavedProvider(args.provider, apiKey);
@@ -362,7 +380,7 @@ export const connectCardProvider = action({
       // in a message and the URL it builds carries no credential.
       const message = error instanceof Error ? error.message : String(error);
       throw new ConvexError(
-        `Couldn't reach ${args.provider} with that API key: ${message.slice(0, 300)}`,
+        `Couldn't reach ${label.name} with that ${label.credential}: ${message.slice(0, 300)}`,
       );
     }
 
@@ -385,9 +403,61 @@ export const connectCardProvider = action({
       },
     );
 
+    await registerProviderWebhook(provider, args.provider);
+
     return { accountLabel };
   },
 });
+
+/**
+ * Point the provider's notifications at this deployment, if it has an API for
+ * that. BEST EFFORT — a failure is a log line and nothing else.
+ *
+ * Three reasons that is the right severity, and not laziness:
+ *
+ * 1. **The poll is the backstop.** `finance-card-txn-poll` reads every BYO
+ *    connection hourly through the same recorder, so a connection with no
+ *    webhook still books every charge — later, not never.
+ * 2. **BILL's subscriptions are PRODUCTION-ONLY.** Their sandbox has a test
+ *    endpoint and no real deliveries, so in staging this call is EXPECTED to
+ *    fail. Making it fatal would make connecting a sandbox account impossible.
+ * 3. **The auth scheme is uncertain.** `/v3/subscriptions` is documented as
+ *    part of BILL's core v3 API (devKey + sessionId), and the Spend & Expense
+ *    apiToken may not satisfy it. Refusing the connection over that would block
+ *    a church whose cards would otherwise work perfectly.
+ *
+ * Runs AFTER the credential is stored, deliberately: the connection is the
+ * thing that matters and it is already durable by this point, so nothing here
+ * can lose it.
+ */
+async function registerProviderWebhook(
+  provider: { registerWebhook?: (url: string) => Promise<void> },
+  providerName: "privacy" | "bill",
+): Promise<void> {
+  if (!provider.registerWebhook) return;
+
+  // Convex sets this to the deployment's HTTP-actions origin; it is the same
+  // value http.ts's routes are served from, so deriving the URL means a
+  // staging connection never registers a production callback.
+  const siteUrl = process.env.CONVEX_SITE_URL;
+  if (!siteUrl) {
+    console.warn(
+      `[finance] CONVEX_SITE_URL is unset — not registering a ${providerName} webhook. The hourly poll still imports transactions.`,
+    );
+    return;
+  }
+
+  try {
+    await provider.registerWebhook(
+      `${siteUrl.replace(/\/$/, "")}/card-provider-webhook/${providerName}`,
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(
+      `[finance] could not register the ${providerName} webhook (${message.slice(0, 300)}). Transactions will arrive on the hourly poll instead.`,
+    );
+  }
+}
 
 // ============================================================================
 // disconnectCardProvider
@@ -551,8 +621,10 @@ async function countLiveCards(
  * AFTER a connection exists, so there is no Togather card whose spending could
  * predate this.
  *
- * FORMAT NOTE: an ISO timestamp, which is what today's one BYO adapter defines
- * its cursor to be (`syncCursor` is otherwise opaque and provider-defined). A
+ * FORMAT NOTE: an ISO timestamp, which is what BOTH of today's BYO adapters
+ * define their cursor to be (`syncCursor` is otherwise opaque and
+ * provider-defined) — Privacy's is a high-water mark over `created`, BILL's
+ * over `updatedTime`, and each feeds it straight back as a filter bound. A
  * future adapter that paginates by opaque token must seed its own — which is
  * why this is a named function rather than an inline `toISOString()`.
  */

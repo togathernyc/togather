@@ -20,6 +20,7 @@ import { resolveLinkPreviewMeta } from "./functions/linkPreviewMeta";
 import { registerRoutes } from "@supa-media/dev-assistant";
 import "./functions/devAssistant/config"; // side-effect: sets config first
 import {
+  handleBillWebhookRequest,
   handleFinanceStripeEvent,
   handleIncreaseWebhookRequest,
   handlePrivacyWebhookRequest,
@@ -592,6 +593,29 @@ http.route({
   method: "POST",
   handler: httpAction(async (ctx, request) => {
     return await handlePrivacyWebhookRequest(ctx, request);
+  }),
+});
+
+/**
+ * POST /card-provider-webhook/bill
+ *
+ * Transaction receiver for communities that bring their own BILL Spend &
+ * Expense account (ADR-033 Phase 2). Unlike the Privacy route above, THIS
+ * ENDPOINT HAS NO SIGNATURE TO CHECK — BILL publishes none — so the handler
+ * treats every delivery as an unauthenticated hint and re-fetches the
+ * transaction from BILL before recording a cent. The reasoning is in
+ * `handleBillWebhookRequest`; this route is pure mounting.
+ *
+ * One URL for every community, matching the Privacy route. BILL's
+ * subscriptions ARE programmatic (`connectCardProvider` registers this URL on
+ * connect, best effort) and are production-only, so a staging deployment
+ * imports through the hourly poll alone.
+ */
+http.route({
+  path: "/card-provider-webhook/bill",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    return await handleBillWebhookRequest(ctx, request);
   }),
 });
 

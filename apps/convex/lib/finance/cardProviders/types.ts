@@ -121,11 +121,16 @@ export interface ProviderCapabilities {
 
   /**
    * How the provider's balance is funded and repaid.
-   * - `"n/a"`       — the card spends a real deposit balance we already hold (Increase).
-   * - `"prefund"`   — we push money to the provider before it can be spent.
-   * - `"statement"` — a charge card billed on a cycle; repayment is out-of-band.
+   * - `"n/a"`        — the card spends a real deposit balance we already hold (Increase).
+   * - `"prefund"`    — we push money to the provider before it can be spent.
+   * - `"statement"`  — a charge card billed on a cycle; repayment is out-of-band.
+   * - `"in_product"` — a charge card whose credit line, repayment and bank
+   *   accounts are not in the API AT ALL (BILL Spend & Expense). Distinct from
+   *   `"statement"` on purpose: with a statement we could at least fetch the
+   *   cycle, whereas here Togather can neither show a balance nor reconcile a
+   *   repayment, and any UI that implies otherwise is lying.
    */
-  repaymentVisibility: "n/a" | "prefund" | "statement";
+  repaymentVisibility: "n/a" | "prefund" | "statement" | "in_product";
 }
 
 // ============================================================================
@@ -233,6 +238,25 @@ export interface CardProviderAdapter {
    */
   createCard(input: {
     fundAccountRef: string;
+    /**
+     * The FUND's own name, unadorned.
+     *
+     * Distinct from `description` (which is "<fund> — <card>") because some
+     * issuers need the fund as an IDENTITY, not as display text: the BILL
+     * adapter maps one fund to one BILL budget and finds that budget by exact
+     * name, so parsing it back out of a composed string would make a fund
+     * called "Youth — Camp" resolve to the wrong container.
+     */
+    fundName: string;
+    /**
+     * The cardholder's email, or `null` if their Togather profile has none.
+     *
+     * Present because an issuer may have its OWN user directory that a card
+     * must be attached to — BILL issues cards to people who already exist in
+     * the church's BILL account, matched by email. Providers that treat a card
+     * as a bare instrument (Increase, Privacy) ignore it.
+     */
+    holderEmail: string | null;
     description: string;
     idempotencyKey: string;
     limit: NormalizedLimit | null;
@@ -264,6 +288,40 @@ export interface CardProviderAdapter {
    * as `nextCursor` is what gets stored and handed back next time.
    */
   listTransactions?(cursor: string | null): Promise<ProviderTxnPage>;
+
+  /**
+   * Re-read ONE transaction from the provider, by its provider id.
+   *
+   * Exists for a specific and unpleasant class of issuer: one whose webhook
+   * deliveries carry no signature we can verify. BILL Spend & Expense is the
+   * first — its notification docs describe the payload and say nothing about a
+   * signing scheme — so a delivery can only be treated as a HINT that
+   * something happened, never as evidence of WHAT happened.
+   *
+   * The webhook route therefore uses the payload to route (which community,
+   * which transaction id) and then calls this to fetch the transaction with the
+   * community's own stored credential, booking only what the API returns. A
+   * forged POST claiming a $9,000 charge yields either `null` (nothing written)
+   * or the real transaction (the real amount written) — never the attacker's
+   * number. See functions/finance/webhooks.ts's `handleBillWebhookRequest`.
+   *
+   * `null` means "the provider has no such transaction", which is an ANSWER —
+   * the caller writes nothing and returns 200. A network/auth failure throws.
+   */
+  fetchTransaction?(providerTxnId: string): Promise<ProviderTxn | null>;
+
+  /**
+   * Ask the provider to POST future events to `notificationUrl`.
+   *
+   * Present only on issuers with a programmatic webhook API. Privacy's endpoint
+   * is typed into their dashboard by a human, so its adapter has nothing to
+   * implement; BILL's is an API call, so its adapter does.
+   *
+   * Throws on failure. The CALLER decides how much that matters — for a
+   * provider whose transactions are also polled, a failed registration is a log
+   * line, not a failed connection (see `connectCardProvider`).
+   */
+  registerWebhook?(notificationUrl: string): Promise<void>;
 
   /**
    * Prove the stored credential still works, and say whose account it is.

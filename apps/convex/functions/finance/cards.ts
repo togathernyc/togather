@@ -423,9 +423,16 @@ export const getCardForProvisioning = internalQuery({
     // Resolved here, in the query, because `provisionCard` is an ACTION and
     // has no `ctx.db` to resolve any of this with (ADR-033).
     const providerName = await resolveCardProviderName(ctx, fund.communityId);
+    // Read HERE, not in the action, for the same reason as everything else on
+    // this object: `provisionCard` has no `ctx.db`. An issuer with its own user
+    // directory (BILL matches cardholders by email) needs this, and one that
+    // treats a card as a bare instrument ignores it.
+    const holder = await ctx.db.get(card.holderUserId);
+
     return {
       card,
       fund,
+      holderEmail: holder?.email ?? null,
       onboardingStatus: finance?.onboardingStatus ?? null,
       providerName,
       /** Null when ready; otherwise the sentence explaining what's missing. */
@@ -573,8 +580,15 @@ export const provisionCard = internalAction({
       );
       return;
     }
-    const { card, fund, onboardingStatus, providerName, readiness, connection } =
-      loaded;
+    const {
+      card,
+      fund,
+      holderEmail,
+      onboardingStatus,
+      providerName,
+      readiness,
+      connection,
+    } = loaded;
 
     // Re-check every gate createFundCard checked, immediately before the
     // provider call. createFundCard's checks ran in a DIFFERENT transaction,
@@ -613,6 +627,15 @@ export const provisionCard = internalAction({
         // literal. `readiness` above already proved this is non-empty for the
         // providers that DO bind a card to an account.
         fundAccountRef: fund.increaseAccountId ?? "",
+        // The fund's name UNADORNED, alongside the composed description: an
+        // issuer that maps a fund to one of its own containers (BILL: one
+        // budget per fund, found by exact name) must not have to parse it back
+        // out of "<fund> — <card>".
+        fundName: fund.name,
+        // Null when the cardholder has no email. Only an issuer with its own
+        // user directory cares, and the one that does (BILL) turns it into a
+        // legible "invite them in BILL first" failure rather than a 400.
+        holderEmail,
         description: `${fund.name} — ${card.name ?? "Card"}`,
         idempotencyKey: `finance:card:${args.cardId}`,
         // The spend limit the finance_admin picked. Sent AT CREATION so there
