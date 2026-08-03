@@ -693,6 +693,17 @@ export async function recordProviderTransaction(
     return false;
   }
   if (txn.amountCents <= 0) {
+    // NOTE: a Privacy Transaction accumulates its events, so a charge that
+    // CLEARED and was later partly returned normalizes negative too (net
+    // amount, RETURN present). In the normal case that is conservative — the
+    // clearing was already booked at gross, so we over-state spend rather
+    // than hide it. The one lossy case is a charge whose clearing webhook was
+    // missed AND whose return landed inside the same poll window: the net
+    // spend is then never booked at all. It is loud here rather than silent
+    // because that is all this Phase can honestly do; booking the net as a
+    // fresh charge would double-debit every ordinary refund.
+    // TODO: fold this into the expense module's refund reversal (ADR-033
+    // Phase 2), which is the layer that can tell the two cases apart.
     console.log(
       `[${logTag}] credit/zero transaction ${txn.providerTxnId} (${txn.amountCents} cents) — refund reversal is not implemented yet, skipping`,
     );

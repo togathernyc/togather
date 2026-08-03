@@ -729,6 +729,53 @@ describe("POST /card-provider-webhook/privacy", () => {
     expect(await countWrites(t)).toEqual({ expenses: 0, ledger: 0 });
   });
 
+  test("one church's key cannot book a charge onto another church's card", async () => {
+    // THE property that makes a shared, unauthenticated webhook URL safe. The
+    // routing key (`card_token`) and the signing key are different things: the
+    // handler resolves the CARD's community first and then verifies with THAT
+    // community's credential — so a church holding a perfectly valid Privacy
+    // key of its own still cannot sign a payload naming a neighbour's card.
+    const t = convexTest(schema, modules);
+
+    const a = await seed(t);
+    await connect(t, a, "church-a-key");
+    privacy.createPrivacyCard.mockResolvedValue({
+      token: "card_church_a",
+      state: "OPEN",
+      last_four: "1111",
+    });
+    await issueCard(t, a);
+
+    const b = await seed(t);
+    await connect(t, b, "church-b-key");
+    privacy.createPrivacyCard.mockResolvedValue({
+      token: "card_church_b",
+      state: "OPEN",
+      last_four: "2222",
+    });
+    await issueCard(t, b);
+
+    const forged = { ...SETTLED_TXN, card_token: "card_church_b" };
+    const rejected = await postWebhook(
+      t,
+      forged,
+      await signPrivacyWebhook(forged, "church-a-key"),
+    );
+    expect(rejected.status).toBe(401);
+    expect(await countWrites(t)).toEqual({ expenses: 0, ledger: 0 });
+
+    // The SAME payload signed by B's own key is accepted — which is what
+    // proves the 401 above was the signature check firing, not the routing
+    // quietly failing to find the card.
+    const accepted = await postWebhook(
+      t,
+      forged,
+      await signPrivacyWebhook(forged, "church-b-key"),
+    );
+    expect(accepted.status).toBe(200);
+    expect(await countWrites(t)).toEqual({ expenses: 1, ledger: 1 });
+  });
+
   test("an authorization (PENDING) records nothing", async () => {
     const t = convexTest(schema, modules);
     await connectedWithCard(t);

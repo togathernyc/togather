@@ -416,6 +416,43 @@ describe("canonicalJsonStringify", () => {
     expect(canonicalJsonStringify({ a: null })).toBe('{"a":null}');
     expect(canonicalJsonStringify(null)).toBe("null");
   });
+
+  test("sorts at every depth through arrays OF objects OF arrays", () => {
+    expect(canonicalJsonStringify({ e: [{ b: [{ d: 1, c: 2 }], a: 3 }] })).toBe(
+      '{"e":[{"a":3,"b":[{"c":2,"d":1}]}]}',
+    );
+  });
+
+  test("a missing key and an explicit null are DIFFERENT signed messages", () => {
+    // Worth pinning because it is the one canonicalization difference that
+    // changes meaning rather than spelling: if these collided, a delivery
+    // could drop a field and keep its signature.
+    expect(canonicalJsonStringify({ a: 1 })).not.toBe(
+      canonicalJsonStringify({ a: 1, b: null }),
+    );
+  });
+
+  test("non-ASCII text is emitted RAW, not \\u-escaped", () => {
+    // The likeliest place a REAL delivery diverges from us: a signer using
+    // Python's `json.dumps` default (ensure_ascii=True) would sign "é"
+    // where we sign "é", so any accented merchant descriptor would mismatch.
+    // Pinned rather than assumed — and note what a mismatch costs: a 401 and a
+    // charge that arrives an hour later via finance-card-txn-poll. The failure
+    // mode of every unverified canonicalization assumption in this file is
+    // REJECT, never accept-unverified.
+    expect(canonicalJsonStringify({ m: "Café" })).toBe('{"m":"Café"}');
+  });
+
+  test("numbers use JS formatting — the assumption, stated", () => {
+    // Privacy's amounts are integer cents, so none of these shapes can occur
+    // in a real transaction payload. Pinned anyway, because "JS renders the
+    // number the same way their signer does" is an assumption no test here can
+    // confirm without a live delivery, and this at least makes the assumption
+    // visible and stable across refactors.
+    expect(canonicalJsonStringify({ a: 1e21, b: -0, c: 1.5, d: 0.1 })).toBe(
+      '{"a":1e+21,"b":0,"c":1.5,"d":0.1}',
+    );
+  });
 });
 
 describe("X-Privacy-HMAC verification", () => {
