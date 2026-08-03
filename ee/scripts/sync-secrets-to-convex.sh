@@ -120,6 +120,10 @@ SECRET_KEYS=(
   "INCREASE_API_KEY"
   "INCREASE_WEBHOOK_SECRET"
   "INCREASE_API_BASE_URL"
+  # Master key for envelope-encrypting per-community card-provider credentials
+  # (lib/finance/credentialCrypto.ts, ADR-033). 32 bytes base64; staging and
+  # production hold DIFFERENT keys (1Password item CREDENTIALS_MASTER_KEY).
+  "CREDENTIALS_MASTER_KEY"
   # Dev-assistant bot (@Togather pipeline). Optional — synced only when present.
   # Sourced from 1Password via the shared sync-secrets.yml workflow
   # (ee/secrets-allowlist.json's "optional" list), then exported into the
