@@ -60,12 +60,17 @@ const byoProviderValidator = v.literal("privacy");
  * Card statuses that mean "this card is DEAD and can be ignored when deciding
  * whether a connection is still in use".
  *
- * Deliberately a small denylist rather than a big allowlist: `cards.status`
- * carries the PROVIDER's own string (see schema.ts), so the set of live values
- * grows every time an issuer invents one, while the set of dead ones is short
- * and known. Guessing wrong in this direction makes the disconnect guard fire
- * when it needn't — annoying. Guessing wrong the other way silently revokes a
- * key out from under a working card.
+ * Deliberately a small denylist rather than a big allowlist: the set of live
+ * statuses grows every time the model gains a state, while the set of dead
+ * ones is short and known. Guessing wrong in this direction makes the
+ * disconnect guard fire when it needn't — annoying. Guessing wrong the other
+ * way silently revokes a key out from under a working card.
+ *
+ * `CLOSED`/`closed` are the pre-normalization spellings: `recordCardProvisioned`
+ * now stores the adapter's NORMALIZED state (cards.ts's
+ * `cardStateToStoredStatus`), so nothing writes a raw provider word any more —
+ * but a row written by an earlier build might hold one, and this list costs
+ * nothing to keep honest about that.
  */
 const DEAD_CARD_STATUSES = new Set(["CLOSED", "canceled", "closed", "failed"]);
 
@@ -196,6 +201,23 @@ export const saveCardProviderConnection = internalMutation({
     // that exists, the honest answer is the same one disconnect gives: close
     // the old cards first. Rotating a key on the SAME provider is untouched —
     // that is the reconnect path this guard must not break.
+    // A connection is only half a switch: the resolver reads
+    // `communityFinance.cardProvider`, and there is no row to write it on
+    // until finance onboarding has created one. Storing the credential anyway
+    // and returning success would leave an admin looking at "Connected" on a
+    // community that `resolveCardProviderName` still answers "none" for — a
+    // live spending key held for no reason, and a card screen that refuses to
+    // issue with a message about a different problem. Refuse first instead.
+    const finance = await ctx.db
+      .query("communityFinance")
+      .withIndex("by_community", (q) => q.eq("communityId", args.communityId))
+      .first();
+    if (!finance) {
+      throw new ConvexError(
+        "Finish this community's finance setup before connecting a card provider — there's nothing yet for the connection to attach to",
+      );
+    }
+
     const strandedCards = await countLiveCardsOnOtherProviders(
       ctx,
       args.communityId,
@@ -260,17 +282,12 @@ export const saveCardProviderConnection = internalMutation({
 
     // The connection is only half the switch — `cardProvider` is what the
     // resolver reads. Writing both in ONE transaction is what stops a
-    // community from ending up connected-but-still-issuing-at-Increase.
-    const finance = await ctx.db
-      .query("communityFinance")
-      .withIndex("by_community", (q) => q.eq("communityId", args.communityId))
-      .first();
-    if (finance) {
-      await ctx.db.patch(finance._id, {
-        cardProvider: args.provider,
-        updatedAt: timestamp,
-      });
-    }
+    // community from ending up connected-but-still-issuing-at-Increase; the
+    // row is guaranteed to exist by the guard at the top of this handler.
+    await ctx.db.patch(finance._id, {
+      cardProvider: args.provider,
+      updatedAt: timestamp,
+    });
 
     await logFinanceAudit(ctx, {
       communityId: args.communityId,

@@ -306,6 +306,14 @@ export const createFundCard = mutation({
       fundId: args.fundId,
       holderUserId: args.holderUserId,
       name: args.name,
+      // Stamped NOW, not at `recordCardProvisioned`. Between this insert and
+      // the scheduled provisioning action landing, the row is a card that is
+      // about to exist at a named issuer — and `disconnectCardProvider`'s
+      // "are any cards still live?" guard has to see it, or an admin can
+      // disconnect in that window and the action still mints a real card with
+      // the credential it already loaded. `recordCardProvisioned` writes the
+      // same value again; this just makes it true earlier.
+      provider: providerName,
       status: "pending",
       spendLimitCents: args.spendLimitCents,
       limitPeriod: args.limitPeriod,

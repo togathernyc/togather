@@ -245,6 +245,27 @@ async function connect(
 // ============================================================================
 
 describe("connectCardProvider", () => {
+  test("refuses before finance setup exists, rather than storing a key it can't use", async () => {
+    // requireCommunityFinanceAccess passes for a primary admin whether or not
+    // a communityFinance row exists — but `cardProvider` lives on that row, so
+    // without it the resolver keeps answering "none" and the stored credential
+    // can never issue anything. Reporting success there means an admin sees
+    // "Connected" while every card attempt fails for an unrelated-sounding
+    // reason, and we hold a live spending key for nothing.
+    const t = convexTest(schema, modules);
+    const f = await seed(t);
+    await t.run(async (ctx) => {
+      const finance = await ctx.db.query("communityFinance").first();
+      await ctx.db.delete(finance!._id);
+    });
+
+    await expect(connect(t, f)).rejects.toThrow(/finish this community's finance setup/i);
+    const rows = await t.run(async (ctx) =>
+      ctx.db.query("cardProviderConnections").collect(),
+    );
+    expect(rows).toHaveLength(0);
+  });
+
   test("proves the key, encrypts it, and switches the community over", async () => {
     const t = convexTest(schema, modules);
     const f = await seed(t);
@@ -1257,6 +1278,41 @@ describe("disconnectCardProvider", () => {
       ctx.db.query("cardProviderConnections").first(),
     );
     expect(row!.status).toBe("active");
+  });
+
+  test("a card still PENDING provisioning also blocks the disconnect", async () => {
+    // The window that matters: createFundCard has inserted the row and
+    // scheduled provisioning, which may already hold a decrypted credential.
+    // Disconnecting here would succeed and the action would still mint a live
+    // card — on a community now set to "none". The row is stamped with its
+    // intended provider at insert precisely so this guard can see it.
+    const t = convexTest(schema, modules);
+    const f = await seed(t);
+    await connect(t, f);
+    const cardId: Id<"cards"> = await t.mutation(
+      api.functions.finance.cards.createFundCard,
+      {
+        token: await tokenFor(f.primaryAdminUserId),
+        fundId: f.fundId,
+        holderUserId: f.cardholderUserId,
+        name: "Supplies",
+      },
+    );
+    // Deliberately NOT provisioned — provider stamped, providerCardId absent.
+    const pending = await t.run(async (ctx) => ctx.db.get(cardId));
+    expect(pending!.status).toBe("pending");
+    expect(pending!.provider).toBe("privacy");
+    expect(pending!.providerCardId).toBeUndefined();
+
+    await expect(
+      t.mutation(
+        api.functions.finance.cardProviderConnections.disconnectCardProvider,
+        {
+          token: await tokenFor(f.primaryAdminUserId),
+          communityId: f.communityId,
+        },
+      ),
+    ).rejects.toThrow(/1 card is still open/i);
   });
 
   test("succeeds once the card is closed", async () => {
