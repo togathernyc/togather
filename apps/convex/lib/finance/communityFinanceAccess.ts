@@ -111,8 +111,12 @@ export async function requireCommunityFinanceAccess(
   communityId: Id<"communities">,
 ): Promise<void> {
   if (!(await canManageCommunityFinance(ctx, userId, communityId))) {
+    // Names the person who can fix it, NOT a screen — the grant UI ships in
+    // ADR-033 Phase 1 alongside the first BYOC adapter, and copy that sends
+    // someone to a settings page that doesn't exist yet is worse than copy
+    // that just tells them who to ask.
     throw new ConvexError(
-      "You need financial-controls access for this community — ask the primary admin to grant it in Community Settings → Finance",
+      "You need financial-controls access for this community — ask your community's primary admin to grant it to you",
     );
   }
   await assertCommunityNotArchived(ctx as any, communityId);

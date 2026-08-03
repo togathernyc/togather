@@ -297,7 +297,18 @@ card freeze/cancel carve-out in `lib/finance/flag.ts`.
 
 **Consequence, accepted:** a plain community admin who could reach finance
 onboarding yesterday cannot today. That is the point. The primary admin can
-restore it for any of them in two taps, and the audit trail records who did.
+restore it for any of them, and the audit trail records who did.
+
+**Sequencing, and the one thing to watch.** Phase 0 ships the grant *mutations*
+(`functions/finance/communityRoles.ts`) but no grant *screen* — that lands in
+Phase 1. Until it does, a grant has to be made through the Convex dashboard.
+This is safe only because `group-giving` is a superuser kill switch that is
+OFF by default: with the flag down nobody reaches these surfaces at all, so
+there is no one to lock out. **Before the flag is turned on for any community
+that has a non-primary admin running its finances, either the grant UI must
+exist or that admin must already hold a grant.** The error copy names the
+primary admin rather than a settings screen precisely because the screen is
+not there yet.
 
 ### 6. Phases
 
