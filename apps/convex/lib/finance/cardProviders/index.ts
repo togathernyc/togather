@@ -193,14 +193,24 @@ export async function getCardProviderByName(
         }),
       );
     }
-    case "bill":
-      // A later phase lands this adapter. Until then a community cannot be put
-      // on it, so reaching this is a hand-edited row — say so plainly rather
-      // than falling back to Increase, which would issue a card at the wrong
-      // bank.
-      throw new ConvexError(
-        `The "${name}" card provider isn't available yet — this community's card provider setting is ahead of the code`,
+    case "bill": {
+      if (!connection) {
+        // Same real state as Privacy's: they disconnected, or the token stopped
+        // working and the connection went to "error". Say which thing to do,
+        // since the person reading this is the finance admin who has to do it.
+        throw new ConvexError(
+          "This community's BILL Spend & Expense account isn't connected — reconnect it in Community Settings → Finance before issuing or changing cards",
+        );
+      }
+      const { createBillCardProvider } = await import("./bill");
+      return createBillCardProvider(
+        await decryptCredential(connection.credential, {
+          communityId: connection.communityId,
+          provider: connection.provider,
+          purpose: "apiKey",
+        }),
       );
+    }
     case "none":
       throw new ConvexError(
         "No card provider is configured for this community — finish finance setup before issuing cards",
@@ -226,9 +236,8 @@ export async function createUnsavedProvider(
     const { createPrivacyCardProvider } = await import("./privacy");
     return createPrivacyCardProvider(apiKey);
   }
-  throw new ConvexError(
-    `The "${name}" card provider isn't available yet — nothing can be connected to it`,
-  );
+  const { createBillCardProvider } = await import("./bill");
+  return createBillCardProvider(apiKey);
 }
 
 /**
