@@ -105,6 +105,11 @@ export function isDegradedLimitPeriod(period: CardLimitPeriod): boolean {
  * already had — a silent no-op on the one path where silence is most
  * expensive.
  *
+ * UNREACHABLE from the app since `requiresSpendLimit` — an uncapped card at a
+ * provider with no hard fund isolation can spend the church's entire pooled
+ * account, so `createFundCard`/`setCardLimit` refuse to make one. This branch
+ * is the adapter honouring its own contract, not a path anything takes.
+ *
  * ASSUMPTION FLAGGED: that `spend_limit: 0` means "unlimited" rather than
  * "decline everything" is the documented reading, but it is the one behaviour
  * here that a live sandbox key would settle in thirty seconds and nothing else

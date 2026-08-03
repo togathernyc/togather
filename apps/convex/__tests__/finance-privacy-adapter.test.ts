@@ -29,7 +29,10 @@ import {
   PRIVACY_CAPABILITIES,
   toPrivacyLimit,
 } from "../lib/finance/cardProviders/privacy";
-import { supportsWeeklyLimits } from "../lib/finance/cardProviders";
+import {
+  requiresSpendLimit,
+  supportsWeeklyLimits,
+} from "../lib/finance/cardProviders";
 import {
   canonicalJsonStringify,
   redactApiKey,
@@ -144,6 +147,15 @@ describe("limit mapping", () => {
       PRIVACY_CAPABILITIES.weeklyLimits,
     );
     expect(supportsWeeklyLimits("increase")).toBe(true);
+  });
+
+  test("a pooled-account provider must require a limit", () => {
+    // The limit IS the fund boundary where the bank doesn't provide one, so
+    // this has to track `hardFundIsolation` exactly.
+    expect(requiresSpendLimit("privacy")).toBe(
+      !PRIVACY_CAPABILITIES.hardFundIsolation,
+    );
+    expect(requiresSpendLimit("increase")).toBe(false);
   });
 
   test("no limit is stated EXPLICITLY, not omitted", () => {

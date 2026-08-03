@@ -251,6 +251,28 @@ export function supportsWeeklyLimits(name: CardProviderName): boolean {
   return name !== "privacy";
 }
 
+/**
+ * Must every card at this provider carry a spend limit?
+ *
+ * YES exactly when the provider has no hard fund isolation. At Increase a fund
+ * owns its own Account, so an uncapped card can only ever reach that fund's
+ * money — the bank enforces the boundary and "no limit" honestly means "up to
+ * this fund's balance". At Privacy every card draws the SAME pooled funding
+ * source, so an uncapped card can spend the church's entire account: another
+ * group's giving, the general fund, all of it. The card screen's own copy
+ * promises the opposite, and no pooled-balance authorization control exists
+ * yet (ADR-033 Phase 2).
+ *
+ * So the limit stops being a preference and becomes the only boundary there
+ * is. Same shape as `supportsWeeklyLimits` and for the same reason: keyed on
+ * the NAME, because the mutations that gate a limit have no credential to
+ * build an adapter from. MUST agree with `capabilities.hardFundIsolation`; a
+ * test pins that the two cannot drift.
+ */
+export function requiresSpendLimit(name: CardProviderName): boolean {
+  return name === "privacy";
+}
+
 /** Does this provider bring its own, community-held credential? */
 export function isBringYourOwnProvider(
   name: CardProviderName,

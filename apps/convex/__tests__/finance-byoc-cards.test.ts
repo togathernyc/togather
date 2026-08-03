@@ -563,6 +563,34 @@ describe("issuing a card on a BYO provider", () => {
     );
   });
 
+  test("an UNCAPPED card is refused — the limit is the fund boundary here", async () => {
+    // At Increase "no limit" means "up to this fund's balance", because the
+    // fund owns the Account. At Privacy every card draws the community's one
+    // pooled funding source, so the same choice means "up to the church's
+    // entire account" — another group's giving included.
+    const t = convexTest(schema, modules);
+    const f = await seed(t);
+    await connect(t, f);
+
+    await expect(
+      t.mutation(api.functions.finance.cards.createFundCard, {
+        token: await tokenFor(f.primaryAdminUserId),
+        fundId: f.fundId,
+        holderUserId: f.cardholderUserId,
+        name: "Supplies",
+      }),
+    ).rejects.toThrow(/only thing keeping this card inside its fund/i);
+
+    // …and the limit can't be REMOVED from a card that already has one.
+    const cardId = await issueCard(t, f);
+    await expect(
+      t.mutation(api.functions.finance.cards.setCardLimit, {
+        token: await tokenFor(f.primaryAdminUserId),
+        cardId,
+      }),
+    ).rejects.toThrow(/only thing keeping this card inside its fund/i);
+  });
+
   test("a WEEKLY limit is refused, not silently widened to a month", async () => {
     // The adapter would map week -> MONTHLY at the same number (safe for the
     // money), but the card screen renders "/ week" with a Monday reset — so
@@ -625,6 +653,9 @@ describe("issuing a card on a BYO provider", () => {
         fundId: f.fundId,
         holderUserId: f.cardholderUserId,
         name: "Supplies",
+        // Required at a pooled-account provider — see assertLimitRequired.
+        spendLimitCents: 50_000,
+        limitPeriod: "month",
       },
     );
     await t.run(async (ctx) => {
@@ -1389,6 +1420,9 @@ describe("disconnectCardProvider", () => {
         fundId: f.fundId,
         holderUserId: f.cardholderUserId,
         name: "Supplies",
+        // Required at a pooled-account provider — see assertLimitRequired.
+        spendLimitCents: 50_000,
+        limitPeriod: "month",
       },
     );
     // Deliberately NOT provisioned — provider stamped, providerCardId absent.

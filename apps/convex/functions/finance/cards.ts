@@ -79,6 +79,7 @@ import {
   getCardProviderByName,
   isBringYourOwnProvider,
   loadActiveProviderConnection,
+  requiresSpendLimit,
   resolveCardProviderName,
   supportsWeeklyLimits,
 } from "../../lib/finance/cardProviders";
@@ -247,6 +248,29 @@ function assertLimitPeriodSupported(
   );
 }
 
+/**
+ * Refuse an UNCAPPED card at an issuer with no hard fund isolation.
+ *
+ * At Increase "no limit" means "up to this fund's balance", because the fund
+ * owns the Account the card draws from and the bank enforces that. At Privacy
+ * every card draws the community's single pooled funding source, so the same
+ * choice means "up to the church's entire account" — another group's giving
+ * included — while the card screen still promises the fund is the ceiling.
+ * Until a pooled-balance authorization control exists (ADR-033 Phase 2), the
+ * limit IS the fund boundary, so it cannot be optional.
+ */
+function assertLimitRequired(
+  providerName: Awaited<ReturnType<typeof resolveCardProviderName>>,
+  spendLimitCents: number | undefined,
+  limitPeriod: CardLimitPeriod | undefined,
+): void {
+  if (!requiresSpendLimit(providerName)) return;
+  if (spendLimitCents !== undefined && limitPeriod !== undefined) return;
+  throw new Error(
+    `Cards at ${providerName} draw on this community's whole account, not a per-fund one — set a spending limit, because it's the only thing keeping this card inside its fund`,
+  );
+}
+
 export const createFundCard = mutation({
   args: {
     token: v.string(),
@@ -297,6 +321,7 @@ export const createFundCard = mutation({
       throw new Error(readiness);
     }
     assertLimitPeriodSupported(providerName, args.limitPeriod);
+    assertLimitRequired(providerName, args.spendLimitCents, args.limitPeriod);
 
     // The holder must ACTUALLY hold cardholder+ on the fund's own fundRoles
     // grant — deliberately not `requireFundRole`'s community-admin override,
@@ -850,8 +875,14 @@ export const setCardLimit = mutation({
     await requireFundRole(ctx, fund._id, userId, "finance_admin");
 
     validateCardLimit(args.spendLimitCents, args.limitPeriod);
-    assertLimitPeriodSupported(
-      await resolveCardProviderName(ctx, fund.communityId),
+    const limitProviderName = await resolveCardProviderName(
+      ctx,
+      fund.communityId,
+    );
+    assertLimitPeriodSupported(limitProviderName, args.limitPeriod);
+    assertLimitRequired(
+      limitProviderName,
+      args.spendLimitCents,
       args.limitPeriod,
     );
 
