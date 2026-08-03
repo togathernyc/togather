@@ -448,6 +448,45 @@ describe("findOrCreateBudget", () => {
     expect(warn.mock.calls.flat().join(" ")).toMatch(/allows \$100.*asks for \$500/);
   });
 
+  test("A LOOKUP THAT GAVE UP MID-LIST REFUSES rather than splitting history", async () => {
+    // The pagination twin of the rename hazard, and the one case where creating
+    // is NOT the recoverable direction: the fund's budget may be on page 11, and
+    // a duplicate budget cannot be merged in BILL. So the walk that never
+    // reached the end must not be allowed to conclude "no budget exists" — and
+    // the loud "someone renamed it" log would misattribute the cause anyway.
+    seedAccount();
+    route("GET", "/v3/spend/budgets", () => ({
+      body: {
+        results: [{ uuid: "bgt_unrelated", name: "Some Other Fund · Togather" }],
+        nextPage: "there-is-always-more",
+      },
+    }));
+
+    await expect(
+      findOrCreateBudget(client(), "Youth Ministry", limit),
+    ).rejects.toThrow(/could not read all of your BILL budgets/i);
+    expect(callsTo("POST", "/v3/spend/budgets")).toHaveLength(0);
+  });
+
+  test("a COMPLETE walk that finds nothing still creates — this is not a regression on the normal path", async () => {
+    // The guard above must key on "did we reach the end", not on "were there
+    // several pages". A church with two pages of budgets and no Togather one
+    // still gets a budget created.
+    seedAccount();
+    let page = 0;
+    route("GET", "/v3/spend/budgets", () => {
+      page++;
+      return page === 1
+        ? { body: { results: [{ uuid: "bgt_a", name: "A · Togather" }], nextPage: "p2" } }
+        : { body: { results: [{ uuid: "bgt_b", name: "B · Togather" }], nextPage: null } };
+    });
+
+    expect(await findOrCreateBudget(client(), "Youth Ministry", limit)).toBe(
+      "bgt_new",
+    );
+    expect(callsTo("POST", "/v3/spend/budgets")).toHaveLength(1);
+  });
+
   test("the budget name is one definition, not an inline template", () => {
     expect(billBudgetName("Youth Ministry")).toBe("Youth Ministry · Togather");
     expect(billBudgetName("  Youth Ministry  ")).toBe("Youth Ministry · Togather");
@@ -478,13 +517,35 @@ describe("resolveBillUserByEmail", () => {
     expect(callsTo("GET", "/v3/spend/users")).toHaveLength(2);
   });
 
-  test("a RETIRED BILL user is not a match", async () => {
+  test("a RETIRED BILL user is not a match, and says REACTIVATE not invite", async () => {
+    // The distinction is the whole point. "Invite them in BILL" sent to an admin
+    // whose cardholder is merely deactivated gets a SECOND BILL user created for
+    // the same human — a duplicate identity at a bank, and a card issued against
+    // the wrong one of them.
     seedAccount({
       users: [{ uuid: "usr_gone", email: "pastor@church.org", retired: true }],
     });
-    await expect(
-      resolveBillUserByEmail(client(), "pastor@church.org"),
-    ).rejects.toThrow(/invite them in BILL/i);
+    const attempt = resolveBillUserByEmail(client(), "pastor@church.org");
+    await expect(attempt).rejects.toThrow(/DEACTIVATED.*Reactivate them in BILL/s);
+    await expect(attempt).rejects.toThrow(/don't invite them again/i);
+    expect(callsTo("POST", "/v3/spend/users")).toHaveLength(0);
+  });
+
+  test("A DIRECTORY DEEPER THAN THE PAGE CAP is not reported as `no such user`", async () => {
+    // We stopped looking; that is not the same fact as "they aren't there", and
+    // conflating them tells the admin to invite someone who already exists.
+    route("GET", "/v3/spend/users", () => ({
+      body: {
+        results: [{ uuid: "usr_x", email: "someone@else.org" }],
+        nextPage: "there-is-always-more",
+      },
+    }));
+
+    const attempt = resolveBillUserByEmail(client(), "pastor@church.org");
+    await expect(attempt).rejects.toThrow(/could not read all of your BILL users/i);
+    // Explicitly NOT the "they don't exist, go invite them" answer.
+    await expect(attempt).rejects.not.toThrow(/No BILL user has the email/);
+    expect(callsTo("POST", "/v3/spend/users")).toHaveLength(0);
   });
 
   test("NO MATCH names the exact next action, and never creates a user", async () => {

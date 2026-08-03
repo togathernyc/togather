@@ -23,6 +23,17 @@
  *    logged loudly (`[BillAdapter] created budget …`) precisely so the support
  *    answer is "someone renamed it, rename it back or accept the split".
  *
+ *    A SECOND, NARROWER WAY TO SPLIT THE SAME HISTORY: two cards provisioned
+ *    for the SAME fund concurrently both miss the lookup and both create a
+ *    budget, because there is no `fundId -> budgetUuid` row to take a lock on
+ *    and BILL does not reject a duplicate budget name. Every later card then
+ *    resolves to whichever one the list returns first. Same blast radius as the
+ *    rename (split history, no misdirected money) and the same loud log names
+ *    it. The real fix is the persisted mapping a later phase's schema change
+ *    brings, which closes both at once — not a retry loop here, which would
+ *    still race. The THIRD way, a lookup that gave up mid-list, is refused
+ *    outright in `findOrCreateBudget` rather than allowed to split silently.
+ *
  * 3. **Cards carry their OWN limit; `shareBudgetFunds` is always false.** The
  *    card limit is the only per-card control BILL offers, so it is Togather's
  *    enforcement lever. Sharing budget funds would let one card spend the whole
@@ -649,7 +660,7 @@ export async function findOrCreateBudget(
   limit: NormalizedLimit | null,
 ): Promise<string> {
   const wanted = billBudgetName(fundName);
-  const existing = await findBudgetByName(client, wanted);
+  const { budget: existing, exhausted } = await findBudgetByName(client, wanted);
 
   if (existing) {
     const uuid = billUuid(existing);
@@ -660,6 +671,22 @@ export async function findOrCreateBudget(
     }
     warnIfBudgetTooSmall(existing, wanted, limit);
     return uuid;
+  }
+
+  // "No match" and "stopped looking" are NOT the same answer, and treating them
+  // the same is how a history split happens for a reason nobody can diagnose.
+  // If the walk hit `BILL_BUDGET_MAX_PAGES` with more pages still to come, the
+  // fund's budget may well exist on page 11 — creating a second one here would
+  // permanently split that fund's spending across two BILL budgets, and the
+  // "someone renamed it" log below would send support down the wrong path.
+  //
+  // Refusing is the recoverable direction: no card is issued, nothing is
+  // created, and the message names the actual fix. A duplicate budget cannot be
+  // merged in BILL, so the asymmetry is not close.
+  if (!exhausted) {
+    throw new Error(
+      `Togather could not read all of your BILL budgets (stopped after ${BILL_BUDGET_MAX_PAGES * BILL_MAX_PAGE_SIZE}) and so cannot tell whether "${wanted}" already exists. Refusing to create a second budget for this fund — retire the budgets you no longer use in BILL Spend & Expense, then issue this card.`,
+    );
   }
 
   // Budgets need an owner, and the only BILL user we are certain exists is the
@@ -696,11 +723,19 @@ export async function findOrCreateBudget(
   return uuid;
 }
 
-/** Walk the budget list looking for an exact (trimmed, case-insensitive) name match. */
+/**
+ * Walk the budget list looking for an exact (trimmed, case-insensitive) name
+ * match.
+ *
+ * `exhausted` reports whether the walk actually reached the END of the list, and
+ * it is the half of the answer that matters when `budget` is null: only a
+ * complete walk licenses the caller to conclude "this fund has no budget yet".
+ * See the refusal in `findOrCreateBudget`.
+ */
 async function findBudgetByName(
   client: BillClient,
   wanted: string,
-): Promise<BillBudget | null> {
+): Promise<{ budget: BillBudget | null; exhausted: boolean }> {
   const target = wanted.trim().toLowerCase();
   let nextPage: string | undefined;
 
@@ -715,12 +750,14 @@ async function findBudgetByName(
       // create makes a live one with the same name, which is the recoverable
       // direction.
       if (budget.retired) continue;
-      if ((budget.name ?? "").trim().toLowerCase() === target) return budget;
+      if ((budget.name ?? "").trim().toLowerCase() === target) {
+        return { budget, exhausted: true };
+      }
     }
     nextPage = result.nextPage ?? undefined;
-    if (!nextPage) break;
+    if (!nextPage) return { budget: null, exhausted: true };
   }
-  return null;
+  return { budget: null, exhausted: false };
 }
 
 function warnIfBudgetTooSmall(
@@ -764,6 +801,13 @@ export async function resolveBillUserByEmail(
     );
   }
 
+  // THREE failures hide behind "we didn't return a uuid", and they have three
+  // different fixes. Telling an admin to "invite them in BILL" when the person
+  // is already there — deactivated, or simply past the page cap — gets a SECOND
+  // BILL user created for the same human, and a duplicate identity at a bank is
+  // the expensive kind of wrong. So each case is tracked and answered on its own.
+  let retiredMatch = false;
+  let exhausted = false;
   let nextPage: string | undefined;
   for (let page = 0; page < BILL_USER_MAX_PAGES; page++) {
     const result = await listBillUsers(client, {
@@ -771,15 +815,33 @@ export async function resolveBillUserByEmail(
       nextPage,
     });
     for (const user of result.results ?? []) {
-      // A retired BILL user cannot hold a card; matching one would produce a
-      // card creation that fails with a message about the wrong thing.
-      if (user.retired) continue;
       if ((user.email ?? "").trim().toLowerCase() !== wanted) continue;
+      // A retired BILL user cannot hold a card; matching one would produce a
+      // card creation that fails with a message about the wrong thing. Noted
+      // rather than ignored, so the error below can name the real fix.
+      if (user.retired) {
+        retiredMatch = true;
+        continue;
+      }
       const uuid = billUuid(user);
       if (uuid) return uuid;
     }
     nextPage = result.nextPage ?? undefined;
-    if (!nextPage) break;
+    if (!nextPage) {
+      exhausted = true;
+      break;
+    }
+  }
+
+  if (retiredMatch) {
+    throw new Error(
+      `${wanted} exists in your BILL Spend & Expense account but is DEACTIVATED, and a deactivated user cannot hold a card. Reactivate them in BILL — don't invite them again, a second BILL user for the same person is worse than no card.`,
+    );
+  }
+  if (!exhausted) {
+    throw new Error(
+      `Togather could not read all of your BILL users (stopped after ${BILL_USER_MAX_PAGES * BILL_MAX_PAGE_SIZE}) and so cannot tell whether ${wanted} is among them. Not inviting anyone on that basis — retire the BILL users you no longer need, then issue this card.`,
+    );
   }
 
   throw new Error(
