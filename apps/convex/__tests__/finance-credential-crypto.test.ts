@@ -112,6 +112,68 @@ describe("encryptCredential / decryptCredential", () => {
     ).rejects.toThrow(/could not be decrypted/);
   });
 
+  test("a non-base64 stored ciphertext is refused as corrupt, not passed to WebCrypto", async () => {
+    process.env.CREDENTIALS_MASTER_KEY = KEY_A;
+    const stored = await encryptCredential("secret");
+
+    await expect(
+      decryptCredential({ ...stored, ciphertext: "!!! not base64 @@@" }),
+    ).rejects.toThrow(/corrupted/);
+    await expect(
+      decryptCredential({ ...stored, iv: "!!! not base64 @@@" }),
+    ).rejects.toThrow(/corrupted/);
+  });
+
+  test("a truncated ciphertext fails closed rather than decoding short", async () => {
+    process.env.CREDENTIALS_MASTER_KEY = KEY_A;
+    const stored = await encryptCredential("secret-to-truncate");
+
+    // Drop the tail — GCM's 16-byte auth tag lives there, so this is the
+    // shape a partial write or a truncating column would produce. It must
+    // throw, never return a prefix of the plaintext.
+    const bytes = Uint8Array.from(atob(stored.ciphertext), (c) =>
+      c.charCodeAt(0),
+    );
+    const truncated = btoa(
+      String.fromCharCode(...bytes.slice(0, Math.max(1, bytes.length - 8))),
+    );
+    await expect(
+      decryptCredential({ ...stored, ciphertext: truncated }),
+    ).rejects.toThrow(/could not be decrypted/);
+  });
+
+  /**
+   * The failure path is the one an operator reads in a log line, so it must
+   * not be the thing that leaks what the encryption protects. Asserted here
+   * rather than trusted from a code read: an error message is exactly the
+   * kind of string a later "make this easier to debug" edit widens.
+   */
+  test("no failure message leaks key material, ciphertext, or plaintext", async () => {
+    const secret = "pk_live_leak_canary_do_not_log";
+    process.env.CREDENTIALS_MASTER_KEY = KEY_A;
+    const stored = await encryptCredential(secret);
+
+    const messages: string[] = [];
+    process.env.CREDENTIALS_MASTER_KEY = KEY_B;
+    await decryptCredential(stored).catch((e) => messages.push(String(e)));
+    await decryptCredential({ ...stored, keyVersion: 99 }).catch((e) =>
+      messages.push(String(e)),
+    );
+    delete process.env.CREDENTIALS_MASTER_KEY;
+    await encryptCredential(secret).catch((e) => messages.push(String(e)));
+    process.env.CREDENTIALS_MASTER_KEY = "not base64 !!! @@@";
+    await encryptCredential(secret).catch((e) => messages.push(String(e)));
+
+    expect(messages).toHaveLength(4);
+    for (const message of messages) {
+      expect(message).not.toContain(secret);
+      expect(message).not.toContain(KEY_A);
+      expect(message).not.toContain(KEY_B);
+      expect(message).not.toContain(stored.ciphertext);
+      expect(message).not.toContain(stored.iv);
+    }
+  });
+
   test("an unknown keyVersion is refused before any decrypt is attempted", async () => {
     process.env.CREDENTIALS_MASTER_KEY = KEY_A;
     const stored = await encryptCredential("secret");
