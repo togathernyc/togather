@@ -120,6 +120,45 @@ export interface ProviderCapabilities {
   maxCardsPerMonth: number | null;
 
   /**
+   * How many LIVE cards Togather will keep on one fund at this provider, or
+   * `null` for "as many as the fund wants".
+   *
+   * Not a vendor limit — Privacy would happily issue ten. It is a limit the
+   * MANAGED-LIMIT mechanism requires (see `managedFundLimit`): that mechanism
+   * expresses "this card may spend the fund's balance" as one lifetime cap on
+   * one card, and a lifetime cap is per card. Two cards each capped at the
+   * fund's balance can spend it twice. So at a provider whose only honest
+   * fund control is the lifetime limit, one card per fund is not a policy
+   * preference — it is the precondition that makes the number true.
+   */
+  maxCardsPerFund: number | null;
+
+  /**
+   * Does Togather MANAGE this provider's spend limit from the fund's ledger,
+   * rather than leaving it as a number a finance admin typed?
+   *
+   * True where the provider offers a lifetime ("forever") cap and no hard fund
+   * isolation: the cap is then recomputed from the fund's own credits and
+   * non-card debits so that what remains at the provider equals the fund's
+   * balance. See `lib/finance/managedCardLimit.ts` for the formula.
+   *
+   * The UI must read this: on a managed card the limit is not editable in the
+   * usual sense (it follows the fund), and saying "$400 / forever" without
+   * saying why is how a finance admin ends up trying to "fix" it.
+   */
+  managedFundLimit: boolean;
+
+  /**
+   * Can we forward a receipt Togather already holds to the provider, so the
+   * church's expense record at the issuer is complete too?
+   *
+   * Only BILL has a receipt API. Where this is false the receipt lives in
+   * Togather alone, and the upload copy must say so ("Saved to the fund")
+   * rather than implying the card provider got it.
+   */
+  receiptForwarding: boolean;
+
+  /**
    * How the provider's balance is funded and repaid.
    * - `"n/a"`        — the card spends a real deposit balance we already hold (Increase).
    * - `"prefund"`    — we push money to the provider before it can be spent.

@@ -26,11 +26,23 @@
  * read `ProviderCard.state`; nothing should add a new consumer of the raw
  * string.
  *
+ * GROUPS OPERATE, COMMUNITY FINANCE ADMINISTERS (ADR-033 Phase 3). Issuing a
+ * card is the act of handing someone spending power at the community's issuer,
+ * and at a BYO provider that power draws on the church's own pooled account —
+ * so it is a COMMUNITY-level decision, gated on `requireCommunityFinanceAccess`
+ * rather than on a fund role a group leader could arrange for themselves. What
+ * stays fund-scoped is everything OPERATIONAL: a cardholder uses their card, a
+ * fund manager approves reimbursements, everyone in the group sees the fund's
+ * transactions and balance, and freeze/cancel stay reachable by the fund's own
+ * finance_admin (and by the holder, for freeze) because de-escalation must
+ * never need a phone call to someone outside the group.
+ *
  * The lifecycle surface:
  *
  * - `listFundCards` / `getCardDetail` — read the fund's card roster and a
  *   single card's recent activity (its `card_charge` expenses).
- * - `createFundCard` — finance_admin issues a card to a cardholder+ member.
+ * - `createFundCard` — a COMMUNITY finance admin issues a card to a
+ *   cardholder+ member of the fund.
  *   Inserts a "pending" row synchronously, then schedules `provisionCard`
  *   (an internalAction — the provider is called outside the mutation, same
  *   pattern as onboarding.ts's `provisionProviders`) to actually create the
@@ -72,16 +84,23 @@ import { now, getDisplayName, getMediaUrl } from "../../lib/utils";
 import { requireGroupGivingEnabled } from "../../lib/finance/flag";
 import { logFinanceAudit } from "../../lib/finance/audit";
 import {
+  canManageCommunityFinance,
+  requireCommunityFinanceAccess,
+} from "../../lib/finance/communityFinanceAccess";
+import {
   validateCardLimit,
   type CardLimitPeriod,
 } from "../../lib/finance/cardPolicy";
 import {
+  describeProviderCapabilities,
   getCardProviderByName,
   isBringYourOwnProvider,
   loadActiveProviderConnection,
+  maxCardsPerFund,
   requiresSpendLimit,
   resolveCardProviderName,
   supportsWeeklyLimits,
+  usesManagedFundLimit,
 } from "../../lib/finance/cardProviders";
 import type {
   CardState,
@@ -172,6 +191,11 @@ export const listFundCards = query({
     await requireGroupGivingEnabled(ctx);
     await requireFundRoleOrGroupLeader(ctx, args.fundId, userId, "cardholder");
 
+    const fund = await ctx.db.get(args.fundId);
+    if (!fund) {
+      throw new Error("Fund not found");
+    }
+
     const cards = await ctx.db
       .query("cards")
       .withIndex("by_fund", (q) => q.eq("fundId", args.fundId))
@@ -179,15 +203,31 @@ export const listFundCards = query({
 
     const holders = await Promise.all(cards.map((c) => ctx.db.get(c.holderUserId)));
 
+    const providerName = await resolveCardProviderName(ctx, fund.communityId);
+    const capabilities = describeProviderCapabilities(providerName);
+
     return {
       cards: cards.map((card, i) =>
         toCardSummary(card, getDisplayName(holders[i]?.firstName, holders[i]?.lastName)),
       ),
-      // The UI must gate "New card" on the SAME check createFundCard enforces
-      // (finance_admin, incl. the community-admin override) — a group leader
-      // without a finance role can view this list but not issue cards, and
-      // must not be shown an affordance that can only error on submit.
-      viewerCanManageCards: await isFundFinanceAdmin(ctx, args.fundId, userId),
+      // The UI must gate "New card" on the SAME check createFundCard enforces.
+      // ADR-033 Phase 3 moved that from "finance_admin on this fund" to
+      // COMMUNITY finance access — a group leader, and now even a fund's own
+      // finance_admin, can view this roster but not issue, and must not be
+      // shown an affordance that can only error on submit.
+      viewerCanManageCards: await canManageCommunityFinance(
+        ctx,
+        userId,
+        fund.communityId,
+      ),
+      /**
+       * Provider capabilities, PROVIDER-ANONYMOUS on purpose (ADR-033 §1).
+       * A group-level screen says "your community's card provider", never
+       * "Privacy.com" — the fund's members did not choose the issuer and have
+       * no standing to act on its name. What they DO need is the behaviour:
+       * whether closing a card is reversible, and whether the limit is managed.
+       */
+      capabilities,
     };
   },
 });
@@ -295,19 +335,32 @@ export const createFundCard = mutation({
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
     await requireGroupGivingEnabled(ctx);
-    // finance_admin (or a community admin, per requireFundRole's built-in
-    // override) issues cards — mirrors expenses.ts's approver gate.
-    await requireFundRole(ctx, args.fundId, userId, "finance_admin");
+
+    const fund = await ctx.db.get(args.fundId);
+    if (!fund) {
+      throw new Error("Fund not found");
+    }
+
+    // GROUPS OPERATE, COMMUNITY FINANCE ADMINISTERS (ADR-033 Phase 3).
+    //
+    // This used to be `requireFundRole(..., "finance_admin")`, which a group
+    // leader could satisfy by granting the role on their own fund — and at a
+    // BYO provider the card that grant produces draws on the CHURCH's pooled
+    // account, not on a per-fund one the bank keeps separate. So the group
+    // could mint spending power over money that isn't only theirs, with nobody
+    // outside the group in the loop.
+    //
+    // Issuing is therefore a community act now. The fund still decides WHO
+    // holds the card (the holder must have cardholder+ on the fund, checked
+    // below) and the group keeps every operational surface — this moves the
+    // one decision that reaches outside the group.
+    await requireCommunityFinanceAccess(ctx, userId, fund.communityId);
 
     // The limit is a bank-enforced control, so it must be a number Increase
     // will accept BEFORE the row exists — a card row carrying a bogus limit
     // would provision with no cap at all when the provider call rejects it.
     validateCardLimit(args.spendLimitCents, args.limitPeriod);
 
-    const fund = await ctx.db.get(args.fundId);
-    if (!fund) {
-      throw new Error("Fund not found");
-    }
     if (fund.status !== "active") {
       throw new Error("This fund isn't active — cards can't be issued");
     }
@@ -1180,6 +1233,11 @@ export const getCardDetail = query({
     const viewerIsFinanceAdmin = await isFundFinanceAdmin(ctx, card.fundId, userId);
     const viewerIsHolder = card.holderUserId === userId;
 
+    const fund = await ctx.db.get(card.fundId);
+    const providerName = fund
+      ? await resolveCardProviderName(ctx, fund.communityId)
+      : "none";
+
     return {
       ...toCardSummary(card, getDisplayName(holder?.firstName, holder?.lastName)),
       holderProfileImage: getMediaUrl(holder?.profilePhoto),
@@ -1187,6 +1245,17 @@ export const getCardDetail = query({
       viewerCanFreeze: viewerIsFinanceAdmin || viewerIsHolder,
       viewerCanUnfreeze: viewerIsFinanceAdmin,
       viewerCanCancel: viewerIsFinanceAdmin,
+      /**
+       * Provider capabilities, provider-ANONYMOUS (see `listFundCards`).
+       *
+       * `cardCloseReversible` closes the TODO left in PR #753: the cancel
+       * confirmation said "this can't be undone" for every provider, which is
+       * simply false at BILL, where a closed card can be reopened from the
+       * provider's own console. Copy that overstates the finality of an action
+       * makes people avoid the safe one (close) in favour of the unsafe one
+       * (leave it live), so the flag has to reach the UI.
+       */
+      capabilities: describeProviderCapabilities(providerName),
     };
   },
 });

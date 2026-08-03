@@ -163,9 +163,24 @@ interface CardFixture {
   communityId: Id<"communities">;
   groupId: Id<"groups">;
   fundId: Id<"funds">;
-  adminUserId: Id<"users">; // community admin, no fund role
+  adminUserId: Id<"users">; // community admin, NO financial-controls grant, no fund role
   leaderUserId: Id<"users">; // active group leader, no fund role
-  financeAdminUserId: Id<"users">; // fundRole: finance_admin
+  /**
+   * The caller most tests here need since ADR-033 Phase 3 split "operate" from
+   * "administer": community admin + an active `communityFinanceRoles` grant
+   * (so `createFundCard`'s community gate passes) AND `fundRole: finance_admin`
+   * on this fund (so the fund-scoped gates — `setCardLimit`, unfreeze, cancel —
+   * pass too). One user wearing both hats keeps the existing per-mutation tests
+   * about the thing they test rather than about the seeding.
+   *
+   * The two halves are pulled apart deliberately by `fundOnlyFinanceAdminUserId`
+   * and `outsideFinanceUserId` below, which is where the gate move is asserted.
+   */
+  financeAdminUserId: Id<"users">;
+  /** fundRole: finance_admin ONLY — no community standing at all. */
+  fundOnlyFinanceAdminUserId: Id<"users">;
+  /** Community admin + financial-controls grant, and NOT in the fund's group. */
+  outsideFinanceUserId: Id<"users">;
   cardholderUserId: Id<"users">; // fundRole: cardholder — a valid card holder
   memberUserId: Id<"users">; // plain active group member, no fund role
   nonMemberUserId: Id<"users">; // not in the group at all
@@ -223,18 +238,38 @@ async function seedCardFixture(
     const adminUserId = await mkUser("Admin");
     const leaderUserId = await mkUser("Leader");
     const financeAdminUserId = await mkUser("FinanceAdmin");
+    const fundOnlyFinanceAdminUserId = await mkUser("FundOnlyFinanceAdmin");
+    const outsideFinanceUserId = await mkUser("OutsideFinance");
     const cardholderUserId = await mkUser("Cardholder");
     const memberUserId = await mkUser("Member");
     const nonMemberUserId = await mkUser("NonMember");
 
-    await ctx.db.insert("userCommunities", {
-      userId: adminUserId,
-      communityId,
-      roles: 3, // COMMUNITY_ROLES.ADMIN
-      status: 1,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    });
+    for (const userId of [
+      adminUserId,
+      financeAdminUserId,
+      outsideFinanceUserId,
+    ]) {
+      await ctx.db.insert("userCommunities", {
+        userId,
+        communityId,
+        roles: 3, // COMMUNITY_ROLES.ADMIN
+        status: 1,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+    }
+    // `adminUserId` deliberately gets NO grant: a plain community admin is the
+    // person ADR-033 §5 took finance power away from, and several tests here
+    // assert that.
+    for (const userId of [financeAdminUserId, outsideFinanceUserId]) {
+      await ctx.db.insert("communityFinanceRoles", {
+        communityId,
+        userId,
+        role: "finance_admin",
+        grantedBy: adminUserId,
+        grantedAt: timestamp,
+      });
+    }
 
     await ctx.db.insert("groupMembers", {
       groupId,
@@ -243,7 +278,12 @@ async function seedCardFixture(
       joinedAt: timestamp,
       notificationsEnabled: true,
     });
-    for (const userId of [financeAdminUserId, cardholderUserId, memberUserId]) {
+    for (const userId of [
+      financeAdminUserId,
+      fundOnlyFinanceAdminUserId,
+      cardholderUserId,
+      memberUserId,
+    ]) {
       await ctx.db.insert("groupMembers", {
         groupId,
         userId,
@@ -279,13 +319,15 @@ async function seedCardFixture(
       updatedAt: timestamp,
     });
 
-    await ctx.db.insert("fundRoles", {
-      fundId,
-      userId: financeAdminUserId,
-      role: "finance_admin",
-      grantedBy: adminUserId,
-      grantedAt: timestamp,
-    });
+    for (const userId of [financeAdminUserId, fundOnlyFinanceAdminUserId]) {
+      await ctx.db.insert("fundRoles", {
+        fundId,
+        userId,
+        role: "finance_admin",
+        grantedBy: adminUserId,
+        grantedAt: timestamp,
+      });
+    }
     await ctx.db.insert("fundRoles", {
       fundId,
       userId: cardholderUserId,
@@ -301,6 +343,8 @@ async function seedCardFixture(
       adminUserId,
       leaderUserId,
       financeAdminUserId,
+      fundOnlyFinanceAdminUserId,
+      outsideFinanceUserId,
       cardholderUserId,
       memberUserId,
       nonMemberUserId,
@@ -395,15 +439,59 @@ describe("createFundCard", () => {
     expect(events.some((e) => e.action === "card.created")).toBe(true);
   });
 
-  test("a community admin (no explicit fund role) can also issue a card", async () => {
-    const t = convexTest(schema, modules);
-    const { fundId, adminUserId, cardholderUserId } = await seedCardFixture(t);
+  // --------------------------------------------------------------------------
+  // ADR-033 Phase 3: groups OPERATE, community finance ADMINISTERS.
+  //
+  // Issuing a card used to be a FUND gate (`requireFundRole(finance_admin)`,
+  // community-admin override included), which a group leader could satisfy by
+  // granting the role on their own fund. These four tests are the move: the
+  // three people who could issue yesterday and can't today, and the one who
+  // can — from outside the group entirely.
+  // --------------------------------------------------------------------------
 
-    const cardId = await createCard(t, fundId, adminUserId, cardholderUserId);
+  test("a community finance admin OUTSIDE the fund's group can issue a card", async () => {
+    const t = convexTest(schema, modules);
+    const { fundId, outsideFinanceUserId, cardholderUserId } =
+      await seedCardFixture(t);
+
+    const cardId = await createCard(
+      t,
+      fundId,
+      outsideFinanceUserId,
+      cardholderUserId,
+    );
     expect(cardId).toBeDefined();
   });
 
-  test("rejects a non-finance_admin caller", async () => {
+  test("a group leader can no longer issue a card, and is told who can", async () => {
+    const t = convexTest(schema, modules);
+    const { fundId, leaderUserId, cardholderUserId } = await seedCardFixture(t);
+
+    await expect(
+      createCard(t, fundId, leaderUserId, cardholderUserId),
+    ).rejects.toThrow(/financial-controls access/i);
+  });
+
+  test("a fund finance_admin with no community grant can no longer issue a card", async () => {
+    const t = convexTest(schema, modules);
+    const { fundId, fundOnlyFinanceAdminUserId, cardholderUserId } =
+      await seedCardFixture(t);
+
+    await expect(
+      createCard(t, fundId, fundOnlyFinanceAdminUserId, cardholderUserId),
+    ).rejects.toThrow(/financial-controls access/i);
+  });
+
+  test("a plain community admin with no financial-controls grant can no longer issue a card", async () => {
+    const t = convexTest(schema, modules);
+    const { fundId, adminUserId, cardholderUserId } = await seedCardFixture(t);
+
+    await expect(
+      createCard(t, fundId, adminUserId, cardholderUserId),
+    ).rejects.toThrow(/financial-controls access/i);
+  });
+
+  test("rejects a plain member", async () => {
     const t = convexTest(schema, modules);
     const { fundId, memberUserId, cardholderUserId } = await seedCardFixture(t);
 

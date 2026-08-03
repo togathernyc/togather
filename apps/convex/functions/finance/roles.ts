@@ -1,10 +1,25 @@
 /**
  * Fund role management (ADR-032 §4) — who can hold a card, approve/deny
- * expenses, or assign further roles on a fund. Separate from group roles: a
- * trusted treasurer doesn't need to be a group leader, and a leader can't
- * move money without a fund role of their own (except for granting/revoking
- * roles, which the ADR carves out for active leaders — see
- * `requireFundRoleOrGroupLeader` in lib/helpers.ts).
+ * expenses, or act on a fund. Separate from group roles: a trusted treasurer
+ * doesn't need to be a group leader, and a leader can't move money without a
+ * fund role of their own.
+ *
+ * WHO ASSIGNS THEM CHANGED IN ADR-033 PHASE 3. ADR-032 §4 let group leaders
+ * grant finance roles on their own group's fund, guarded only against naming
+ * THEMSELVES. That guard bought less than it looked like: two leaders of the
+ * same group could grant each other, and a fund finance_admin could then issue
+ * themselves a card — which at a bring-your-own provider spends the CHURCH's
+ * pooled account, not a per-fund one the bank keeps separate. The whole ladder
+ * ran inside one group with nobody outside it in the loop.
+ *
+ * So the founder-approved rule is now: GROUPS OPERATE, COMMUNITY FINANCE
+ * ADMINISTERS. Granting and revoking a fund role is a community act
+ * (`requireCommunityFinanceAccess` — the primary admin or an explicit
+ * `communityFinanceRoles` grant), and it can be performed from outside the
+ * group. What the group keeps is everything OPERATIONAL, unchanged: a
+ * cardholder uses their card, a manager approves and denies reimbursements,
+ * a leader still sees the fund's roster, transactions and balance, and
+ * freeze/cancel remain reachable by the fund's own finance_admin.
  */
 
 import { v } from "convex/values";
@@ -14,7 +29,10 @@ import { requireAuth } from "../../lib/auth";
 import { now, getDisplayName, getMediaUrl } from "../../lib/utils";
 import { isCommunityAdmin } from "../../lib/permissions";
 import { logFinanceAudit } from "../../lib/finance/audit";
-import { canManageCommunityFinance } from "../../lib/finance/communityFinanceAccess";
+import {
+  canManageCommunityFinance,
+  requireCommunityFinanceAccess,
+} from "../../lib/finance/communityFinanceAccess";
 import { requireGroupGivingEnabled } from "../../lib/finance/flag";
 import {
   requireFundRoleOrGroupLeader,
@@ -201,16 +219,17 @@ export const getMyFundRole = query({
  * revoked in the same call before the new one is inserted — never two active
  * rows for the same (user, fund).
  *
- * NO SELF-ESCALATION VIA THE LEADER CARVE-OUT. ADR-032 §4 lets group leaders
- * grant finance roles on their own group's fund ("Granted by group leaders
- * and finance admins") — that bootstrap path is intentional and stays. What
- * it must never become is a one-tap privilege ladder: a leader with no fund
- * role could otherwise grant THEMSELVES finance_admin and, from there, issue
- * themselves a card (`createFundCard` gates on finance_admin) and spend the
- * fund alone. So a caller who is only through the gate because they lead the
- * group cannot name themselves as the target. Granting to someone else still
- * works — the ADR's bootstrap — and it costs a second, willing human, which
- * is the point.
+ * COMMUNITY FINANCE ONLY (ADR-033 Phase 3) — see this module's header. Group
+ * leaders and fund finance_admins no longer grant, which removes the ladder
+ * that let a group appoint its own spender. The caller may be entirely outside
+ * the fund's group; that is the point, and it is why the mutation gates on the
+ * COMMUNITY rather than on the fund.
+ *
+ * The old `via === "group_leader"` self-grant guard is gone with the carve-out
+ * it guarded — but the property it protected still holds, more simply: a
+ * community finance admin granting themselves a fund role escalates nothing,
+ * because `requireFundRole`'s community-admin override already lets them act on
+ * every fund in the community. There is no ladder left to climb.
  */
 export const grantFundRole = mutation({
   args: {
@@ -221,24 +240,13 @@ export const grantFundRole = mutation({
   },
   handler: async (ctx, args) => {
     const callerId = await requireAuth(ctx, args.token);
-    const via = await requireFundRoleOrGroupLeader(
-      ctx,
-      args.fundId,
-      callerId,
-      "finance_admin",
-    );
-    await requireGroupGivingEnabled(ctx);
-
-    if (via === "group_leader" && args.userId === callerId) {
-      throw new Error(
-        "You can't give yourself a finance role on your group's fund — a finance admin or community admin has to grant it to you",
-      );
-    }
 
     const fund = await ctx.db.get(args.fundId);
     if (!fund) {
       throw new Error("Fund not found");
     }
+    await requireCommunityFinanceAccess(ctx, callerId, fund.communityId);
+    await requireGroupGivingEnabled(ctx);
 
     // Fund roles are only meaningful for members of the fund's group — a
     // grant to someone who isn't (or is no longer) in the group would be
@@ -291,10 +299,12 @@ export const grantFundRole = mutation({
 // ============================================================================
 
 /**
- * Revoke a user's active role on a fund. Guarded so an active fund can never
- * be left with zero finance_admins by a non-admin caller — someone must hold
- * the keys. A community admin (who can already do anything on the fund) may
- * still revoke the last one, e.g. to hand the fund off during an offboard.
+ * Revoke a user's active role on a fund.
+ *
+ * COMMUNITY FINANCE ONLY, same as `grantFundRole` — the two have to move
+ * together. Leaving revoke with the fund gate while grant moved to the
+ * community would let a fund's own finance_admin revoke the person the
+ * community just appointed, which is the same ladder from the other end.
  *
  * DELIBERATELY NOT behind `requireGroupGivingEnabled`, unlike `grantFundRole`.
  * Revoking is de-escalation: it only ever takes power away. Flipping the
@@ -304,46 +314,30 @@ export const grantFundRole = mutation({
  * reasoning as `setCardFrozen` / `cancelCard` in cards.ts and `denyExpense`
  * in expenses.ts. The flag still blocks every path that ADDS power or moves
  * money, so a revoke with the flag off can't be a step toward anything.
+ *
+ * THE "LAST finance_admin" GUARD IS GONE, and it is a deletion rather than an
+ * oversight. It existed to stop a non-community-admin caller — a group leader,
+ * or a fund finance_admin — from stranding an active fund with nobody holding
+ * the keys, and it explicitly exempted community admins, who could already do
+ * anything on the fund. ADR-033 Phase 3 makes EVERY caller here a community
+ * finance holder, i.e. exactly the class the old guard exempted, so the branch
+ * could only ever have evaluated to "allowed". A guard that cannot fire is
+ * worse than none: it reads as protection that isn't there.
  */
 export const revokeFundRole = mutation({
   args: { token: v.string(), fundId: v.id("funds"), userId: v.id("users") },
   handler: async (ctx, args) => {
     const callerId = await requireAuth(ctx, args.token);
-    await requireFundRoleOrGroupLeader(ctx, args.fundId, callerId, "finance_admin");
 
     const fund = await ctx.db.get(args.fundId);
     if (!fund) {
       throw new Error("Fund not found");
     }
+    await requireCommunityFinanceAccess(ctx, callerId, fund.communityId);
 
     const existing = await getActiveRoleRow(ctx, args.fundId, args.userId);
     if (!existing) {
       throw new Error("This user does not have an active role on this fund");
-    }
-
-    if (existing.role === "finance_admin" && fund.status === "active") {
-      const callerIsCommunityAdmin = await isCommunityAdmin(
-        ctx,
-        fund.communityId,
-        callerId,
-      );
-      if (!callerIsCommunityAdmin) {
-        const activeAdmins = await ctx.db
-          .query("fundRoles")
-          .withIndex("by_fund", (q) => q.eq("fundId", args.fundId))
-          .collect();
-        const otherActiveAdmins = activeAdmins.filter(
-          (r) =>
-            r.role === "finance_admin" &&
-            r.revokedAt === undefined &&
-            r._id !== existing._id,
-        );
-        if (otherActiveAdmins.length === 0) {
-          throw new Error(
-            "Cannot revoke the last finance_admin on an active fund — grant another finance_admin first",
-          );
-        }
-      }
     }
 
     await ctx.db.patch(existing._id, { revokedAt: now() });

@@ -1,14 +1,18 @@
 /**
- * Fund role grants and the group-leader carve-out (ADR-032 §4).
+ * Who assigns fund roles (ADR-032 §4, as amended by ADR-033 Phase 3).
  *
- * `requireFundRoleOrGroupLeader` lets an active group leader through a
- * `finance_admin` gate on their own group's fund with no fund role of their
- * own. That carve-out is deliberate — the ADR says finance roles are "granted
- * by group leaders and finance admins", and it's how a fund gets its first
- * treasurer. What it must never be is a self-service privilege ladder:
- * leader → grant self finance_admin → issue self a card → spend the fund
- * alone. These tests pin both halves: the bootstrap still works, the ladder
- * doesn't.
+ * This file used to pin the GROUP-LEADER CARVE-OUT: `requireFundRoleOrGroupLeader`
+ * let an active leader through a `finance_admin` gate on their own fund, and the
+ * tests proved the bootstrap worked while the self-grant ladder (leader → grant
+ * self finance_admin → issue self a card) stayed closed.
+ *
+ * The carve-out is gone. Blocking the SELF-grant only ever closed one rung: two
+ * leaders of the same group could still grant each other, and at a
+ * bring-your-own card provider the resulting card spends the church's pooled
+ * account rather than a per-fund one — so a group could appoint its own spender
+ * over money that isn't only theirs. Granting is a COMMUNITY act now, and these
+ * tests pin the new line: everyone who could grant yesterday and can't today,
+ * and the community finance admin who can, from outside the group.
  *
  * Run with: cd apps/convex && pnpm test __tests__/finance-roles.test.ts
  */
@@ -38,8 +42,13 @@ interface RolesFixture {
   adminLeaderUserId: Id<"users">;
   /** Plain active group member. */
   memberUserId: Id<"users">;
-  /** Holds finance_admin on the fund via a real grant. */
+  /** Holds finance_admin on the fund via a real grant. No community standing. */
   financeAdminUserId: Id<"users">;
+  /**
+   * Community admin + an active `communityFinanceRoles` grant, and NOT a member
+   * of the fund's group — the shape ADR-033 Phase 3 puts in charge of grants.
+   */
+  communityFinanceUserId: Id<"users">;
 }
 
 async function seedRolesFixture(
@@ -110,12 +119,14 @@ async function seedRolesFixture(
     const adminLeaderUserId = await mkUser("AdminLeader");
     const memberUserId = await mkUser("Member");
     const financeAdminUserId = await mkUser("Treasurer");
+    const communityFinanceUserId = await mkUser("CommunityFinance");
 
     for (const [userId, roles] of [
       [leaderUserId, 1],
       [adminLeaderUserId, 3], // COMMUNITY_ROLES.ADMIN
       [memberUserId, 1],
       [financeAdminUserId, 1],
+      [communityFinanceUserId, 3], // COMMUNITY_ROLES.ADMIN
     ] as const) {
       await ctx.db.insert("userCommunities", {
         userId,
@@ -162,6 +173,17 @@ async function seedRolesFixture(
       grantedAt: timestamp,
     });
 
+    // The grant that makes `communityFinanceUserId` a community finance admin.
+    // `adminLeaderUserId` deliberately gets none: a plain community admin is
+    // exactly who ADR-033 §5 took this power away from.
+    await ctx.db.insert("communityFinanceRoles", {
+      communityId,
+      userId: communityFinanceUserId,
+      role: "finance_admin" as const,
+      grantedBy: adminLeaderUserId,
+      grantedAt: timestamp,
+    });
+
     return {
       communityId,
       groupId,
@@ -170,6 +192,7 @@ async function seedRolesFixture(
       adminLeaderUserId,
       memberUserId,
       financeAdminUserId,
+      communityFinanceUserId,
     };
   });
 }
@@ -180,84 +203,16 @@ async function tokenFor(userId: Id<"users">): Promise<string> {
 }
 
 // ============================================================================
-// The self-escalation hole
+// Granting is a community act
 // ============================================================================
 
-describe("grantFundRole — group-leader carve-out", () => {
-  test("a group leader cannot grant themselves finance_admin", async () => {
-    const t = convexTest(schema, modules);
-    const s = await seedRolesFixture(t);
-
-    await expect(
-      t.mutation(api.functions.finance.roles.grantFundRole, {
-        token: await tokenFor(s.leaderUserId),
-        fundId: s.fundId,
-        userId: s.leaderUserId,
-        role: "finance_admin",
-      }),
-    ).rejects.toThrow(/can't give yourself a finance role/i);
-
-    const roles = await t.run((ctx) =>
-      ctx.db
-        .query("fundRoles")
-        .withIndex("by_user_fund", (q) =>
-          q.eq("userId", s.leaderUserId).eq("fundId", s.fundId),
-        )
-        .collect(),
-    );
-    expect(roles).toHaveLength(0);
-  });
-
-  test("the carve-out grants nothing to self at any rank", async () => {
-    const t = convexTest(schema, modules);
-    const s = await seedRolesFixture(t);
-    const token = await tokenFor(s.leaderUserId);
-
-    for (const role of ["manager", "cardholder"] as const) {
-      await expect(
-        t.mutation(api.functions.finance.roles.grantFundRole, {
-          token,
-          fundId: s.fundId,
-          userId: s.leaderUserId,
-          role,
-        }),
-      ).rejects.toThrow(/can't give yourself a finance role/i);
-    }
-  });
-
-  test("the full escalation chain is closed: no self-grant, so no self-issued card", async () => {
-    const t = convexTest(schema, modules);
-    const s = await seedRolesFixture(t);
-    const token = await tokenFor(s.leaderUserId);
-
-    await expect(
-      t.mutation(api.functions.finance.roles.grantFundRole, {
-        token,
-        fundId: s.fundId,
-        userId: s.leaderUserId,
-        role: "finance_admin",
-      }),
-    ).rejects.toThrow();
-
-    // createFundCard gates on a real finance_admin (no leader carve-out), so
-    // with the self-grant blocked the leader still can't put the fund on a
-    // card in their own pocket.
-    await expect(
-      t.mutation(api.functions.finance.cards.createFundCard, {
-        token,
-        fundId: s.fundId,
-        holderUserId: s.leaderUserId,
-        name: "Leader Card",
-      }),
-    ).rejects.toThrow(/finance_admin/i);
-  });
-
-  test("the ADR's bootstrap still works: a leader grants finance_admin to someone else", async () => {
+describe("grantFundRole — community finance administers", () => {
+  test("a community finance admin outside the group grants a fund role", async () => {
     const t = convexTest(schema, modules);
     const s = await seedRolesFixture(t);
 
     await t.mutation(api.functions.finance.roles.grantFundRole, {
-      token: await tokenFor(s.leaderUserId),
+      token: await tokenFor(s.communityFinanceUserId),
       fundId: s.fundId,
       userId: s.memberUserId,
       role: "finance_admin",
@@ -273,45 +228,142 @@ describe("grantFundRole — group-leader carve-out", () => {
     );
     expect(roles).toHaveLength(1);
     expect(roles[0].role).toBe("finance_admin");
-    expect(roles[0].grantedBy).toBe(s.leaderUserId);
+    expect(roles[0].grantedBy).toBe(s.communityFinanceUserId);
   });
 
-  test("a community admin who also leads the group may still grant to themselves", async () => {
+  test("a group leader can no longer grant — and is told who can", async () => {
     const t = convexTest(schema, modules);
     const s = await seedRolesFixture(t);
 
-    // They pass the gate as a community admin, not via the carve-out — an
-    // admin can already do anything on any fund, so blocking them would be
-    // theatre. The access-path check has to resolve admin FIRST for this.
-    await t.mutation(api.functions.finance.roles.grantFundRole, {
-      token: await tokenFor(s.adminLeaderUserId),
-      fundId: s.fundId,
-      userId: s.adminLeaderUserId,
-      role: "finance_admin",
-    });
+    await expect(
+      t.mutation(api.functions.finance.roles.grantFundRole, {
+        token: await tokenFor(s.leaderUserId),
+        fundId: s.fundId,
+        userId: s.memberUserId,
+        role: "finance_admin",
+      }),
+    ).rejects.toThrow(/financial-controls access/i);
 
     const roles = await t.run((ctx) =>
       ctx.db
         .query("fundRoles")
         .withIndex("by_user_fund", (q) =>
-          q.eq("userId", s.adminLeaderUserId).eq("fundId", s.fundId),
+          q.eq("userId", s.memberUserId).eq("fundId", s.fundId),
         )
         .collect(),
     );
-    expect(roles.filter((r) => r.revokedAt === undefined)).toHaveLength(1);
+    expect(roles).toHaveLength(0);
   });
 
-  test("an existing finance_admin may change their own role", async () => {
+  test("the whole escalation chain is closed at its first rung", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seedRolesFixture(t);
+    const token = await tokenFor(s.leaderUserId);
+
+    // No self-grant...
+    await expect(
+      t.mutation(api.functions.finance.roles.grantFundRole, {
+        token,
+        fundId: s.fundId,
+        userId: s.leaderUserId,
+        role: "finance_admin",
+      }),
+    ).rejects.toThrow(/financial-controls access/i);
+
+    // ...and no grant to a WILLING SECOND LEADER either, which is the rung the
+    // old self-grant guard left open.
+    await expect(
+      t.mutation(api.functions.finance.roles.grantFundRole, {
+        token,
+        fundId: s.fundId,
+        userId: s.adminLeaderUserId,
+        role: "finance_admin",
+      }),
+    ).rejects.toThrow(/financial-controls access/i);
+
+    // ...and the card at the end of the chain is refused on its own gate too.
+    await expect(
+      t.mutation(api.functions.finance.cards.createFundCard, {
+        token,
+        fundId: s.fundId,
+        holderUserId: s.leaderUserId,
+        name: "Leader Card",
+      }),
+    ).rejects.toThrow(/financial-controls access/i);
+  });
+
+  test("a fund's own finance_admin can no longer grant", async () => {
     const t = convexTest(schema, modules);
     const s = await seedRolesFixture(t);
 
-    // Through the gate on their own grant, not the carve-out — de-escalating
-    // yourself (or re-granting) is not the hole being closed.
-    await t.mutation(api.functions.finance.roles.grantFundRole, {
-      token: await tokenFor(s.financeAdminUserId),
+    await expect(
+      t.mutation(api.functions.finance.roles.grantFundRole, {
+        token: await tokenFor(s.financeAdminUserId),
+        fundId: s.fundId,
+        userId: s.memberUserId,
+        role: "cardholder",
+      }),
+    ).rejects.toThrow(/financial-controls access/i);
+  });
+
+  test("a plain community admin with no financial-controls grant can no longer grant", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seedRolesFixture(t);
+
+    await expect(
+      t.mutation(api.functions.finance.roles.grantFundRole, {
+        token: await tokenFor(s.adminLeaderUserId),
+        fundId: s.fundId,
+        userId: s.memberUserId,
+        role: "cardholder",
+      }),
+    ).rejects.toThrow(/financial-controls access/i);
+  });
+
+  test("a plain member is refused outright", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seedRolesFixture(t);
+
+    await expect(
+      t.mutation(api.functions.finance.roles.grantFundRole, {
+        token: await tokenFor(s.memberUserId),
+        fundId: s.fundId,
+        userId: s.memberUserId,
+        role: "cardholder",
+      }),
+    ).rejects.toThrow(/financial-controls access/i);
+  });
+
+  test("the target must still be an active member of the fund's group", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seedRolesFixture(t);
+
+    // `communityFinanceUserId` is not in the group — a grant to them would be
+    // unactionable, and the community gate does not relax that.
+    await expect(
+      t.mutation(api.functions.finance.roles.grantFundRole, {
+        token: await tokenFor(s.communityFinanceUserId),
+        fundId: s.fundId,
+        userId: s.communityFinanceUserId,
+        role: "finance_admin",
+      }),
+    ).rejects.toThrow(/active member/i);
+  });
+});
+
+// ============================================================================
+// Revoking moves with granting
+// ============================================================================
+
+describe("revokeFundRole — community finance administers", () => {
+  test("a community finance admin revokes the fund's last finance_admin", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seedRolesFixture(t);
+
+    await t.mutation(api.functions.finance.roles.revokeFundRole, {
+      token: await tokenFor(s.communityFinanceUserId),
       fundId: s.fundId,
       userId: s.financeAdminUserId,
-      role: "manager",
     });
 
     const active = await t.run(async (ctx) => {
@@ -323,21 +375,86 @@ describe("grantFundRole — group-leader carve-out", () => {
         .collect();
       return rows.filter((r) => r.revokedAt === undefined);
     });
-    expect(active).toHaveLength(1);
-    expect(active[0].role).toBe("manager");
+    expect(active).toHaveLength(0);
   });
 
-  test("a plain member is still refused outright", async () => {
+  test("a group leader can no longer revoke", async () => {
     const t = convexTest(schema, modules);
     const s = await seedRolesFixture(t);
 
     await expect(
+      t.mutation(api.functions.finance.roles.revokeFundRole, {
+        token: await tokenFor(s.leaderUserId),
+        fundId: s.fundId,
+        userId: s.financeAdminUserId,
+      }),
+    ).rejects.toThrow(/financial-controls access/i);
+  });
+
+  test("revoking stays reachable with the group-giving kill switch OFF", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seedRolesFixture(t);
+    await t.run(async (ctx) => {
+      const flag = await ctx.db
+        .query("featureFlags")
+        .withIndex("by_key", (q) => q.eq("key", "group-giving"))
+        .first();
+      await ctx.db.patch(flag!._id, { enabled: false });
+    });
+
+    await t.mutation(api.functions.finance.roles.revokeFundRole, {
+      token: await tokenFor(s.communityFinanceUserId),
+      fundId: s.fundId,
+      userId: s.financeAdminUserId,
+    });
+
+    // ...while GRANTING, which adds power, is still blocked by the flag.
+    await expect(
       t.mutation(api.functions.finance.roles.grantFundRole, {
-        token: await tokenFor(s.memberUserId),
+        token: await tokenFor(s.communityFinanceUserId),
         fundId: s.fundId,
         userId: s.memberUserId,
         role: "cardholder",
       }),
-    ).rejects.toThrow(/finance_admin/i);
+    ).rejects.toThrow();
   });
 });
+
+// ============================================================================
+// Operational surfaces are untouched
+// ============================================================================
+
+describe("fund roles keep their operational reach", () => {
+  test("a group leader still sees the fund's role roster", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seedRolesFixture(t);
+
+    const rows = await t.query(api.functions.finance.roles.listFundRoles, {
+      token: await tokenFor(s.leaderUserId),
+      fundId: s.fundId,
+    });
+    expect(
+      rows.some((r: { userId: string }) => r.userId === s.financeAdminUserId),
+    ).toBe(true);
+  });
+
+  test("getMyFundRole reports the community signal separately from the fund one", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seedRolesFixture(t);
+
+    const leader = await t.query(api.functions.finance.roles.getMyFundRole, {
+      token: await tokenFor(s.leaderUserId),
+      fundId: s.fundId,
+    });
+    expect(leader.isGroupLeader).toBe(true);
+    expect(leader.canManageCommunityFinance).toBe(false);
+
+    const finance = await t.query(api.functions.finance.roles.getMyFundRole, {
+      token: await tokenFor(s.communityFinanceUserId),
+      fundId: s.fundId,
+    });
+    expect(finance.canManageCommunityFinance).toBe(true);
+    expect(finance.hasCommunityAdminFundOverride).toBe(true);
+  });
+});
+

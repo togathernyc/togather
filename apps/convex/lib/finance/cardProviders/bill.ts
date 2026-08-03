@@ -359,6 +359,17 @@ export const BILL_CAPABILITIES: ProviderCapabilities = {
   declineFeed: "poll",
   // No documented per-month card cap.
   maxCardsPerMonth: null,
+  // No Togather-side cap. BILL's own control is the BUDGET, and every card
+  // Togather issues for a fund is attached to that fund's one budget — so a
+  // second card shares the budget's cap rather than duplicating it. That is
+  // the opposite of Privacy's per-card lifetime limit, which is why the two
+  // BYO providers answer this differently.
+  maxCardsPerFund: null,
+  // Nothing to manage: the budget already carries the fund-level cap, and a
+  // Togather-computed per-card lifetime limit on top would fight it.
+  managedFundLimit: false,
+  // BILL is the only provider with a receipt API — see `forwardReceipt`.
+  receiptForwarding: true,
   // A charge card billed on a cycle. Repayment, bank accounts and the credit
   // line are IN-PRODUCT ONLY — not in the API, so Togather can neither show nor
   // reconcile them.
