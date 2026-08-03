@@ -47,15 +47,22 @@ export const COMMUNITY_ADMIN_THRESHOLD = COMMUNITY_ROLES.ADMIN;
  * How a community ends up with more than one:
  * - Every creation flow (`proposals.acceptProposal`, `ee/proposals`,
  *   `ee/billing` checkout, `migrations`, seeding) inserts exactly ONE row at
- *   role 4 — the founder. That is the only in-app *write* of this role
- *   besides `admin/members.transferPrimaryAdmin`, which moves it (demotes the
- *   caller, promotes the target) rather than adding one.
- * - Additional primary admins are added today by operators editing
- *   `userCommunities.roles` directly in the Convex dashboard. That is a
- *   deliberate, supported state — several communities run this way.
- * - An in-app "grant primary admin" flow is future work. Until it exists,
- *   the multi-primary state arrives out-of-band, which is exactly why every
- *   read has to tolerate it.
+ *   role 4 — the founder.
+ * - `admin/members.transferPrimaryAdmin` MOVES the role (demotes the caller,
+ *   promotes the target) rather than adding one, so it leaves the set size
+ *   unchanged — unless the target already held role 4, in which case the set
+ *   shrinks by the caller.
+ * - Both `updateMemberRole` mutations (`functions/communities.ts` and
+ *   `functions/admin/members.ts`) take an unbounded `v.number()` role and
+ *   will happily write role 4 onto a second member. Both gate that on the
+ *   CALLER already being a primary admin (`communities.ts` security check 3;
+ *   `admin/members.ts` via `requirePrimaryAdmin` on admin-level changes), so
+ *   it is not an escalation — but it does mean an existing primary admin can
+ *   mint another one in-app today, without any dashboard access.
+ * - Operators also add them by editing `userCommunities.roles` directly in the
+ *   Convex dashboard. Either way it is a deliberate, supported state —
+ *   several communities run this way, which is why every read has to
+ *   tolerate it.
  *
  * Consequences for callers:
  * - PER-USER checks (`isPrimaryAdmin`, `requirePrimaryAdmin`, the finance
@@ -260,7 +267,14 @@ function comparePrimaryAdminSeniority(a: any, b: any): number {
   if (byCreatedAt !== 0) return byCreatedAt;
   const byCreationTime = (a._creationTime ?? 0) - (b._creationTime ?? 0);
   if (byCreationTime !== 0) return byCreationTime;
-  return String(a._id).localeCompare(String(b._id));
+  // Plain codepoint comparison, NOT localeCompare: locale collation can rank
+  // the same two ids differently depending on the runtime's default locale,
+  // and can even report equality for distinct strings. `_id` is unique, so
+  // this makes the comparator a genuinely total, locale-independent order.
+  const aId = String(a._id);
+  const bId = String(b._id);
+  if (aId === bId) return 0;
+  return aId < bId ? -1 : 1;
 }
 
 /**

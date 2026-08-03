@@ -442,6 +442,14 @@ export const updateMemberRole = mutation({
  * correctly with the multi-primary state: the set shrinks by the caller and
  * grows by the target, net size unchanged.
  *
+ * One exception to "net size unchanged": if the TARGET already holds role 4,
+ * promoting them is a no-op and the set shrinks by one (the caller), who has
+ * in effect just demoted themselves. Still safe — the target remains an owner,
+ * so this can never strand a community with zero primary admins — but if we
+ * ever want to reject it, that is a product call (the UI would have to stop
+ * offering an existing primary admin as a transfer target), not a correctness
+ * fix.
+ *
  * `targetWasAdmin` still holds under those semantics: it is read from the
  * TARGET's own row before the patch and only decides whether the target needs
  * to be added to the announcement group as a leader. Whether some third
