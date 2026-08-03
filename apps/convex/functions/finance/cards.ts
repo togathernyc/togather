@@ -69,7 +69,7 @@
  * handler — this file only manages the card object itself.
  */
 
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import {
   query,
   mutation,
@@ -107,6 +107,15 @@ import type {
   NormalizedLimit,
 } from "../../lib/finance/cardProviders/types";
 import {
+  effectiveManagedLimitCents,
+  isManagedCard,
+  ledgerDerivedLimitCents,
+  managedCardIsSyncable,
+  managedManualCapCents,
+  readManagedLimitInputs,
+  type ManagedCardControls,
+} from "../../lib/finance/managedCardLimit";
+import {
   requireFundRole,
   requireFundRoleOrGroupLeader,
   hasFundRole,
@@ -130,6 +139,25 @@ function toNormalizedLimit(
 ): NormalizedLimit | null {
   if (spendLimitCents === undefined || limitPeriod === undefined) return null;
   return { limitCents: spendLimitCents, period: limitPeriod };
+}
+
+/**
+ * The limit to send the provider for ONE card, managed or not.
+ *
+ * A managed card stores `spendLimitCents` with NO `limitPeriod` (the window is
+ * lifetime, which `cards.limitPeriod` cannot express — see
+ * `NormalizedLimitPeriod`), so `toNormalizedLimit` would read it as "no limit"
+ * and send an UNCAPPED card to a pooled-balance issuer. That is the one
+ * mistake this whole phase exists to prevent, which is why the managed branch
+ * is here, in the shared helper, rather than at each call site.
+ */
+function toCardLimit(
+  card: Pick<Doc<"cards">, "spendLimitCents" | "limitPeriod" | "controls">,
+): NormalizedLimit | null {
+  if (isManagedCard(card)) {
+    return { limitCents: card.spendLimitCents ?? 0, period: "lifetime" };
+  }
+  return toNormalizedLimit(card.spendLimitCents, card.limitPeriod);
 }
 
 /** Find a user's currently-active (non-revoked) fundRoles row, if any. */
@@ -171,6 +199,16 @@ function toCardSummary(card: Doc<"cards">, holderName: string) {
     status: card.status,
     spendLimitCents: card.spendLimitCents ?? null,
     limitPeriod: card.limitPeriod ?? null,
+    /**
+     * The limit is COMPUTED from the fund's balance rather than typed
+     * (ADR-033 Phase 3). Mobile needs this to render the limit at all: a
+     * managed card has `spendLimitCents` with NO `limitPeriod`, which
+     * `formatCardLimit`'s "amount / period" shape cannot express, and
+     * rendering "$400" with no window would read as a per-month cap.
+     */
+    managedLimit: isManagedCard(card),
+    /** An admin-pinned ceiling BELOW the fund's balance, or null for "follow the fund". */
+    manualCapCents: managedManualCapCents(card) ?? null,
     createdAt: card.createdAt,
   };
 }
@@ -323,6 +361,76 @@ function assertLimitRequired(
   );
 }
 
+/**
+ * Card statuses that mean "this card is dead and doesn't occupy the fund's
+ * one slot". Same denylist-not-allowlist reasoning as
+ * `cardProviderConnections.ts`'s `DEAD_CARD_STATUSES`, and the same pre-
+ * normalization spellings kept honest.
+ *
+ * `pending` is deliberately ALIVE: a row waiting on `provisionCard` is a card
+ * about to exist at the issuer, and letting a second one through in that window
+ * is precisely how a fund ends up with two lifetime caps.
+ */
+const DEAD_CARD_STATUSES = new Set(["canceled", "closed", "CLOSED", "failed"]);
+
+/** Cents -> "$1,234.56", for the copy a finance admin reads on a refusal. */
+function usd(cents: number): string {
+  return `$${(cents / 100).toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
+/**
+ * Why a manual cap above the fund's own headroom is refused.
+ *
+ * Says the NUMBER, not just "too high": the whole point of the managed limit is
+ * that the fund's balance is the cap, and an admin who has just been told "you
+ * can't set $600" without being told the fund only has $400 will try $550 next.
+ */
+function managedCapTooHighMessage(
+  requestedCents: number,
+  derivedCents: number,
+): string {
+  return `This card's limit already follows the fund's balance (${usd(derivedCents)} left to spend), so it can't be raised to ${usd(requestedCents)} — a fixed cap here can only make the card TIGHTER than the fund. To give the group more to spend, the fund needs more in it.`;
+}
+
+/**
+ * Refuse a second live card on a fund where the provider's cap is per-CARD and
+ * sized to the whole fund.
+ *
+ * At Privacy the fund's control is a LIFETIME limit on one card
+ * (`capabilities.managedFundLimit`), computed so that what remains at the
+ * provider equals the fund's balance. Two cards would each carry that whole
+ * allowance, and the pair could spend the fund twice — so "one card per fund"
+ * is not a policy preference here, it is the precondition that makes the number
+ * true. `capabilities.maxCardsPerFund` is where that is declared.
+ *
+ * Providers with a real per-fund boundary (Increase) or a shared per-fund
+ * container (BILL's budget) declare `null` and are untouched.
+ */
+async function assertFundCardSlotFree(
+  ctx: { db: any },
+  fundId: Id<"funds">,
+  providerName: Awaited<ReturnType<typeof resolveCardProviderName>>,
+): Promise<void> {
+  const cap = maxCardsPerFund(providerName);
+  if (cap === null) return;
+
+  const cards: Array<Doc<"cards">> = await ctx.db
+    .query("cards")
+    .withIndex("by_fund", (q: any) => q.eq("fundId", fundId))
+    .collect();
+  const live = cards.filter((card) => !DEAD_CARD_STATUSES.has(card.status));
+  if (live.length < cap) return;
+
+  throw new ConvexError(
+    cap === 1
+      ? "This fund already has a card. Your community's card provider caps a fund's spending on the card itself, so a second card would double what this fund can spend — close the existing card first, or change its holder."
+      : `This fund already has ${live.length} cards, which is the most your community's card provider supports — close one first.`,
+  );
+}
+
 export const createFundCard = mutation({
   args: {
     token: v.string(),
@@ -356,11 +464,6 @@ export const createFundCard = mutation({
     // one decision that reaches outside the group.
     await requireCommunityFinanceAccess(ctx, userId, fund.communityId);
 
-    // The limit is a bank-enforced control, so it must be a number Increase
-    // will accept BEFORE the row exists — a card row carrying a bogus limit
-    // would provision with no cap at all when the provider call rejects it.
-    validateCardLimit(args.spendLimitCents, args.limitPeriod);
-
     if (fund.status !== "active") {
       throw new Error("This fund isn't active — cards can't be issued");
     }
@@ -385,8 +488,62 @@ export const createFundCard = mutation({
     if (readiness) {
       throw new Error(readiness);
     }
-    assertLimitPeriodSupported(providerName, args.limitPeriod);
-    assertLimitRequired(providerName, args.spendLimitCents, args.limitPeriod);
+    await assertFundCardSlotFree(ctx, args.fundId, providerName);
+
+    // Two limit models, and which one applies is the provider's declaration,
+    // not the caller's choice.
+    //
+    //   MANAGED (Privacy) — the cap is COMPUTED from the fund's ledger and has
+    //     no window; `spendLimitCents` is read as an optional admin ceiling and
+    //     a `limitPeriod` is refused, because there is no period to honour and
+    //     accepting one would render "/ month" on a cap that never resets.
+    //   TYPED (Increase, BILL) — unchanged: validate the number, refuse a
+    //     period the issuer can't enforce, and refuse an uncapped card at an
+    //     issuer with no fund isolation.
+    const managed = usesManagedFundLimit(providerName);
+    let managedControls: ManagedCardControls | undefined;
+    let spendLimitCents = args.spendLimitCents;
+    let limitPeriod = args.limitPeriod;
+
+    if (managed) {
+      if (args.limitPeriod !== undefined) {
+        throw new ConvexError(
+          "This card's limit follows the fund's balance and never resets, so it can't be set per week or per month — leave the period blank, or set a lower fixed cap instead",
+        );
+      }
+      const derivedCents = ledgerDerivedLimitCents(
+        await readManagedLimitInputs(ctx, args.fundId),
+      );
+      if (
+        args.spendLimitCents !== undefined &&
+        args.spendLimitCents > derivedCents
+      ) {
+        throw new ConvexError(
+          managedCapTooHighMessage(args.spendLimitCents, derivedCents),
+        );
+      }
+      managedControls = {
+        managedLimit: true,
+        ...(args.spendLimitCents !== undefined
+          ? { manualCapCents: args.spendLimitCents }
+          : {}),
+      };
+      // The MIRROR of what the provider will be told, written now so the roster
+      // never shows a blank limit on a card that has one.
+      spendLimitCents = effectiveManagedLimitCents(
+        derivedCents,
+        args.spendLimitCents,
+      );
+      limitPeriod = undefined;
+    } else {
+      // The limit is a bank-enforced control, so it must be a number the
+      // provider will accept BEFORE the row exists — a card row carrying a
+      // bogus limit would provision with no cap at all when the provider call
+      // rejects it.
+      validateCardLimit(args.spendLimitCents, args.limitPeriod);
+      assertLimitPeriodSupported(providerName, args.limitPeriod);
+      assertLimitRequired(providerName, args.spendLimitCents, args.limitPeriod);
+    }
 
     // The holder must ACTUALLY hold cardholder+ on the fund's own fundRoles
     // grant — deliberately not `requireFundRole`'s community-admin override,
@@ -427,8 +584,9 @@ export const createFundCard = mutation({
       // same value again; this just makes it true earlier.
       provider: providerName,
       status: "pending",
-      spendLimitCents: args.spendLimitCents,
-      limitPeriod: args.limitPeriod,
+      spendLimitCents,
+      limitPeriod,
+      ...(managedControls ? { controls: managedControls } : {}),
       createdAt: timestamp,
       updatedAt: timestamp,
     });
@@ -442,8 +600,10 @@ export const createFundCard = mutation({
         cardId,
         holderUserId: args.holderUserId,
         name: args.name,
-        spendLimitCents: args.spendLimitCents,
-        limitPeriod: args.limitPeriod,
+        spendLimitCents,
+        limitPeriod,
+        managedLimit: managed,
+        manualCapCents: managedControls?.manualCapCents ?? null,
       },
     });
 
@@ -596,6 +756,21 @@ export const recordCardProvisioned = internalMutation({
       status: args.status,
       updatedAt: now(),
     });
+
+    // A MANAGED card's cap is sized from the fund's ledger at INSERT time, and
+    // the fund can be credited or debited in the window before the provider
+    // call returns. `scheduleManagedLimitSync` cannot cover that window — it
+    // skips cards with no `providerCardId`, which is every card until this
+    // exact patch. So the catch-up sync is scheduled here, where the id first
+    // exists. Idempotent: it recomputes from the ledger and no-ops if the
+    // number hasn't moved.
+    if (isManagedCard(card)) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.finance.cards.syncManagedCardLimit,
+        { cardId: args.cardId },
+      );
+    }
   },
 });
 
@@ -691,10 +866,13 @@ export const provisionCard = internalAction({
         holderEmail,
         description: `${fund.name} — ${card.name ?? "Card"}`,
         idempotencyKey: `finance:card:${args.cardId}`,
-        // The spend limit the finance_admin picked. Sent AT CREATION so there
-        // is never a window where the card is live and uncapped; the adapter
-        // translates the period into the provider's own interval vocabulary.
-        limit: toNormalizedLimit(card.spendLimitCents, card.limitPeriod),
+        // The spend limit. Sent AT CREATION so there is never a window where
+        // the card is live and uncapped; the adapter translates the period into
+        // the provider's own interval vocabulary. On a MANAGED card this is the
+        // lifetime cap (`toCardLimit`), which the ledger has already sized —
+        // `recordCardProvisioned` schedules a resync straight afterwards to
+        // close the gap between the row's insert and this call.
+        limit: toCardLimit(card),
       });
       await ctx.runMutation(internal.functions.finance.cards.recordCardProvisioned, {
         cardId: args.cardId,
@@ -936,6 +1114,91 @@ export const applyCardStatus = internalAction({
 // never took is worse than no audit log.
 // ============================================================================
 
+/**
+ * The managed-card half of `setCardLimit`: pin (or clear) the admin ceiling.
+ *
+ * Writes `controls.manualCapCents` and then hands the actual provider call to
+ * `syncManagedCardLimit`, which is the ONE place a managed cap is ever pushed.
+ * Doing it here instead would give the mechanism a second writer with its own
+ * idea of what the number is, and the two would disagree the first time a
+ * donation landed mid-flight.
+ */
+async function setManagedCardCap(
+  ctx: any,
+  args: {
+    card: Doc<"cards">;
+    fund: Doc<"funds">;
+    userId: Id<"users">;
+    spendLimitCents: number | undefined;
+    limitPeriod: CardLimitPeriod | undefined;
+  },
+): Promise<{
+  status: "pending";
+  requestedSpendLimitCents: number | null;
+  requestedLimitPeriod: null;
+}> {
+  if (args.limitPeriod !== undefined) {
+    throw new ConvexError(
+      "This card's limit follows the fund's balance and never resets, so it can't be set per week or per month — set a lower fixed cap instead, or leave it to follow the fund",
+    );
+  }
+  if (args.spendLimitCents !== undefined) {
+    // Reuses the shared "whole positive cents, not a slipped decimal" rule; the
+    // period is deliberately passed as "charge" only to satisfy the pair check,
+    // since a managed card has no stored period of its own.
+    validateCardLimit(args.spendLimitCents, "charge");
+  }
+
+  const derivedCents = ledgerDerivedLimitCents(
+    await readManagedLimitInputs(ctx, args.card.fundId),
+  );
+  if (
+    args.spendLimitCents !== undefined &&
+    args.spendLimitCents > derivedCents
+  ) {
+    throw new ConvexError(
+      managedCapTooHighMessage(args.spendLimitCents, derivedCents),
+    );
+  }
+
+  const previousCapCents = managedManualCapCents(args.card) ?? null;
+  const controls: ManagedCardControls = {
+    managedLimit: true,
+    ...(args.spendLimitCents !== undefined
+      ? { manualCapCents: args.spendLimitCents }
+      : {}),
+  };
+  await ctx.db.patch(args.card._id, { controls, updatedAt: now() });
+
+  await logFinanceAudit(ctx, {
+    communityId: args.fund.communityId,
+    fundId: args.fund._id,
+    actorUserId: args.userId,
+    action: "card.managed_cap_updated",
+    details: {
+      cardId: args.card._id,
+      fromManualCapCents: previousCapCents,
+      toManualCapCents: args.spendLimitCents ?? null,
+      ledgerDerivedLimitCents: derivedCents,
+    },
+  });
+
+  await ctx.scheduler.runAfter(
+    0,
+    internal.functions.finance.cards.syncManagedCardLimit,
+    { cardId: args.card._id },
+  );
+
+  return {
+    status: "pending" as const,
+    requestedSpendLimitCents: effectiveManagedLimitCents(
+      derivedCents,
+      args.spendLimitCents,
+    ),
+    requestedLimitPeriod: null,
+  };
+}
+
 export const setCardLimit = mutation({
   args: {
     token: v.string(),
@@ -962,11 +1225,34 @@ export const setCardLimit = mutation({
     // rope can freeze the card, which they already can.
     await requireFundRole(ctx, fund._id, userId, "finance_admin");
 
-    validateCardLimit(args.spendLimitCents, args.limitPeriod);
     const limitProviderName = await resolveCardProviderName(
       ctx,
       fund.communityId,
     );
+
+    // On a MANAGED card this mutation sets the MANUAL CAP, not the limit.
+    //
+    // The limit itself is the fund's headroom and is not a thing to type — the
+    // only editable part is a ceiling BELOW it, for an admin who wants a group
+    // to spend less than the fund holds. So the same argument means something
+    // different here, and the two rules that keep it honest are:
+    //
+    //   1. it can only tighten (an upward request is refused with the numbers,
+    //      not a bare "invalid"), and
+    //   2. omitting the amount CLEARS the cap back to "follow the fund", rather
+    //      than removing the limit entirely — an uncapped card is exactly what
+    //      a pooled-balance issuer must never have.
+    if (isManagedCard(card)) {
+      return await setManagedCardCap(ctx, {
+        card,
+        fund,
+        userId,
+        spendLimitCents: args.spendLimitCents,
+        limitPeriod: args.limitPeriod,
+      });
+    }
+
+    validateCardLimit(args.spendLimitCents, args.limitPeriod);
     assertLimitPeriodSupported(limitProviderName, args.limitPeriod);
     assertLimitRequired(
       limitProviderName,
@@ -1184,6 +1470,148 @@ export const applyCardLimit = internalAction({
         actorUserId: args.actorUserId,
       });
     }
+  },
+});
+
+// ============================================================================
+// syncManagedCardLimit — keep a managed card's lifetime cap equal to its
+// fund's headroom (ADR-033 Phase 3; lib/finance/managedCardLimit.ts).
+// ============================================================================
+
+/**
+ * Everything the sync action needs, in one round trip (it has no `ctx.db`).
+ *
+ * The cap is RECOMPUTED here from the whole ledger rather than adjusted by the
+ * event that triggered the run. That is what makes the action idempotent and
+ * order-independent: a redelivered donation webhook, two entries posted in the
+ * same second, and the hourly backstop all converge on the same number instead
+ * of compounding each other.
+ */
+export const getManagedCardSyncTarget = internalQuery({
+  args: { cardId: v.id("cards") },
+  handler: async (ctx, args) => {
+    const card = await ctx.db.get(args.cardId);
+    if (!card) return null;
+    if (!managedCardIsSyncable(card)) return null;
+    const fund = await ctx.db.get(card.fundId);
+    if (!fund) return null;
+
+    const providerName = await resolveCardProviderName(ctx, fund.communityId);
+    const derivedCents = ledgerDerivedLimitCents(
+      await readManagedLimitInputs(ctx, card.fundId),
+    );
+
+    return {
+      providerCardId: card.providerCardId!,
+      currentLimitCents: card.spendLimitCents ?? null,
+      targetLimitCents: effectiveManagedLimitCents(
+        derivedCents,
+        managedManualCapCents(card),
+      ),
+      providerName,
+      connection: isBringYourOwnProvider(providerName)
+        ? await loadActiveProviderConnection(ctx, fund.communityId)
+        : null,
+    };
+  },
+});
+
+/** The provider took the new managed cap: patch the mirror and audit it. */
+export const recordManagedCardLimit = internalMutation({
+  args: { cardId: v.id("cards"), spendLimitCents: v.number() },
+  handler: async (ctx, args) => {
+    const card = await ctx.db.get(args.cardId);
+    if (!card) return;
+    const fund = await ctx.db.get(card.fundId);
+    await ctx.db.patch(args.cardId, {
+      spendLimitCents: args.spendLimitCents,
+      updatedAt: now(),
+    });
+    if (fund) {
+      await logFinanceAudit(ctx, {
+        communityId: fund.communityId,
+        fundId: fund._id,
+        action: "card.managed_limit_synced",
+        details: {
+          cardId: args.cardId,
+          fromSpendLimitCents: card.spendLimitCents ?? null,
+          toSpendLimitCents: args.spendLimitCents,
+        },
+      });
+    }
+  },
+});
+
+/**
+ * Push the fund's current headroom onto its managed card.
+ *
+ * Scheduled from `postLedgerEntry` (via `scheduleManagedLimitSync`) on every
+ * balance change that isn't already counted by the provider, from
+ * `recordCardProvisioned` once the card has an id, and hourly by
+ * `finance-managed-limit-resync` as the backstop for a run that failed.
+ *
+ * A FAILURE IS LOGGED AND LEFT, not retried in place. The old cap stays at the
+ * provider, which is wrong by exactly one event in one direction or the other,
+ * and the hourly resync corrects it. Retrying here would mean a provider having
+ * a bad minute turns one late sync into a spin; and throwing would put a
+ * scheduled-function error in front of an operator for something that
+ * self-heals within the hour.
+ */
+export const syncManagedCardLimit = internalAction({
+  args: { cardId: v.id("cards") },
+  handler: async (ctx, args): Promise<{ applied: boolean }> => {
+    const target = await ctx.runQuery(
+      internal.functions.finance.cards.getManagedCardSyncTarget,
+      { cardId: args.cardId },
+    );
+    // Null covers every "nothing to do" case the query already decided:
+    // deleted, not managed, not yet provisioned, dead. Not an error.
+    if (!target) return { applied: false };
+
+    // The no-op that makes this cheap to over-schedule. Two ledger entries in
+    // one mutation queue two runs; the second finds the number already applied
+    // and never touches the provider.
+    if (target.currentLimitCents === target.targetLimitCents) {
+      return { applied: false };
+    }
+
+    try {
+      const provider = await getCardProviderByName(
+        target.providerName,
+        target.connection,
+      );
+      await provider.setSpendLimit(target.providerCardId, {
+        limitCents: target.targetLimitCents,
+        // LIFETIME, always. A managed cap is an accumulator, not an allowance —
+        // any resetting window would hand the card the fund's balance again on
+        // the next reset. See lib/finance/managedCardLimit.ts.
+        period: "lifetime",
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(
+        `[finance] syncManagedCardLimit: the provider refused the new managed limit for card ${args.cardId} (${target.currentLimitCents} -> ${target.targetLimitCents}): ${message}`,
+      );
+      return { applied: false };
+    }
+
+    // Mirror only AFTER the provider agreed — same rule as `applyCardLimit`.
+    // A roster showing a cap the provider isn't enforcing is worse than one
+    // showing a stale number, because only the first is unfalsifiable.
+    await ctx.runMutation(
+      internal.functions.finance.cards.recordManagedCardLimit,
+      { cardId: args.cardId, spendLimitCents: target.targetLimitCents },
+    );
+    return { applied: true };
+  },
+});
+
+/** Every managed card that could need a resync — the hourly backstop's fan-out. */
+export const listManagedCards = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const cards = await ctx.db.query("cards").collect();
+    return cards.filter((card) => managedCardIsSyncable(card)).map((c) => c._id);
   },
 });
 

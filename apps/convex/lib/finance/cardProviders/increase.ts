@@ -99,6 +99,16 @@ function toIncreaseLimit(
   limit: NormalizedLimit | null,
 ): IncreaseCardSpendingLimit | null {
   if (!limit) return null;
+  if (limit.period === "lifetime") {
+    // Increase's `spending_limits[].interval` has no lifetime window, and
+    // degrading one to `per_year` would silently reset a cap that is supposed
+    // never to. Unreachable in practice — a lifetime limit only comes from the
+    // managed-limit path, and `INCREASE_CAPABILITIES.managedFundLimit` is false
+    // — so this is the adapter refusing to guess rather than a live branch.
+    throw new Error(
+      "Increase has no lifetime spending limit — a managed fund limit cannot be applied to an Increase card",
+    );
+  }
   return {
     interval: LIMIT_PERIOD_TO_INCREASE_INTERVAL[limit.period],
     settlementAmountCents: limit.limitCents,

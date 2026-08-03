@@ -64,8 +64,31 @@ export type CardStateRequest = Extract<
  */
 export interface NormalizedLimit {
   limitCents: number;
-  period: CardLimitPeriod;
+  period: NormalizedLimitPeriod;
 }
+
+/**
+ * The windows a limit can cover, in Togather's words.
+ *
+ * `CardLimitPeriod` — `week | month | charge` — is what a finance ADMIN picks
+ * and what `cards.limitPeriod` stores. `"lifetime"` is deliberately NOT in that
+ * union and is deliberately NOT storable there:
+ *
+ * - It is not a choice. A lifetime cap only ever appears on a MANAGED card,
+ *   where the number is computed from the fund's ledger rather than typed
+ *   (`capabilities.managedFundLimit`, lib/finance/managedCardLimit.ts).
+ * - `cards.limitPeriod`'s validator is `week | month | charge` and schema.ts is
+ *   not being widened for this. A managed card therefore stores
+ *   `spendLimitCents` with NO period, and says so through
+ *   `cards.controls.managedLimit` — which is the honest shape anyway, because
+ *   "resets weekly" and "never resets" are not two settings of one control.
+ *
+ * So `lifetime` lives on the wire between `cards.ts` and an adapter, and
+ * nowhere else. An adapter that cannot express it must THROW rather than
+ * degrade: every degradation of "never resets" is a window that does reset,
+ * which is unboundedly more permissive over the life of a card.
+ */
+export type NormalizedLimitPeriod = CardLimitPeriod | "lifetime";
 
 // ============================================================================
 // Capabilities

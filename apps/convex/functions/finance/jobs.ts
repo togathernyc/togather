@@ -1750,7 +1750,9 @@ export const retryStuckReimbursements = internalAction({
  */
 export const pollCardProviderTransactions = internalAction({
   args: {},
-  handler: async (ctx): Promise<{ polled: number; recorded: number }> => {
+  handler: async (
+    ctx,
+  ): Promise<{ polled: number; recorded: number; limitsResynced: number }> => {
     const connections = await ctx.runQuery(
       internal.functions.finance.cardProviderConnections.listActiveConnections,
       {},
@@ -1788,9 +1790,61 @@ export const pollCardProviderTransactions = internalAction({
       }
     }
 
-    return { polled: connections.length, recorded };
+    return {
+      polled: connections.length,
+      recorded,
+      limitsResynced: await resyncManagedCardLimits(ctx),
+    };
   },
 });
+
+/**
+ * The BACKSTOP for `syncManagedCardLimit` (ADR-033 Phase 3).
+ *
+ * A managed card's lifetime cap is pushed at the moment the fund's ledger
+ * moves, and that push can fail: a Privacy outage, a rate limit, a key rotated
+ * mid-flight. `syncManagedCardLimit` deliberately does not retry in place —
+ * retrying at the provider boundary turns a bad minute into a spin — so
+ * something has to come back for it, and this is that something.
+ *
+ * It rides the EXISTING hourly poll rather than adding a cron, for two reasons
+ * that are the same reason: this fan-out already runs at the right cadence for
+ * BYO providers, and a managed limit and an imported charge are two halves of
+ * one picture. Re-importing a charge without re-capping the card would leave
+ * the ledger and the provider disagreeing for another hour.
+ *
+ * Cheap when there is nothing to do: `syncManagedCardLimit` recomputes and
+ * no-ops when the number hasn't moved, so a healthy fleet costs one query per
+ * card and no provider calls at all. RUNS AFTER the transaction import in the
+ * same pass, deliberately — a charge imported this hour changes what the ledger
+ * says, and re-capping before importing it would compute against a stale one.
+ *
+ * Per-card try/catch: one church's dead credential must not stop another
+ * church's card from being re-capped.
+ */
+async function resyncManagedCardLimits(ctx: ActionCtx): Promise<number> {
+  const cardIds: Array<Id<"cards">> = await ctx.runQuery(
+    internal.functions.finance.cards.listManagedCards,
+    {},
+  );
+
+  let resynced = 0;
+  for (const cardId of cardIds) {
+    try {
+      const result = await ctx.runAction(
+        internal.functions.finance.cards.syncManagedCardLimit,
+        { cardId },
+      );
+      if (result.applied) resynced += 1;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(
+        `[finance] managed-limit resync failed for card ${cardId}: ${message}`,
+      );
+    }
+  }
+  return resynced;
+}
 
 /**
  * Did the provider refuse OUR KEY, or did the call merely fail?
@@ -1967,6 +2021,12 @@ export function registerFinanceCrons(crons: Crons): void {
   // Minute 10: off the hour, and not sharing a minute with the two retries
   // above — three fan-outs starting together would compete for the same
   // action budget for no reason.
+  //
+  // This job also carries the MANAGED-LIMIT resync (ADR-033 Phase 3) rather
+  // than that getting a cron of its own: both are about BYO providers, both
+  // want the same hourly cadence, and the resync has to run AFTER the hour's
+  // charges are imported to compute against a current ledger. Two crons could
+  // not guarantee that ordering.
   crons.hourly(
     "finance-card-txn-poll",
     { minuteUTC: 10 },

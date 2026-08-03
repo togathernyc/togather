@@ -23,6 +23,7 @@
 import type { Doc, Id } from "../../_generated/dataModel";
 import type { MutationCtx } from "../../_generated/server";
 import { now } from "../utils";
+import { scheduleManagedLimitSync } from "./managedCardLimit";
 
 // ============================================================================
 // Kinds / directions
@@ -142,6 +143,26 @@ export async function postLedgerEntry(
   const delta =
     entry.direction === "credit" ? entry.amountCents : -entry.amountCents;
   await ctx.db.patch(entry.fundId, { balanceCents: fund.balanceCents + delta });
+
+  // ADR-033 Phase 3. At a provider with no hard fund isolation, a card's
+  // lifetime cap is what stands in for "this card may spend the fund's
+  // balance" — so the cap has to move whenever the balance does. This is the
+  // ONE place every balance change passes through, which is exactly why the
+  // hook lives here rather than in each of the four mutations that post
+  // entries: the next path someone adds gets it for free, and the failure mode
+  // of forgetting (a card that quietly under-spends its fund weeks later) is
+  // one nobody notices from the app. No-ops for every fund with no managed
+  // card, which today is every fund.
+  //
+  // AFTER the balance patch, deliberately: the scheduled action recomputes
+  // from the ledger, and enqueuing before the write would let it read a fund
+  // one entry behind.
+  await scheduleManagedLimitSync(
+    ctx,
+    entry.fundId,
+    entry.kind,
+    entry.direction,
+  );
 
   return ledgerEntryId;
 }

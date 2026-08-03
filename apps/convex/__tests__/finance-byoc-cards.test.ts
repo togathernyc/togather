@@ -473,10 +473,57 @@ describe("getCardProviderStatus", () => {
 // ============================================================================
 
 /** Create + provision a card, the way createFundCard's scheduled action would. */
+/**
+ * Post a ledger entry straight to the DB, bypassing `postLedgerEntry`.
+ *
+ * Deliberate: the real helper schedules a managed-limit sync, and a fixture
+ * that queues provider calls before the card exists tests the scheduler rather
+ * than the thing under test. Tests that WANT the scheduling drive it through
+ * the real mutations.
+ */
+async function seedLedger(
+  t: ReturnType<typeof convexTest>,
+  f: Fixture,
+  entries: Array<{
+    direction: "credit" | "debit";
+    kind: "donation" | "reimbursement" | "card_capture" | "fee" | "refund";
+    amountCents: number;
+  }>,
+): Promise<void> {
+  await t.run(async (ctx) => {
+    const fund = (await ctx.db.get(f.fundId))!;
+    let balance = fund.balanceCents;
+    for (const [i, entry] of entries.entries()) {
+      await ctx.db.insert("ledgerEntries", {
+        fundId: f.fundId,
+        communityId: fund.communityId,
+        direction: entry.direction,
+        amountCents: entry.amountCents,
+        kind: entry.kind,
+        idempotencyKey: `seed:${f.fundId}:${Date.now()}:${i}:${Math.random()}`,
+        createdAt: Date.now(),
+      });
+      balance += entry.direction === "credit" ? entry.amountCents : -entry.amountCents;
+    }
+    await ctx.db.patch(f.fundId, { balanceCents: balance });
+  });
+}
+
+/**
+ * A provisioned Privacy card on a fund holding $500.
+ *
+ * NO explicit limit is passed, and that is the point since ADR-033 Phase 3:
+ * Privacy is a MANAGED-limit provider, so the cap is the fund's own headroom
+ * ($500, lifetime) rather than a number an admin types. Passing a period here
+ * is now a refusal — see the managed-limit tests below.
+ */
 async function issueCard(
   t: ReturnType<typeof convexTest>,
   f: Fixture,
 ): Promise<Id<"cards">> {
+  await seedLedger(t, f, [
+    { direction: "credit", kind: "donation", amountCents: 50_000 },
+  ]);
   const cardId: Id<"cards"> = await t.mutation(
     api.functions.finance.cards.createFundCard,
     {
@@ -484,8 +531,6 @@ async function issueCard(
       fundId: f.fundId,
       holderUserId: f.cardholderUserId,
       name: "Supplies",
-      spendLimitCents: 50_000,
-      limitPeriod: "month",
     },
   );
   await t.action(internal.functions.finance.cards.provisionCard, { cardId });
@@ -504,8 +549,10 @@ describe("issuing a card on a BYO provider", () => {
     const [, params] = privacy.createPrivacyCard.mock.calls[0] as any[];
     expect(params).toMatchObject({
       type: "UNLOCKED",
+      // The MANAGED cap: the fund's $500 of lifetime credits, on the one
+      // window Privacy has that never resets (ADR-033 Phase 3).
       spend_limit: 50_000,
-      spend_limit_duration: "MONTHLY",
+      spend_limit_duration: "FOREVER",
     });
     expect(params.memo).toContain("Youth Ministry");
 
@@ -546,11 +593,12 @@ describe("issuing a card on a BYO provider", () => {
       "disabled",
     );
 
+    // On a managed card this pins a LOWER ceiling, not a new limit — see the
+    // managed-limit tests below for the full behaviour.
     await t.mutation(api.functions.finance.cards.setCardLimit, {
       token,
       cardId,
       spendLimitCents: 10_000,
-      limitPeriod: "month",
     });
 
     await t.mutation(api.functions.finance.cards.cancelCard, { token, cardId });
@@ -563,38 +611,42 @@ describe("issuing a card on a BYO provider", () => {
     );
   });
 
-  test("an UNCAPPED card is refused — the limit is the fund boundary here", async () => {
+  test("a card is NEVER uncapped here — the managed limit is the fund boundary", async () => {
     // At Increase "no limit" means "up to this fund's balance", because the
     // fund owns the Account. At Privacy every card draws the community's one
-    // pooled funding source, so the same choice means "up to the church's
+    // pooled funding source, so an uncapped card means "up to the church's
     // entire account" — another group's giving included.
+    //
+    // ADR-033 Phase 3 makes that impossible to ask for rather than merely
+    // refused: a Privacy card's limit is COMPUTED from the fund, so a request
+    // with no limit produces a capped card instead of an error, and clearing
+    // the limit later resets it to the fund rather than removing it.
     const t = convexTest(schema, modules);
     const f = await seed(t);
     await connect(t, f);
 
-    await expect(
-      t.mutation(api.functions.finance.cards.createFundCard, {
-        token: await tokenFor(f.primaryAdminUserId),
-        fundId: f.fundId,
-        holderUserId: f.cardholderUserId,
-        name: "Supplies",
-      }),
-    ).rejects.toThrow(/only cap on what this card can reach/i);
-
-    // …and the limit can't be REMOVED from a card that already has one.
     const cardId = await issueCard(t, f);
-    await expect(
-      t.mutation(api.functions.finance.cards.setCardLimit, {
-        token: await tokenFor(f.primaryAdminUserId),
-        cardId,
-      }),
-    ).rejects.toThrow(/only cap on what this card can reach/i);
+    const card = await t.run(async (ctx) => ctx.db.get(cardId));
+    expect(card!.spendLimitCents).toBe(50_000);
+    expect(card!.limitPeriod).toBeUndefined();
+    expect((card!.controls as { managedLimit?: boolean }).managedLimit).toBe(true);
+
+    await t.mutation(api.functions.finance.cards.setCardLimit, {
+      token: await tokenFor(f.primaryAdminUserId),
+      cardId,
+    });
+    const cleared = await t.run(async (ctx) => ctx.db.get(cardId));
+    expect(
+      (cleared!.controls as { manualCapCents?: number }).manualCapCents,
+    ).toBeUndefined();
+    expect(cleared!.spendLimitCents).toBe(50_000);
   });
 
-  test("a WEEKLY limit is refused, not silently widened to a month", async () => {
-    // The adapter would map week -> MONTHLY at the same number (safe for the
-    // money), but the card screen renders "/ week" with a Monday reset — so
-    // the cardholder would learn the truth by being declined for three weeks.
+  test("a WEEKLY limit is refused on a managed card, with the reason", async () => {
+    // A managed cap NEVER resets — that is the whole mechanism. Accepting a
+    // period would render "/ week" on a lifetime accumulator, which is the
+    // same false label the pre-Phase-3 refusal existed to prevent, arrived at
+    // from the other direction.
     const t = convexTest(schema, modules);
     const f = await seed(t);
     await connect(t, f);
@@ -608,7 +660,7 @@ describe("issuing a card on a BYO provider", () => {
         spendLimitCents: 10_000,
         limitPeriod: "week",
       }),
-    ).rejects.toThrow(/no weekly spending limit/i);
+    ).rejects.toThrow(/never resets/i);
 
     const cardId = await issueCard(t, f);
     await expect(
@@ -618,7 +670,7 @@ describe("issuing a card on a BYO provider", () => {
         spendLimitCents: 20_000,
         limitPeriod: "week",
       }),
-    ).rejects.toThrow(/no weekly spending limit/i);
+    ).rejects.toThrow(/never resets/i);
   });
 
   test("without a connection, creation is refused with a route forward", async () => {
@@ -653,9 +705,8 @@ describe("issuing a card on a BYO provider", () => {
         fundId: f.fundId,
         holderUserId: f.cardholderUserId,
         name: "Supplies",
-        // Required at a pooled-account provider — see assertLimitRequired.
-        spendLimitCents: 50_000,
-        limitPeriod: "month",
+        // No limit argument: Privacy is a MANAGED-limit provider, so the cap
+        // comes from the fund's ledger (ADR-033 Phase 3).
       },
     );
     await t.run(async (ctx) => {
@@ -722,11 +773,22 @@ async function postWebhook(
   });
 }
 
+/**
+ * What the code under test wrote — FIXTURE rows excluded.
+ *
+ * `issueCard` seeds the donation credit that sizes a managed card's limit
+ * (ADR-033 Phase 3), and those rows are setup, not behaviour. Filtering them by
+ * their `seed:` idempotency prefix keeps every "…writes nothing" assertion
+ * about the thing it is actually asserting.
+ */
 async function countWrites(t: ReturnType<typeof convexTest>) {
-  return await t.run(async (ctx) => ({
-    expenses: (await ctx.db.query("expenses").collect()).length,
-    ledger: (await ctx.db.query("ledgerEntries").collect()).length,
-  }));
+  return await t.run(async (ctx) => {
+    const ledger = await ctx.db.query("ledgerEntries").collect();
+    return {
+      expenses: (await ctx.db.query("expenses").collect()).length,
+      ledger: ledger.filter((e) => !e.idempotencyKey.startsWith("seed:")).length,
+    };
+  });
 }
 
 describe("POST /card-provider-webhook/privacy", () => {
@@ -765,7 +827,11 @@ describe("POST /card-provider-webhook/privacy", () => {
     });
 
     const ledger = await t.run(async (ctx) =>
-      ctx.db.query("ledgerEntries").collect(),
+      (await ctx.db.query("ledgerEntries").collect()).filter(
+        // The fixture's donation credit sizes the managed card limit; it isn't
+        // something the webhook wrote. Same filter as `countWrites`.
+        (e) => !e.idempotencyKey.startsWith("seed:"),
+      ),
     );
     expect(ledger).toHaveLength(1);
     expect(ledger[0]).toMatchObject({
@@ -992,7 +1058,7 @@ describe("finance-card-txn-poll", () => {
       internal.functions.finance.jobs.pollCardProviderTransactions,
       {},
     );
-    expect(result).toEqual({ polled: 1, recorded: 2 });
+    expect(result).toMatchObject({ polled: 1, recorded: 2 });
 
     const row = await t.run(async (ctx) =>
       ctx.db.query("cardProviderConnections").first(),
@@ -1098,7 +1164,7 @@ describe("finance-card-txn-poll", () => {
       internal.functions.finance.jobs.pollCardProviderTransactions,
       {},
     );
-    expect(result).toEqual({ polled: 1, recorded: 0 });
+    expect(result).toMatchObject({ polled: 1, recorded: 0 });
 
     const row = await t.run(async (ctx) =>
       ctx.db.query("cardProviderConnections").first(),
@@ -1420,9 +1486,8 @@ describe("disconnectCardProvider", () => {
         fundId: f.fundId,
         holderUserId: f.cardholderUserId,
         name: "Supplies",
-        // Required at a pooled-account provider — see assertLimitRequired.
-        spendLimitCents: 50_000,
-        limitPeriod: "month",
+        // No limit argument: Privacy is a MANAGED-limit provider, so the cap
+        // comes from the fund's ledger (ADR-033 Phase 3).
       },
     );
     // Deliberately NOT provisioned — provider stamped, providerCardId absent.
