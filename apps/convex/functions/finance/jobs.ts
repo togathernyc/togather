@@ -127,6 +127,12 @@ import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
 import { checkInvariant, postLedgerEntry } from "../../lib/finance/ledger";
 import { logFinanceAudit } from "../../lib/finance/audit";
+import {
+  getCardProviderByName,
+  loadActiveProviderConnection,
+  resolveCardProviderName,
+} from "../../lib/finance/cardProviders";
+import { recordProviderTransaction } from "./webhooks";
 import { now } from "../../lib/utils";
 
 /**
@@ -1707,6 +1713,218 @@ export const retryStuckReimbursements = internalAction({
 });
 
 // ============================================================================
+// Hourly card-transaction poll (bring-your-own providers, ADR-033 Phase 1)
+// ============================================================================
+
+/**
+ * Pull settled card transactions for every community on a BYO card issuer.
+ *
+ * WHY THIS EXISTS ALONGSIDE A WEBHOOK. Privacy.com's capability profile says
+ * `webhooks: "all"`, and it means it — every transaction event is pushed. But
+ * a webhook endpoint that was down, mis-deployed, or slow for an hour loses
+ * those deliveries permanently once the provider's retries expire, and unlike
+ * Increase we have no `GET /events` feed to replay. So the poll is the
+ * backstop that makes a missed delivery a delay instead of a hole in a
+ * church's books. It is also, today, the only way a DECLINE reaches us at all
+ * (`declineFeed: "poll"`).
+ *
+ * Both paths book a charge through the same `recordProviderTransaction`, and
+ * the settlement recorder is idempotent on the provider transaction id, so
+ * "the webhook already handled this" costs one read and writes nothing.
+ *
+ * PER-COMMUNITY try/catch, deliberately: one church's revoked API key must not
+ * stop every other church's charges from importing. A failure flips that one
+ * connection to "error" with the vendor's message, and the fan-out continues.
+ */
+export const pollCardProviderTransactions = internalAction({
+  args: {},
+  handler: async (ctx): Promise<{ polled: number; recorded: number }> => {
+    const connections = await ctx.runQuery(
+      internal.functions.finance.cardProviderConnections.listActiveConnections,
+      {},
+    );
+
+    let recorded = 0;
+    for (const connection of connections) {
+      // Captured OUTSIDE the try so the failure path can use it: pollOneConnection
+      // reads the row first, and the generation it read is what makes a stale
+      // failure discardable.
+      let expectedUpdatedAt: number | null = null;
+      try {
+        recorded += await pollOneConnection(ctx, connection, (updatedAt) => {
+          expectedUpdatedAt = updatedAt;
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(
+          `[finance] card txn poll failed for community ${connection.communityId}: ${message}`,
+        );
+        await ctx.runMutation(
+          internal.functions.finance.cardProviderConnections
+            .recordConnectionSync,
+          {
+            connectionId: connection.connectionId,
+            error: message,
+            credentialRejected: isCredentialRejection(error),
+            // The generation matters MORE on this path than on the success
+            // one: an old key's 401 arriving after an admin has already
+            // reconnected would otherwise mark the fresh credential "error"
+            // and disable the very thing that fixed the problem.
+            expectedUpdatedAt: expectedUpdatedAt ?? undefined,
+          },
+        );
+      }
+    }
+
+    return { polled: connections.length, recorded };
+  },
+});
+
+/**
+ * Did the provider refuse OUR KEY, or did the call merely fail?
+ *
+ * Only the first justifies deactivating a church's connection — that flips
+ * `status` to "error", which stops card operations and makes the webhook route
+ * answer perfectly good signed deliveries with `ignored`. A rate limit, a
+ * gateway timeout, or a vendor 5xx must not buy that; it retries next hour.
+ *
+ * Read structurally (an optional numeric `status` on the thrown error, which
+ * `PrivacyApiError` carries) rather than by matching message text, and
+ * deliberately provider-agnostic: this fan-out is the shared BYO poller, so
+ * the next adapter opts in simply by attaching a status to what it throws.
+ * An error with no status is treated as transient, which is the safe default —
+ * the cost is one wasted poll, versus silently dropped settlements.
+ */
+function isCredentialRejection(error: unknown): boolean {
+  const status = (error as { status?: unknown } | null | undefined)?.status;
+  return status === 401 || status === 403;
+}
+
+/**
+ * One connection's pull. Split out so the fan-out above stays a loop with a
+ * try/catch and nothing else.
+ *
+ * The cursor is only written back on SUCCESS, and only through
+ * `recordConnectionSync`, which never clears it — a poll that throws halfway
+ * leaves the connection pointing at the last window it fully read, so the next
+ * run re-reads rather than skips. Re-reading costs an idempotent no-op per
+ * transaction; skipping costs a charge nobody ever sees.
+ */
+async function pollOneConnection(
+  ctx: ActionCtx,
+  connection: {
+    connectionId: Id<"cardProviderConnections">;
+    communityId: Id<"communities">;
+    provider: string;
+    syncCursor: string | null;
+  },
+  /** Reports the generation read, so a THROW can still be attributed correctly. */
+  onGeneration: (updatedAt: number) => void,
+): Promise<number> {
+  const loaded = await ctx.runQuery(
+    internal.functions.finance.jobs.getConnectionForPoll,
+    { connectionId: connection.connectionId },
+  );
+  if (!loaded) return 0;
+  onGeneration(loaded.updatedAt);
+
+  const provider = await getCardProviderByName(
+    loaded.providerName,
+    loaded.connection,
+  );
+  if (!provider.listTransactions) {
+    // A BYO provider with no pull feed can't be backstopped. Not an error —
+    // just nothing to do — but worth saying out loud, because it means this
+    // community's settlements depend entirely on webhooks arriving.
+    console.log(
+      `[finance] ${connection.provider} has no transaction feed to poll (community ${connection.communityId})`,
+    );
+    return 0;
+  }
+
+  // Read from `loaded`, NOT from the fan-out's list snapshot. The two are
+  // separate reads with an admin-sized gap between them: a reconnect in that
+  // gap clears `syncCursor` and points at a different account, and polling the
+  // NEW credential from the OLD account's timestamp — then accepting the
+  // result under the new generation — would skip the new account's earlier
+  // transactions permanently.
+  const syncCursor = loaded.connection.syncCursor ?? null;
+  const providerName = loaded.connection.provider;
+
+  const page = await provider.listTransactions(syncCursor);
+
+  let recorded = 0;
+  for (const txn of page.transactions) {
+    if (await recordProviderTransaction(ctx, providerName, txn, "CardTxnPoll")) {
+      recorded++;
+    }
+  }
+
+  if (page.truncated) {
+    // The adapter could not read to the end of the feed, so it left the cursor
+    // where it was — the next run will re-read this same window and never
+    // reach what lies beyond it. Recorded as an error (which, per
+    // `isCredentialRejection`, does NOT deactivate the connection: the
+    // credential is fine, the volume isn't) so it shows on the connection
+    // screen instead of looking like a healthy hourly poll forever.
+    const message = `Transaction backlog exceeds one poll — read ${page.transactions.length} and stopped; the cursor is held at ${syncCursor ?? "the initial lookback"} until the backlog clears`;
+    console.error(
+      `[finance] card txn poll truncated for community ${connection.communityId}: ${message}`,
+    );
+    await ctx.runMutation(
+      internal.functions.finance.cardProviderConnections.recordConnectionSync,
+      {
+        connectionId: connection.connectionId,
+        error: message,
+        expectedUpdatedAt: loaded.updatedAt,
+      },
+    );
+    return recorded;
+  }
+
+  await ctx.runMutation(
+    internal.functions.finance.cardProviderConnections.recordConnectionSync,
+    {
+      connectionId: connection.connectionId,
+      // `?? undefined` keeps the stored cursor when an adapter reports "caught
+      // up" as null. The adapter is also written not to do that — see its
+      // listTransactions — because losing this one number silently re-imports
+      // or silently skips, and both are bad in ways nobody notices for weeks.
+      syncCursor: page.nextCursor ?? undefined,
+      // Everything above this line is one HTTP round trip long, and an admin
+      // can disconnect or rotate the key inside it. Snapshot in, snapshot
+      // checked — see recordConnectionSync.
+      expectedUpdatedAt: loaded.updatedAt,
+    },
+  );
+
+  return recorded;
+}
+
+/**
+ * The connection row (credential still encrypted) plus the community's
+ * resolved provider name, in one read — the action has no `ctx.db`.
+ *
+ * `updatedAt` comes back too: it is the generation marker the poll hands to
+ * `recordConnectionSync` so a result cannot be applied to a connection that
+ * was disconnected or re-keyed while the provider call was in flight.
+ */
+export const getConnectionForPoll = internalQuery({
+  args: { connectionId: v.id("cardProviderConnections") },
+  handler: async (ctx, args) => {
+    const row = await ctx.db.get(args.connectionId);
+    if (!row || row.status !== "active") return null;
+    const connection = await loadActiveProviderConnection(ctx, row.communityId);
+    if (!connection) return null;
+    return {
+      providerName: await resolveCardProviderName(ctx, row.communityId),
+      connection,
+      updatedAt: row.updatedAt,
+    };
+  },
+});
+
+// ============================================================================
 // Cron registration
 // ============================================================================
 
@@ -1732,5 +1950,14 @@ export function registerFinanceCrons(crons: Crons): void {
     "finance-stuck-reimbursement-retry",
     { minuteUTC: 20 },
     internal.functions.finance.jobs.retryStuckReimbursements,
+  );
+
+  // Minute 10: off the hour, and not sharing a minute with the two retries
+  // above — three fan-outs starting together would compete for the same
+  // action budget for no reason.
+  crons.hourly(
+    "finance-card-txn-poll",
+    { minuteUTC: 10 },
+    internal.functions.finance.jobs.pollCardProviderTransactions,
   );
 }

@@ -716,10 +716,26 @@ describe("getCardProvider", () => {
 
   test("a provider whose adapter isn't built yet fails loudly, not silently onto Increase", async () => {
     const t = convexTest(schema, modules);
-    const f = await seed(t, { cardProvider: "privacy" });
+    const f = await seed(t, { cardProvider: "bill" });
 
     await expect(
       t.run(async (ctx) => getCardProvider(ctx, f.communityId)),
     ).rejects.toThrow(/isn't available yet/i);
+  });
+
+  /**
+   * The Privacy adapter EXISTS now (ADR-033 Phase 1), so "privacy with no
+   * connection row" has to fail for the right reason — the credential is
+   * missing, not the code. Getting the old "isn't available yet" message here
+   * would send an admin to ask an engineer about a deploy instead of going to
+   * paste their API key.
+   */
+  test("privacy with no connection fails on the credential, not on the adapter", async () => {
+    const t = convexTest(schema, modules);
+    const f = await seed(t, { cardProvider: "privacy" });
+
+    await expect(
+      t.run(async (ctx) => getCardProvider(ctx, f.communityId)),
+    ).rejects.toThrow(/isn't connected/i);
   });
 });

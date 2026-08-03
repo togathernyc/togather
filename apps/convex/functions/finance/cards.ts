@@ -77,9 +77,16 @@ import {
 } from "../../lib/finance/cardPolicy";
 import {
   getCardProviderByName,
+  isBringYourOwnProvider,
+  loadActiveProviderConnection,
+  requiresSpendLimit,
   resolveCardProviderName,
+  supportsWeeklyLimits,
 } from "../../lib/finance/cardProviders";
-import type { NormalizedLimit } from "../../lib/finance/cardProviders/types";
+import type {
+  CardState,
+  NormalizedLimit,
+} from "../../lib/finance/cardProviders/types";
 import {
   requireFundRole,
   requireFundRoleOrGroupLeader,
@@ -189,6 +196,93 @@ export const listFundCards = query({
 // createFundCard
 // ============================================================================
 
+/**
+ * Why this fund CAN'T have a card issued right now, or `null` if it can.
+ *
+ * Returns the sentence rather than a boolean because the two providers fail
+ * for genuinely different reasons and a shared "not ready" would send an admin
+ * looking in the wrong place — one of them needs to wait for Increase, the
+ * other needs to go paste an API key.
+ *
+ * Called TWICE: once in `createFundCard`, and again inside
+ * `getCardForProvisioning` right before the provider call. Not belt-and-braces
+ * — those run in different transactions, however far apart, and a connection
+ * revoked in the gap would otherwise still produce a live card.
+ */
+async function describeCardIssuingReadiness(
+  ctx: { db: any },
+  fund: Doc<"funds">,
+  providerName: Awaited<ReturnType<typeof resolveCardProviderName>>,
+): Promise<string | null> {
+  if (providerName === "none") {
+    return "This community hasn't set up a card provider yet — connect one in Community Settings → Finance";
+  }
+  if (isBringYourOwnProvider(providerName)) {
+    const connection = await loadActiveProviderConnection(ctx, fund.communityId);
+    return connection
+      ? null
+      : `This community's ${providerName} account isn't connected — reconnect it in Community Settings → Finance`;
+  }
+  // Increase: the fund's own Account is the card's boundary, so no Account
+  // means no card that could be safely scoped to this fund.
+  return fund.increaseAccountId ? null : "This fund's bank account isn't ready yet";
+}
+
+/**
+ * Refuse a limit period the community's issuer cannot actually enforce.
+ *
+ * Privacy has no weekly window, and the adapter would quietly widen "$100 per
+ * week" to "$100 per MONTH" — strictly tighter for the money, but the card
+ * screen still reads "/ week" with a Monday reset, so the cardholder finds out
+ * by being declined for the rest of the month. Refusing here, where the
+ * finance admin is choosing, is the version of this that doesn't lie.
+ */
+function assertLimitPeriodSupported(
+  providerName: Awaited<ReturnType<typeof resolveCardProviderName>>,
+  limitPeriod: CardLimitPeriod | undefined,
+): void {
+  if (limitPeriod !== "week") return;
+  if (supportsWeeklyLimits(providerName)) return;
+  throw new Error(
+    `${providerName} has no weekly spending limit — choose "Per month" or "Per transaction"`,
+  );
+}
+
+/**
+ * Refuse an UNCAPPED card at an issuer with no hard fund isolation.
+ *
+ * At Increase "no limit" means "up to this fund's balance", because the fund
+ * owns the Account the card draws from and the bank enforces that. At Privacy
+ * every card draws the community's single pooled funding source, so the same
+ * choice means "up to the church's entire account" — another group's giving
+ * included.
+ *
+ * BE PRECISE ABOUT WHAT THIS BUYS, because it is easy to over-read: a provider
+ * spend limit is per CARD and per PERIOD. It is not an aggregate fund-balance
+ * control, and it cannot be — Privacy has no notion of our funds. A `charge`
+ * limit caps each purchase but not their number; a `month` limit can exceed
+ * the fund's balance, and several cards can each carry one. What requiring it
+ * does is turn unbounded exposure into a bounded, deliberately chosen number,
+ * which is the strongest guarantee available at a pooled-account issuer.
+ *
+ * The real control — authorizing against the fund's own balance — is ADR-033
+ * Phase 2, and `capabilities.hardFundIsolation: false` is the flag that says
+ * so out loud. Until it lands, over-spend against a fund is an app-side
+ * reconciliation concern (see recordCardSettlement's skipped account
+ * cross-check), not something this gate should be read as preventing.
+ */
+function assertLimitRequired(
+  providerName: Awaited<ReturnType<typeof resolveCardProviderName>>,
+  spendLimitCents: number | undefined,
+  limitPeriod: CardLimitPeriod | undefined,
+): void {
+  if (!requiresSpendLimit(providerName)) return;
+  if (spendLimitCents !== undefined && limitPeriod !== undefined) return;
+  throw new Error(
+    `Cards at ${providerName} draw on this community's whole account, not a per-fund one — set a spending limit, because it's the only cap on what this card can reach`,
+  );
+}
+
 export const createFundCard = mutation({
   args: {
     token: v.string(),
@@ -217,9 +311,29 @@ export const createFundCard = mutation({
     if (fund.status !== "active") {
       throw new Error("This fund isn't active — cards can't be issued");
     }
-    if (!fund.increaseAccountId) {
-      throw new Error("This fund's bank account isn't ready yet");
+
+    // "Is this community ready to issue a card?" has TWO answers since
+    // ADR-033, and they are not variations of one check:
+    //
+    //   increase — the fund needs its own Increase Account, because the card
+    //              is bound to it and the bank enforces the fund boundary.
+    //   BYO      — there is no per-fund account to need; what must exist is a
+    //              live connection to the church's own issuer.
+    //
+    // The old single `!fund.increaseAccountId` gate is why a BYO community
+    // could not issue a card at all: it asked for an artifact their model
+    // never produces.
+    const providerName = await resolveCardProviderName(ctx, fund.communityId);
+    const readiness = await describeCardIssuingReadiness(
+      ctx,
+      fund,
+      providerName,
+    );
+    if (readiness) {
+      throw new Error(readiness);
     }
+    assertLimitPeriodSupported(providerName, args.limitPeriod);
+    assertLimitRequired(providerName, args.spendLimitCents, args.limitPeriod);
 
     // The holder must ACTUALLY hold cardholder+ on the fund's own fundRoles
     // grant — deliberately not `requireFundRole`'s community-admin override,
@@ -251,6 +365,14 @@ export const createFundCard = mutation({
       fundId: args.fundId,
       holderUserId: args.holderUserId,
       name: args.name,
+      // Stamped NOW, not at `recordCardProvisioned`. Between this insert and
+      // the scheduled provisioning action landing, the row is a card that is
+      // about to exist at a named issuer — and `disconnectCardProvider`'s
+      // "are any cards still live?" guard has to see it, or an admin can
+      // disconnect in that window and the action still mints a real card with
+      // the credential it already loaded. `recordCardProvisioned` writes the
+      // same value again; this just makes it true earlier.
+      provider: providerName,
       status: "pending",
       spendLimitCents: args.spendLimitCents,
       limitPeriod: args.limitPeriod,
@@ -298,13 +420,20 @@ export const getCardForProvisioning = internalQuery({
       .query("communityFinance")
       .withIndex("by_community", (q) => q.eq("communityId", fund.communityId))
       .first();
+    // Resolved here, in the query, because `provisionCard` is an ACTION and
+    // has no `ctx.db` to resolve any of this with (ADR-033).
+    const providerName = await resolveCardProviderName(ctx, fund.communityId);
     return {
       card,
       fund,
       onboardingStatus: finance?.onboardingStatus ?? null,
-      // Resolved here, in the query, because `provisionCard` is an ACTION and
-      // has no `ctx.db` to resolve it with (ADR-033).
-      providerName: await resolveCardProviderName(ctx, fund.communityId),
+      providerName,
+      /** Null when ready; otherwise the sentence explaining what's missing. */
+      readiness: await describeCardIssuingReadiness(ctx, fund, providerName),
+      /** Encrypted; the resolver decrypts it into the adapter. Null for Increase. */
+      connection: isBringYourOwnProvider(providerName)
+        ? await loadActiveProviderConnection(ctx, fund.communityId)
+        : null,
     };
   },
 });
@@ -348,6 +477,40 @@ export const recordCardProvisionRefused = internalMutation({
  * ADR-033 Phase 1 moves those readers over. A BYOC card writes only the pair,
  * which is why those guards must move rather than be duplicated.
  */
+/**
+ * The adapter's normalized state -> the word stored in `cards.status`.
+ *
+ * `cards.status` is read by the mobile UI (badge copy, whether a freeze button
+ * appears) and by this module's own guards, and its vocabulary is Increase's:
+ * `active` | `disabled` | `canceled` | `pending` | `failed`. Writing the
+ * PROVIDER's raw word instead would put "OPEN"/"PAUSED"/"CLOSED" in there for
+ * Privacy — a card that renders no badge, offers no freeze, and is refused by
+ * `setCardLimit`'s own status check. That is a card nobody can control.
+ *
+ * Lossless for Increase, whose raw enum round-trips through
+ * `increaseStatusToCardState` to exactly these five words — so this changes
+ * nothing for the cards in production today. It is the BYO adapters it exists
+ * for, and it is why `ProviderCard` carries a normalized `state` at all.
+ *
+ * TODO: when a finance migration next runs, rename these to the neutral
+ * vocabulary (`paused`/`closed`) and migrate the column — the mapping is here
+ * only because the stored words predate the adapter seam.
+ */
+function cardStateToStoredStatus(state: CardState): string {
+  switch (state) {
+    case "active":
+      return "active";
+    case "paused":
+      return "disabled";
+    case "closed":
+      return "canceled";
+    case "pending":
+      return "pending";
+    case "failed":
+      return "failed";
+  }
+}
+
 export const recordCardProvisioned = internalMutation({
   args: {
     cardId: v.id("cards"),
@@ -410,26 +573,25 @@ export const provisionCard = internalAction({
       );
       return;
     }
-    const { card, fund, onboardingStatus, providerName } = loaded;
+    const { card, fund, onboardingStatus, providerName, readiness, connection } =
+      loaded;
 
     // Re-check every gate createFundCard checked, immediately before the
     // provider call. createFundCard's checks ran in a DIFFERENT transaction,
-    // however long ago; a fund frozen (e.g. its group was archived) or a
-    // community knocked out of "live" in the gap would otherwise still get a
-    // live card at the bank — an app-side freeze that quietly issues spending
-    // power is worse than no freeze at all. Refuse loudly and audit; do not
-    // retry, because the state that changed is a deliberate one.
-    const accountId = fund.increaseAccountId;
-    const refusal = !accountId
-      ? "fund has no Increase Account"
-      : fund.status !== "active"
+    // however long ago; a fund frozen (e.g. its group was archived), a
+    // community knocked out of "live", or a card provider disconnected in the
+    // gap would otherwise still get a live card at the issuer — an app-side
+    // freeze that quietly issues spending power is worse than no freeze at
+    // all. Refuse loudly and audit; do not retry, because the state that
+    // changed is a deliberate one.
+    const refusal =
+      readiness ??
+      (fund.status !== "active"
         ? `fund status is "${fund.status}"`
         : onboardingStatus !== "live"
           ? `community onboarding status is "${onboardingStatus ?? "missing"}"`
-          : null;
-    // `!accountId` is re-tested only so TypeScript can narrow it below —
-    // the `refusal` chain above already covers that case.
-    if (refusal !== null || !accountId) {
+          : null);
+    if (refusal !== null) {
       console.error(
         `[finance] provisionCard: refusing to provision card ${args.cardId} — ${refusal}`,
       );
@@ -444,9 +606,13 @@ export const provisionCard = internalAction({
       // ADR-033: the card module talks to an ADAPTER, never to a named
       // provider client. Resolution happened in getCardForProvisioning (an
       // action has no ctx.db); this only turns the name into the adapter.
-      const provider = await getCardProviderByName(providerName);
+      const provider = await getCardProviderByName(providerName, connection);
       const providerCard = await provider.createCard({
-        fundAccountRef: accountId,
+        // Empty string for a provider with no per-fund account — the adapter
+        // ignores it, which is `capabilities.hardFundIsolation: false` made
+        // literal. `readiness` above already proved this is non-empty for the
+        // providers that DO bind a card to an account.
+        fundAccountRef: fund.increaseAccountId ?? "",
         description: `${fund.name} — ${card.name ?? "Card"}`,
         idempotencyKey: `finance:card:${args.cardId}`,
         // The spend limit the finance_admin picked. Sent AT CREATION so there
@@ -459,7 +625,7 @@ export const provisionCard = internalAction({
         provider: provider.name,
         providerCardId: providerCard.providerCardId,
         last4: providerCard.last4,
-        status: providerCard.providerStatus,
+        status: cardStateToStoredStatus(providerCard.state),
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -519,15 +685,13 @@ export const setCardFrozen = mutation({
       );
     }
 
-    // TODO(ADR-033 Phase 1): move this readiness guard onto `providerCardId`.
-    // `recordCardProvisioned` writes `increaseCardId` only when the provider
-    // IS Increase, so a BYOC card would read as "never provisioned" here and
-    // could not be frozen, canceled, or re-limited — the kill switch failing
-    // closed on exactly the path ADR-033 exists to open. Unreachable today
-    // (`createFundCard` requires `fund.increaseAccountId`, and
-    // `getCardProviderByName` throws for every non-Increase name), which is
-    // why it is deferred rather than fixed here — see this module's header.
-    if (!card.increaseCardId) {
+    // Provider-NEUTRAL readiness. `recordCardProvisioned` writes
+    // `increaseCardId` only when the provider is Increase, so asking for it
+    // alone would read a perfectly live Privacy card as "never provisioned" —
+    // the kill switch failing closed on exactly the path ADR-033 opens, and no
+    // longer hypothetical now that `createFundCard` issues BYO cards. Same
+    // `providerCardId ?? increaseCardId` order the action side already uses.
+    if (!card.providerCardId && !card.increaseCardId) {
       throw new Error("This card hasn't finished provisioning yet");
     }
 
@@ -575,15 +739,13 @@ export const cancelCard = mutation({
     }
     await requireFundRole(ctx, fund._id, userId, "finance_admin");
 
-    // TODO(ADR-033 Phase 1): move this readiness guard onto `providerCardId`.
-    // `recordCardProvisioned` writes `increaseCardId` only when the provider
-    // IS Increase, so a BYOC card would read as "never provisioned" here and
-    // could not be frozen, canceled, or re-limited — the kill switch failing
-    // closed on exactly the path ADR-033 exists to open. Unreachable today
-    // (`createFundCard` requires `fund.increaseAccountId`, and
-    // `getCardProviderByName` throws for every non-Increase name), which is
-    // why it is deferred rather than fixed here — see this module's header.
-    if (!card.increaseCardId) {
+    // Provider-NEUTRAL readiness. `recordCardProvisioned` writes
+    // `increaseCardId` only when the provider is Increase, so asking for it
+    // alone would read a perfectly live Privacy card as "never provisioned" —
+    // the kill switch failing closed on exactly the path ADR-033 opens, and no
+    // longer hypothetical now that `createFundCard` issues BYO cards. Same
+    // `providerCardId ?? increaseCardId` order the action side already uses.
+    if (!card.providerCardId && !card.increaseCardId) {
       throw new Error("This card hasn't finished provisioning yet");
     }
 
@@ -625,9 +787,16 @@ export const getCardInternal = internalQuery({
     if (!card) return null;
     const fund = await ctx.db.get(card.fundId);
     if (!fund) return null;
+    const providerName = await resolveCardProviderName(ctx, fund.communityId);
     return {
       card,
-      providerName: await resolveCardProviderName(ctx, fund.communityId),
+      providerName,
+      // Loaded here, alongside the name, for the same reason the name is:
+      // the action has no `ctx.db`. Still ENCRYPTED — the resolver decrypts it
+      // into the adapter and nothing in this module ever sees the key.
+      connection: isBringYourOwnProvider(providerName)
+        ? await loadActiveProviderConnection(ctx, fund.communityId)
+        : null,
     };
   },
 });
@@ -668,11 +837,14 @@ export const applyCardStatus = internalAction({
       return;
     }
 
-    const provider = await getCardProviderByName(loaded.providerName);
+    const provider = await getCardProviderByName(
+      loaded.providerName,
+      loaded.connection,
+    );
     const result = await provider.setCardState(providerCardId, args.state);
     await ctx.runMutation(internal.functions.finance.cards.recordCardStatus, {
       cardId: args.cardId,
-      status: result.providerStatus,
+      status: cardStateToStoredStatus(result.state),
     });
   },
 });
@@ -715,6 +887,16 @@ export const setCardLimit = mutation({
     await requireFundRole(ctx, fund._id, userId, "finance_admin");
 
     validateCardLimit(args.spendLimitCents, args.limitPeriod);
+    const limitProviderName = await resolveCardProviderName(
+      ctx,
+      fund.communityId,
+    );
+    assertLimitPeriodSupported(limitProviderName, args.limitPeriod);
+    assertLimitRequired(
+      limitProviderName,
+      args.spendLimitCents,
+      args.limitPeriod,
+    );
 
     // The same fund/card readiness gates `createFundCard` applies. Changing a
     // limit is mostly a spending-power GRANT (that's why it's finance_admin
@@ -726,15 +908,13 @@ export const setCardLimit = mutation({
     if (fund.status !== "active") {
       throw new Error("This fund isn't active — card limits can't be changed");
     }
-    // TODO(ADR-033 Phase 1): move this readiness guard onto `providerCardId`.
-    // `recordCardProvisioned` writes `increaseCardId` only when the provider
-    // IS Increase, so a BYOC card would read as "never provisioned" here and
-    // could not be frozen, canceled, or re-limited — the kill switch failing
-    // closed on exactly the path ADR-033 exists to open. Unreachable today
-    // (`createFundCard` requires `fund.increaseAccountId`, and
-    // `getCardProviderByName` throws for every non-Increase name), which is
-    // why it is deferred rather than fixed here — see this module's header.
-    if (!card.increaseCardId) {
+    // Provider-NEUTRAL readiness. `recordCardProvisioned` writes
+    // `increaseCardId` only when the provider is Increase, so asking for it
+    // alone would read a perfectly live Privacy card as "never provisioned" —
+    // the kill switch failing closed on exactly the path ADR-033 opens, and no
+    // longer hypothetical now that `createFundCard` issues BYO cards. Same
+    // `providerCardId ?? increaseCardId` order the action side already uses.
+    if (!card.providerCardId && !card.increaseCardId) {
       throw new Error("This card hasn't finished provisioning yet");
     }
     // "canceled" is irreversible and "failed"/"pending" have no card at the
@@ -882,7 +1062,10 @@ export const applyCardLimit = internalAction({
     // the world in opposite states — see recordCardLimitFailed. Mirrors
     // provisionCard's catch-and-record shape; a limit change that silently
     // vanished is the one outcome nobody can detect from the app.
-    const provider = await getCardProviderByName(loaded.providerName);
+    const provider = await getCardProviderByName(
+      loaded.providerName,
+      loaded.connection,
+    );
     try {
       await provider.setSpendLimit(
         providerCardId,

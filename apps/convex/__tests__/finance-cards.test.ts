@@ -1679,9 +1679,10 @@ describe("recordCardSettlement", () => {
     const { fixture, cardId } = await seedSettledCard(t);
 
     const args = {
-      increaseCardId: "increase_card_settlement_test",
-      increaseTransactionId: "txn_settlement_1",
-      accountId: "increase_account_test",
+      provider: "increase",
+      providerCardId: "increase_card_settlement_test",
+      providerTxnId: "txn_settlement_1",
+      accountRef: "increase_account_test",
       amountCents: 3500,
       merchantDescription: "Local Grocery Co",
     };
@@ -1732,9 +1733,10 @@ describe("recordCardSettlement", () => {
     const { fixture, cardId } = await seedSettledCard(t);
 
     await t.mutation(internal.functions.finance.webhooks.recordCardSettlement, {
-      increaseCardId: "increase_card_settlement_test",
-      increaseTransactionId: "txn_mismatch",
-      accountId: "some_other_increase_account",
+      provider: "increase",
+      providerCardId: "increase_card_settlement_test",
+      providerTxnId: "txn_mismatch",
+      accountRef: "some_other_increase_account",
       amountCents: 1000,
       merchantDescription: "Suspicious Merchant",
     });
@@ -1774,9 +1776,10 @@ describe("recordCardSettlement", () => {
     });
 
     await t.mutation(internal.functions.finance.webhooks.recordCardSettlement, {
-      increaseCardId: "increase_card_settlement_test",
-      increaseTransactionId: "txn_settlement_frozen",
-      accountId: "increase_account_test",
+      provider: "increase",
+      providerCardId: "increase_card_settlement_test",
+      providerTxnId: "txn_settlement_frozen",
+      accountRef: "increase_account_test",
       amountCents: 2200,
       merchantDescription: "Frozen Fund Grocery",
     });
@@ -1835,9 +1838,10 @@ describe("recordCardSettlement", () => {
       amountCents: number,
     ) {
       await t.mutation(internal.functions.finance.webhooks.recordCardSettlement, {
-        increaseCardId: "increase_card_settlement_test",
-        increaseTransactionId: transactionId,
-        accountId: "increase_account_test",
+        provider: "increase",
+        providerCardId: "increase_card_settlement_test",
+        providerTxnId: transactionId,
+        accountRef: "increase_account_test",
         amountCents,
         merchantDescription: "Local Grocery Co",
       });
@@ -1946,9 +1950,10 @@ describe("recordCardSettlement", () => {
       // The money path itself must not care.
       await expect(
         t.mutation(internal.functions.finance.webhooks.recordCardSettlement, {
-          increaseCardId: "increase_card_settlement_test",
-          increaseTransactionId: "txn_audit_explodes",
-          accountId: "increase_account_test",
+          provider: "increase",
+          providerCardId: "increase_card_settlement_test",
+          providerTxnId: "txn_audit_explodes",
+          accountRef: "increase_account_test",
           amountCents: 9_999,
           merchantDescription: "Local Grocery Co",
         }),
@@ -2033,9 +2038,10 @@ describe("recordCardSettlement", () => {
 
     await expect(
       t.mutation(internal.functions.finance.webhooks.recordCardSettlement, {
-        increaseCardId: "increase_card_that_does_not_exist",
-        increaseTransactionId: "txn_orphan",
-        accountId: "whatever",
+        provider: "increase",
+        providerCardId: "increase_card_that_does_not_exist",
+        providerTxnId: "txn_orphan",
+        accountRef: "whatever",
         amountCents: 500,
         merchantDescription: "Orphan Merchant",
       }),
