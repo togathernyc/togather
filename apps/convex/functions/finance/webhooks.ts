@@ -30,7 +30,10 @@ import { internalMutation, internalQuery } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { ActionCtx } from "../../_generated/server";
 import { logFinanceAudit } from "../../lib/finance/audit";
-import { cardLimitWindowStart } from "../../lib/finance/cardPolicy";
+// Increase's own window math, from the Increase adapter — this whole module
+// IS the Increase webhook handler, so the Increase-specific import is
+// honest here rather than a leak (ADR-033).
+import { cardLimitWindowStart } from "../../lib/finance/cardProviders/increase";
 import { postLedgerEntry } from "../../lib/finance/ledger";
 import { now } from "../../lib/utils";
 import {

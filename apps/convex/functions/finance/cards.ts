@@ -1,35 +1,56 @@
 /**
- * Group-fund virtual cards (ADR-032 §3 Phase 3).
+ * Group-fund virtual cards (ADR-032 §3 Phase 3; provider-neutral per ADR-033).
  *
- * A card is an Increase virtual card bound to a fund's Increase Account and
- * assigned to one holder (a member who holds `cardholder`+ on the fund). The
- * bank enforces spend segregation at the account level (a card can never
- * overdraw its fund or touch another fund's balance), so this module is
- * attribution + lifecycle control, not an authorization decisioner:
+ * A card is a virtual card bound to a fund's money at the community's card
+ * PROVIDER, and assigned to one holder (a member who holds `cardholder`+ on
+ * the fund). Which provider that is, is resolved once per action through
+ * `getCardProvider` (lib/finance/cardProviders/) — this module never names
+ * one. Increase, today's only adapter, enforces spend segregation at the
+ * account level (a card can never overdraw its fund or touch another fund's
+ * balance), which is why this module is attribution + lifecycle control and
+ * not an authorization decisioner. A provider whose
+ * `capabilities.hardFundIsolation` is false would need that guarantee
+ * rebuilt here; none exists yet.
+ *
+ * STATUS VOCABULARY (ADR-033, deliberate). The adapter speaks a normalized
+ * `CardState` — "pending" | "active" | "paused" | "closed" | "failed" — and
+ * every provider maps onto it. `cards.status` in the DATABASE, however, still
+ * stores the legacy Increase strings ("active" / "disabled" / "canceled"),
+ * because mobile's `CardStatus` union
+ * (apps/mobile/features/finance/leader/types.ts) is pinned to them and every
+ * card row in production already holds them. Changing the stored vocabulary
+ * means a data migration plus a mobile release, which is a bigger and
+ * riskier change than the seam itself needs — so the adapter returns BOTH
+ * `state` (normalized) and `providerStatus` (verbatim), and this module
+ * persists the latter. ADR-033 Phase 1 migrates the column. New code should
+ * read `ProviderCard.state`; nothing should add a new consumer of the raw
+ * string.
+ *
+ * The lifecycle surface:
  *
  * - `listFundCards` / `getCardDetail` — read the fund's card roster and a
  *   single card's recent activity (its `card_charge` expenses).
  * - `createFundCard` — finance_admin issues a card to a cardholder+ member.
  *   Inserts a "pending" row synchronously, then schedules `provisionCard`
- *   (an internalAction — Increase is called outside the mutation, same
+ *   (an internalAction — the provider is called outside the mutation, same
  *   pattern as onboarding.ts's `provisionProviders`) to actually create the
- *   card at Increase and record the result.
+ *   card at the provider and record the result.
  * - `setCardLimit` — finance_admin changes (or removes) a live card's limit.
  * - `setCardFrozen` / `cancelCard` — lifecycle control. Both patch the local
  *   row via a scheduled internalAction + internalMutation pair (same
  *   provider-write-then-record shape as `createFundCard`), so a card's
- *   `status` only ever reflects what Increase actually confirmed, never an
- *   optimistic guess.
+ *   `status` only ever reflects what the provider actually confirmed, never
+ *   an optimistic guess.
  *
- * `spendLimitCents` / `limitPeriod` are ENFORCED BY THE BANK, not advisory:
- * they're translated (lib/finance/cardPolicy.ts) into Increase's
- * `authorization_controls.usage.multi_use.spending_limits` and applied at
- * card creation and on every limit change, so Increase declines an
- * authorization that would breach them without ever calling us. Our stored
- * copy is a mirror for display; the bank's copy is the control. Everything
- * beyond an amount-per-interval cap (merchant-category rules, per-swipe
- * custom logic) would still need Increase's real-time authorization webhook
- * and remains out of scope — see ARCHITECTURE.md's Known Seams.
+ * `spendLimitCents` / `limitPeriod` are ENFORCED BY THE PROVIDER, not
+ * advisory: the adapter translates them into the provider's own interval
+ * vocabulary (for Increase, `authorization_controls.usage.multi_use.spending_limits`)
+ * and applies them at card creation and on every limit change, so an
+ * authorization that would breach them is declined without ever calling us.
+ * Our stored copy is a mirror for display; the provider's copy is the
+ * control. Everything beyond an amount-per-interval cap (merchant-category
+ * rules, per-swipe custom logic) would still need a real-time authorization
+ * webhook and remains out of scope — see ARCHITECTURE.md's Known Seams.
  *
  * Card-settlement transaction sync (turning a card swipe into a `card_charge`
  * expense) lives in functions/finance/webhooks.ts's `transaction.created`
@@ -51,10 +72,14 @@ import { now, getDisplayName, getMediaUrl } from "../../lib/utils";
 import { requireGroupGivingEnabled } from "../../lib/finance/flag";
 import { logFinanceAudit } from "../../lib/finance/audit";
 import {
-  LIMIT_PERIOD_TO_INCREASE_INTERVAL,
   validateCardLimit,
   type CardLimitPeriod,
 } from "../../lib/finance/cardPolicy";
+import {
+  getCardProviderByName,
+  resolveCardProviderName,
+} from "../../lib/finance/cardProviders";
+import type { NormalizedLimit } from "../../lib/finance/cardProviders/types";
 import {
   requireFundRole,
   requireFundRoleOrGroupLeader,
@@ -68,19 +93,17 @@ const limitPeriodValidator = v.union(
 );
 
 /**
- * Our stored limit pair -> the provider shape `lib/finance/increase.ts`
- * sends. `null` means "no limit", which Increase must be told explicitly
- * (see `buildAuthorizationControls`), so this never returns `undefined`.
+ * Our stored limit pair -> the adapter's `NormalizedLimit` (ADR-033). `null`
+ * means "no limit", which every provider must be told EXPLICITLY (Increase
+ * replaces the whole controls object on PATCH — see `buildAuthorizationControls`),
+ * so this never returns `undefined`.
  */
-function toIncreaseSpendingLimit(
+function toNormalizedLimit(
   spendLimitCents: number | undefined,
   limitPeriod: CardLimitPeriod | undefined,
-) {
+): NormalizedLimit | null {
   if (spendLimitCents === undefined || limitPeriod === undefined) return null;
-  return {
-    interval: LIMIT_PERIOD_TO_INCREASE_INTERVAL[limitPeriod],
-    settlementAmountCents: spendLimitCents,
-  };
+  return { limitCents: spendLimitCents, period: limitPeriod };
 }
 
 /** Find a user's currently-active (non-revoked) fundRoles row, if any. */
@@ -275,7 +298,14 @@ export const getCardForProvisioning = internalQuery({
       .query("communityFinance")
       .withIndex("by_community", (q) => q.eq("communityId", fund.communityId))
       .first();
-    return { card, fund, onboardingStatus: finance?.onboardingStatus ?? null };
+    return {
+      card,
+      fund,
+      onboardingStatus: finance?.onboardingStatus ?? null,
+      // Resolved here, in the query, because `provisionCard` is an ACTION and
+      // has no `ctx.db` to resolve it with (ADR-033).
+      providerName: await resolveCardProviderName(ctx, fund.communityId),
+    };
   },
 });
 
@@ -304,19 +334,42 @@ export const recordCardProvisionRefused = internalMutation({
   },
 });
 
+/**
+ * Record a successfully provisioned card.
+ *
+ * `status` is the provider's OWN status string, not our normalized
+ * `CardState` — see this module's header on the status vocabulary (ADR-033).
+ *
+ * Writes the provider-neutral pair (`provider` / `providerCardId`) AND, for
+ * Increase only, the legacy `increaseCardId`. The legacy column is still the
+ * lookup key for the live `transaction.created` settlement webhook
+ * (`funds.by_increaseAccountId` / `cards.by_increaseCardId` in webhooks.ts)
+ * and for every readiness guard in this file, so it keeps being written until
+ * ADR-033 Phase 1 moves those readers over. A BYOC card writes only the pair,
+ * which is why those guards must move rather than be duplicated.
+ */
 export const recordCardProvisioned = internalMutation({
   args: {
     cardId: v.id("cards"),
-    increaseCardId: v.string(),
-    last4: v.string(),
+    provider: v.string(),
+    providerCardId: v.string(),
+    /** Optional: not every issuer returns the PAN's last 4 at creation time. */
+    last4: v.optional(v.string()),
     status: v.string(),
   },
   handler: async (ctx, args) => {
     const card = await ctx.db.get(args.cardId);
     if (!card) return; // deleted mid-provisioning — nothing to record
     await ctx.db.patch(args.cardId, {
-      increaseCardId: args.increaseCardId,
-      last4: args.last4,
+      provider: args.provider,
+      providerCardId: args.providerCardId,
+      ...(args.provider === "increase"
+        ? { increaseCardId: args.providerCardId }
+        : {}),
+      // Left ABSENT rather than written as "" when the provider didn't give
+      // one — the UI renders `last4 ?? null`, and an empty string would show
+      // as "Groceries •••• " with nothing after it.
+      ...(args.last4 ? { last4: args.last4 } : {}),
       status: args.status,
       updatedAt: now(),
     });
@@ -357,7 +410,7 @@ export const provisionCard = internalAction({
       );
       return;
     }
-    const { card, fund, onboardingStatus } = loaded;
+    const { card, fund, onboardingStatus, providerName } = loaded;
 
     // Re-check every gate createFundCard checked, immediately before the
     // provider call. createFundCard's checks ran in a DIFFERENT transaction,
@@ -388,21 +441,25 @@ export const provisionCard = internalAction({
     }
 
     try {
-      const { createCard } = await import("../../lib/finance/increase");
-      const increaseCard = await createCard(
-        accountId,
-        `${fund.name} — ${card.name ?? "Card"}`,
-        `finance:card:${args.cardId}`,
-        // The spend limit the finance_admin picked, translated into
-        // Increase's own interval vocabulary. Sent AT CREATION so there is
-        // never a window where the card is live and uncapped.
-        toIncreaseSpendingLimit(card.spendLimitCents, card.limitPeriod),
-      );
+      // ADR-033: the card module talks to an ADAPTER, never to a named
+      // provider client. Resolution happened in getCardForProvisioning (an
+      // action has no ctx.db); this only turns the name into the adapter.
+      const provider = await getCardProviderByName(providerName);
+      const providerCard = await provider.createCard({
+        fundAccountRef: accountId,
+        description: `${fund.name} — ${card.name ?? "Card"}`,
+        idempotencyKey: `finance:card:${args.cardId}`,
+        // The spend limit the finance_admin picked. Sent AT CREATION so there
+        // is never a window where the card is live and uncapped; the adapter
+        // translates the period into the provider's own interval vocabulary.
+        limit: toNormalizedLimit(card.spendLimitCents, card.limitPeriod),
+      });
       await ctx.runMutation(internal.functions.finance.cards.recordCardProvisioned, {
         cardId: args.cardId,
-        increaseCardId: increaseCard.id,
-        last4: increaseCard.last4,
-        status: increaseCard.status,
+        provider: provider.name,
+        providerCardId: providerCard.providerCardId,
+        last4: providerCard.last4,
+        status: providerCard.providerStatus,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -477,9 +534,13 @@ export const setCardFrozen = mutation({
     await ctx.scheduler.runAfter(
       0,
       internal.functions.finance.cards.applyCardStatus,
-      { cardId: args.cardId, status: args.frozen ? "disabled" : "active" },
+      { cardId: args.cardId, state: args.frozen ? "paused" : "active" },
     );
 
+    // The RETURN stays in the legacy Increase vocabulary ("disabled") that
+    // mobile's `CardStatus` union is pinned to — see the status-vocabulary
+    // note in this module's header. Only the internal action speaks
+    // normalized states.
     return { status: args.frozen ? "disabled" : "active" };
   },
 });
@@ -521,9 +582,11 @@ export const cancelCard = mutation({
     await ctx.scheduler.runAfter(
       0,
       internal.functions.finance.cards.applyCardStatus,
-      { cardId: args.cardId, status: "canceled" },
+      { cardId: args.cardId, state: "closed" },
     );
 
+    // Legacy vocabulary on the wire, normalized state internally — same
+    // split as setCardFrozen.
     return { status: "canceled" as const };
   },
 });
@@ -534,10 +597,22 @@ export const cancelCard = mutation({
 // Increase actually confirmed.
 // ============================================================================
 
+/**
+ * A card plus the provider its fund's community is on — the pair every card
+ * ACTION needs, fetched together because an action has no `ctx.db` of its own
+ * to resolve the provider with (ADR-033).
+ */
 export const getCardInternal = internalQuery({
   args: { cardId: v.id("cards") },
   handler: async (ctx, args) => {
-    return await ctx.db.get(args.cardId);
+    const card = await ctx.db.get(args.cardId);
+    if (!card) return null;
+    const fund = await ctx.db.get(card.fundId);
+    if (!fund) return null;
+    return {
+      card,
+      providerName: await resolveCardProviderName(ctx, fund.communityId),
+    };
   },
 });
 
@@ -553,24 +628,35 @@ export const recordCardStatus = internalMutation({
 export const applyCardStatus = internalAction({
   args: {
     cardId: v.id("cards"),
-    status: v.union(v.literal("active"), v.literal("disabled"), v.literal("canceled")),
+    /**
+     * The NORMALIZED state to move to (ADR-033's `CardStateRequest`), not a
+     * provider status string — "paused"/"closed", never "disabled"/"canceled".
+     * The adapter owns that translation.
+     */
+    state: v.union(v.literal("active"), v.literal("paused"), v.literal("closed")),
   },
   handler: async (ctx, args) => {
-    const card = await ctx.runQuery(internal.functions.finance.cards.getCardInternal, {
-      cardId: args.cardId,
-    });
-    if (!card?.increaseCardId) {
+    const loaded = await ctx.runQuery(
+      internal.functions.finance.cards.getCardInternal,
+      { cardId: args.cardId },
+    );
+    // `providerCardId ?? increaseCardId`: cards provisioned before ADR-033
+    // have only the legacy column, and a freeze must never be a no-op just
+    // because a card predates the adapter.
+    const providerCardId =
+      loaded?.card.providerCardId ?? loaded?.card.increaseCardId;
+    if (!loaded || !providerCardId) {
       console.error(
-        `[finance] applyCardStatus: card ${args.cardId} has no increaseCardId — cannot update status at Increase`,
+        `[finance] applyCardStatus: card ${args.cardId} has no provider card id — cannot update its status at the provider`,
       );
       return;
     }
 
-    const { updateCardStatus } = await import("../../lib/finance/increase");
-    const result = await updateCardStatus(card.increaseCardId, args.status);
+    const provider = await getCardProviderByName(loaded.providerName);
+    const result = await provider.setCardState(providerCardId, args.state);
     await ctx.runMutation(internal.functions.finance.cards.recordCardStatus, {
       cardId: args.cardId,
-      status: result.status,
+      status: result.providerStatus,
     });
   },
 });
@@ -753,12 +839,17 @@ export const applyCardLimit = internalAction({
     actorUserId: v.optional(v.id("users")),
   },
   handler: async (ctx, args) => {
-    const card = await ctx.runQuery(internal.functions.finance.cards.getCardInternal, {
-      cardId: args.cardId,
-    });
-    if (!card?.increaseCardId) {
+    const loaded = await ctx.runQuery(
+      internal.functions.finance.cards.getCardInternal,
+      { cardId: args.cardId },
+    );
+    // Legacy fallback, same as applyCardStatus: pre-ADR-033 cards carry only
+    // `increaseCardId`.
+    const providerCardId =
+      loaded?.card.providerCardId ?? loaded?.card.increaseCardId;
+    if (!loaded || !providerCardId) {
       console.error(
-        `[finance] applyCardLimit: card ${args.cardId} has no increaseCardId — cannot update its limit at Increase`,
+        `[finance] applyCardLimit: card ${args.cardId} has no provider card id — cannot update its limit at the provider`,
       );
       return;
     }
@@ -767,16 +858,16 @@ export const applyCardLimit = internalAction({
     // the world in opposite states — see recordCardLimitFailed. Mirrors
     // provisionCard's catch-and-record shape; a limit change that silently
     // vanished is the one outcome nobody can detect from the app.
-    const { updateCardSpendingLimit } = await import("../../lib/finance/increase");
+    const provider = await getCardProviderByName(loaded.providerName);
     try {
-      await updateCardSpendingLimit(
-        card.increaseCardId,
-        toIncreaseSpendingLimit(args.spendLimitCents, args.limitPeriod),
+      await provider.setSpendLimit(
+        providerCardId,
+        toNormalizedLimit(args.spendLimitCents, args.limitPeriod),
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error(
-        `[finance] applyCardLimit: Increase refused the new limit for card ${args.cardId}: ${message}`,
+        `[finance] applyCardLimit: the provider refused the new limit for card ${args.cardId}: ${message}`,
       );
       await ctx.runMutation(internal.functions.finance.cards.recordCardLimitFailed, {
         cardId: args.cardId,
@@ -799,7 +890,7 @@ export const applyCardLimit = internalAction({
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error(
-        `[finance] applyCardLimit: Increase APPLIED the new limit for card ${args.cardId} but the mirror write failed — bank and app now disagree: ${message}`,
+        `[finance] applyCardLimit: the provider APPLIED the new limit for card ${args.cardId} but the mirror write failed — provider and app now disagree: ${message}`,
       );
       await ctx.runMutation(internal.functions.finance.cards.recordCardLimitFailed, {
         cardId: args.cardId,

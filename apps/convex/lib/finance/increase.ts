@@ -22,7 +22,19 @@
  * dev/staging (see docs/secrets.md).
  */
 
-import type { IncreaseSpendingLimitInterval } from "./cardPolicy";
+/**
+ * The subset of Increase's `spending_limits[].interval` enum we map onto.
+ * Increase also offers `all_time` and `per_day`; neither has a Togather
+ * period today, so they're deliberately absent rather than unreachable.
+ *
+ * Declared here rather than in a shared policy module because it is Increase
+ * vocabulary — the Togather-period -> interval MAP that consumes it lives in
+ * lib/finance/cardProviders/increase.ts, the Increase adapter (ADR-033).
+ */
+export type IncreaseSpendingLimitInterval =
+  | "per_transaction"
+  | "per_week"
+  | "per_month";
 
 // ============================================================================
 // Lazy env reads (mirrors lib/resend.ts's getResendClient pattern — reading

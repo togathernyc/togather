@@ -1,51 +1,30 @@
 /**
- * Virtual-card spend policy (ADR-032 §3) — pure, no `ctx`.
+ * Virtual-card spend policy — PROVIDER-NEUTRAL, pure, no `ctx` (ADR-032 §3,
+ * narrowed by ADR-033).
  *
  * Mirrors lib/finance/expensePolicy.ts: the rules that govern a card's spend
  * limit live in exactly one place so the mutation that accepts a limit, the
- * action that pushes it to the bank, and the settlement-side drift check
+ * action that pushes it to the provider, and the settlement-side drift check
  * can't disagree about what a limit means.
  *
- * A card's limit is REAL — Increase enforces it at authorization time via
- * `authorization_controls.usage.multi_use.spending_limits` (see
- * lib/finance/increase.ts's `createCard`). This module owns the translation
- * between Togather's period vocabulary ("week"/"month"/"charge") and
- * Increase's interval vocabulary, and the reset semantics that follow from
- * it — Increase's windows are UTC-anchored, not community-local, so the
- * window math here must stay UTC too or a drift check would disagree with
- * the bank about which charges fall inside a period.
+ * What's left here is what EVERY issuer inherits: the period vocabulary, and
+ * the rule that a limit is whole positive cents and not a slipped decimal.
+ * The Increase-specific pieces that used to live alongside it — the
+ * period -> `spending_limits[].interval` map and the UTC window math that
+ * follows from Increase's own reset rules — moved to
+ * lib/finance/cardProviders/increase.ts when ADR-033 introduced the adapter
+ * seam. A second issuer resets its windows differently, and a shared module
+ * that silently encodes one bank's calendar is a bug waiting for the second
+ * bank.
+ *
+ * A card's limit is REAL, not advisory: the provider enforces it at
+ * authorization time (Increase via
+ * `authorization_controls.usage.multi_use.spending_limits`), so our stored
+ * copy is a mirror and the provider's copy is the control.
  */
 
 /** The period a card's spend limit covers (mirrors `cards.limitPeriod`). */
 export type CardLimitPeriod = "week" | "month" | "charge";
-
-/**
- * The subset of Increase's `spending_limits[].interval` enum we map onto.
- * Increase also offers `all_time` and `per_day`; neither has a Togather
- * period today, so they're deliberately absent rather than unreachable.
- */
-export type IncreaseSpendingLimitInterval =
-  | "per_transaction"
-  | "per_week"
-  | "per_month";
-
-/**
- * Togather period -> Increase interval.
- *
- * Increase's documented reset semantics for these intervals (openapi.json,
- * `spending_limits[].interval`): `per_week` resets Mondays at midnight UTC,
- * `per_month` on the 1st at midnight UTC, `per_transaction` applies to each
- * individual authorization. The UI copy for each period must match these
- * exactly — that copy is a promise the bank keeps, not decoration.
- */
-export const LIMIT_PERIOD_TO_INCREASE_INTERVAL: Record<
-  CardLimitPeriod,
-  IncreaseSpendingLimitInterval
-> = {
-  week: "per_week",
-  month: "per_month",
-  charge: "per_transaction",
-};
 
 /**
  * A limit is integer cents, strictly positive, and capped well below any
@@ -87,35 +66,4 @@ export function validateCardLimit(
       `A spending limit can't be more than $${(MAX_CARD_LIMIT_CENTS / 100).toLocaleString("en-US")}`,
     );
   }
-}
-
-/**
- * Start (inclusive, ms) of the limit window a charge at `atMs` falls into,
- * or `null` for "charge" — a per-transaction limit has no window, it applies
- * to the single amount.
- *
- * UTC-anchored to match Increase (see LIMIT_PERIOD_TO_INCREASE_INTERVAL).
- * Used only by the settlement-side drift check in webhooks.ts, which asks
- * "did the bank let through more than this card's limit?" — a question that
- * only has a meaningful answer if we slice time the same way the bank does.
- */
-export function cardLimitWindowStart(
-  limitPeriod: CardLimitPeriod,
-  atMs: number,
-): number | null {
-  if (limitPeriod === "charge") return null;
-
-  const at = new Date(atMs);
-  if (limitPeriod === "month") {
-    return Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), 1);
-  }
-  // Week: back up to the most recent Monday. getUTCDay() is 0=Sunday, so
-  // Sunday is 6 days into the week, not 0.
-  const daysSinceMonday = (at.getUTCDay() + 6) % 7;
-  const midnight = Date.UTC(
-    at.getUTCFullYear(),
-    at.getUTCMonth(),
-    at.getUTCDate(),
-  );
-  return midnight - daysSinceMonday * 24 * 60 * 60 * 1000;
 }
