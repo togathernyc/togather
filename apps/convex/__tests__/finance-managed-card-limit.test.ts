@@ -124,7 +124,15 @@ describe("the formula", () => {
     // Above the derived cap it is clamped — `setCardLimit` refuses this
     // outright, and this is the second line of the same defence.
     expect(effectiveManagedLimitCents(40_000, 90_000)).toBe(40_000);
-    expect(effectiveManagedLimitCents(40_000, -5)).toBe(0);
+  });
+
+  test("a card with no headroom is capped at a cent, never at zero", () => {
+    // `spend_limit: 0` + FOREVER is the payload Privacy's adapter uses for "no
+    // limit". Sending the honest zero would hand an empty fund's card the one
+    // number that might mean unlimited.
+    expect(effectiveManagedLimitCents(0, undefined)).toBe(1);
+    expect(effectiveManagedLimitCents(40_000, 0)).toBe(1);
+    expect(effectiveManagedLimitCents(40_000, -5)).toBe(1);
   });
 });
 
@@ -669,6 +677,66 @@ describe("syncing the managed limit", () => {
     // detect from the app.
     const card = await t.run(async (ctx) => ctx.db.get(cardId));
     expect(card!.spendLimitCents).toBe(50_000);
+  });
+
+  test("a sync that lost a race refuses the mirror and forces a resync", async () => {
+    // Two runs with different targets can reach the provider in either order.
+    // The loser must not write a mirror it cannot vouch for — that is what
+    // would let the no-op check agree with itself while Privacy held the older
+    // number, with the hourly backstop reading the same stale mirror.
+    const t = convexTest(schema, modules);
+    const f = await seed(t);
+    await connect(t, f);
+    await seedLedger(t, f, [
+      { direction: "credit", kind: "donation", amountCents: 50_000 },
+    ]);
+    const cardId = await issueCard(t, f);
+
+    // A concurrent run already moved the mirror to 60,000.
+    await t.run(async (ctx) => {
+      await ctx.db.patch(cardId, { spendLimitCents: 60_000 });
+      for (const row of await ctx.db.system
+        .query("_scheduled_functions")
+        .collect()) {
+        if (row.state.kind === "pending") await ctx.scheduler.cancel(row._id);
+      }
+    });
+
+    await t.mutation(internal.functions.finance.cards.recordManagedCardLimit, {
+      cardId,
+      spendLimitCents: 50_000,
+      expectedPreviousLimitCents: 50_000,
+    });
+
+    const card = await t.run(async (ctx) => ctx.db.get(cardId));
+    expect(card!.spendLimitCents).toBe(60_000);
+    expect(await queuedSyncs(t)).toBe(1);
+  });
+
+  test("a forced sync pushes even when the mirror says there is nothing to do", async () => {
+    const t = convexTest(schema, modules);
+    const f = await seed(t);
+    await connect(t, f);
+    await seedLedger(t, f, [
+      { direction: "credit", kind: "donation", amountCents: 50_000 },
+    ]);
+    const cardId = await issueCard(t, f);
+
+    privacy.updatePrivacyCard.mockClear();
+    expect(
+      await t.action(internal.functions.finance.cards.syncManagedCardLimit, {
+        cardId,
+      }),
+    ).toEqual({ applied: false });
+    expect(privacy.updatePrivacyCard).not.toHaveBeenCalled();
+
+    expect(
+      await t.action(internal.functions.finance.cards.syncManagedCardLimit, {
+        cardId,
+        force: true,
+      }),
+    ).toEqual({ applied: true });
+    expect(lastPatchedLimit()).toBe(50_000);
   });
 
   test("an unprovisioned card is skipped, not errored", async () => {

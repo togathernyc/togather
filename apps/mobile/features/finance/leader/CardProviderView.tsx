@@ -138,7 +138,12 @@ export function CardProviderView({
     return (
       <View style={styles.loadingPad}>
         <Skeleton width="100%" height={120} borderRadius={24} />
-        <Skeleton width="100%" height={160} borderRadius={24} style={{ marginTop: 16 }} />
+        <Skeleton
+          width="100%"
+          height={160}
+          borderRadius={24}
+          style={{ marginTop: 16 }}
+        />
       </View>
     );
   }
@@ -153,6 +158,12 @@ export function CardProviderView({
 
   const isConnected = !!connection && connection.status !== "revoked";
   const label = connection ? BYO_PROVIDER_LABELS[connection.provider] : null;
+  // "error" is CONNECTED-BUT-BROKEN, not disconnected: the row still exists,
+  // and disconnecting is still refused while cards are open. Without a way back
+  // in, an admin whose key was revoked or rotated at the provider could neither
+  // reconnect nor close the cards the dead key is blocking. The backend accepts
+  // a same-provider reconnect for exactly this.
+  const needsReconnect = isConnected && connection?.status === "error";
 
   return (
     <View style={styles.container}>
@@ -165,7 +176,7 @@ export function CardProviderView({
             <View style={styles.section}>
               <WaInsetGroup
                 header="Card provider"
-                footer={`Cards for this community's group funds are issued at ${label.name}. Togather never stores your ${label.credential} in a form it can read back, and there's no way to reveal it here.`}
+                footer={`Cards for this community's group funds are issued at ${label.name}. Togather stores your ${label.credential} encrypted, uses it only to act on your account there, and never shows it again — not here, not anywhere in the app.`}
               >
                 <WaCell
                   icon="card-outline"
@@ -179,6 +190,15 @@ export function CardProviderView({
                   testID="card-provider-connected"
                 />
                 <ConnectionStatusRow connection={connection} />
+                {needsReconnect ? (
+                  <WaCell
+                    icon="key-outline"
+                    title="Enter a new key"
+                    description={`Togather's ${label.credential} for ${label.name} stopped working. Paste a fresh one to restore control of this community's cards.`}
+                    onPress={() => onOpenConnectSheet(connection.provider)}
+                    testID="card-provider-reconnect"
+                  />
+                ) : null}
                 {/* Dates as WA's in-card gray metadata line (WaCell's `footer`
                     variant, S3.6) rather than as two `value` rows: `value` and
                     `trailingAccessory` are mutually exclusive in WaCell, so a
@@ -262,8 +282,14 @@ export function CardProviderView({
           <View>
             {CONNECT_STEPS[connectingProvider].map((step, index) => (
               <View key={step} style={styles.stepRow}>
-                <Text style={[styles.stepNumber, { color: accent }]}>{index + 1}</Text>
-                <Text style={[styles.stepText, { color: colors.textSecondary }]}>{step}</Text>
+                <Text style={[styles.stepNumber, { color: accent }]}>
+                  {index + 1}
+                </Text>
+                <Text
+                  style={[styles.stepText, { color: colors.textSecondary }]}
+                >
+                  {step}
+                </Text>
               </View>
             ))}
 
@@ -326,7 +352,11 @@ export function CardProviderView({
  * destructive color: an admin can't fix "something's wrong", only "the key was
  * revoked at the provider".
  */
-function ConnectionStatusRow({ connection }: { connection: CardProviderConnection }) {
+function ConnectionStatusRow({
+  connection,
+}: {
+  connection: CardProviderConnection;
+}) {
   const { colors } = useTheme();
 
   if (connection.status === "error") {
@@ -335,7 +365,9 @@ function ConnectionStatusRow({ connection }: { connection: CardProviderConnectio
         icon="alert-circle-outline"
         iconColor={colors.error}
         title="Connection problem"
-        description={connection.lastError ?? "Togather couldn't reach your card provider."}
+        description={
+          connection.lastError ?? "Togather couldn't reach your card provider."
+        }
         descriptionColor={colors.error}
         trailingAccessory={<View />}
         testID="card-provider-status-error"

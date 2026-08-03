@@ -129,8 +129,25 @@ export function ledgerDerivedLimitCents(inputs: ManagedLimitInputs): number {
 }
 
 /**
+ * THE SMALLEST CAP WE WILL EVER SEND A PROVIDER, and the reason it is not zero.
+ *
+ * At Privacy, `spend_limit: 0` with `FOREVER` is the wire value `toPrivacyLimit`
+ * uses for "no limit at all" (privacy.ts flags that reading as an unverified
+ * assumption). A fund with no headroom — brand new, or one whose fees and
+ * refunds have eaten its credits — derives a cap of exactly 0, so sending the
+ * honest number would hand a pooled-account card the ONE payload that might
+ * mean unlimited, at the precise moment it should authorize nothing.
+ *
+ * One cent is unambiguous, and it is the safe side of the ambiguity: a card
+ * capped at $0.01 declines everything a card capped at $0.00 was meant to. The
+ * fund is over-authorized by a cent, which is not a number any merchant can
+ * charge and not a number worth trading for that risk.
+ */
+export const MIN_PROVIDER_LIMIT_CENTS = 1;
+
+/**
  * The number actually sent to the provider: the ledger-derived cap, optionally
- * pinned LOWER by a finance admin.
+ * pinned LOWER by a finance admin, and never below `MIN_PROVIDER_LIMIT_CENTS`.
  *
  * A manual cap can only ever tighten. Letting it raise would let an admin type
  * a number the fund does not have, which is the exact promise this whole
@@ -141,8 +158,11 @@ export function effectiveManagedLimitCents(
   derivedCents: number,
   manualCapCents: number | undefined,
 ): number {
-  if (manualCapCents === undefined) return derivedCents;
-  return Math.min(derivedCents, Math.max(0, manualCapCents));
+  const capped =
+    manualCapCents === undefined
+      ? derivedCents
+      : Math.min(derivedCents, Math.max(0, manualCapCents));
+  return Math.max(MIN_PROVIDER_LIMIT_CENTS, capped);
 }
 
 // ============================================================================

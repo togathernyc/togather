@@ -110,6 +110,7 @@ import type {
 import {
   effectiveManagedLimitCents,
   isManagedCard,
+  MIN_PROVIDER_LIMIT_CENTS,
   ledgerDerivedLimitCents,
   managedCardIsSyncable,
   managedManualCapCents,
@@ -156,7 +157,13 @@ function toCardLimit(
   card: Pick<Doc<"cards">, "spendLimitCents" | "limitPeriod" | "controls">,
 ): NormalizedLimit | null {
   if (isManagedCard(card)) {
-    return { limitCents: card.spendLimitCents ?? 0, period: "lifetime" };
+    // Never zero — see MIN_PROVIDER_LIMIT_CENTS. A managed row should always
+    // carry a mirror, but a missing one must not provision an UNCAPPED card at
+    // a pooled-account issuer.
+    return {
+      limitCents: Math.max(MIN_PROVIDER_LIMIT_CENTS, card.spendLimitCents ?? 0),
+      period: "lifetime",
+    };
   }
   return toNormalizedLimit(card.spendLimitCents, card.limitPeriod);
 }
@@ -1558,13 +1565,53 @@ export const getManagedCardSyncTarget = internalQuery({
   },
 });
 
-/** The provider took the new managed cap: patch the mirror and audit it. */
+/**
+ * The provider took the new managed cap: patch the mirror and audit it.
+ *
+ * `expectedPreviousLimitCents` is the mirror this run READ before it called the
+ * provider, and comparing it is what keeps two concurrent syncs from leaving
+ * the provider holding the older number while the mirror shows the newer one.
+ *
+ * Two ledger entries in separate transactions queue two runs with different
+ * targets. Nothing orders their provider calls, so the OLDER cap can land LAST
+ * — and if the newer run had already written the mirror, the no-op check in
+ * `syncManagedCardLimit` would agree with itself forever while the card sat
+ * over-authorized (the hourly backstop reads the same mirror, so it could not
+ * see it either).
+ *
+ * A mismatch here means exactly that: someone else wrote between our read and
+ * our write, so OUR provider call may have been the stale one. We refuse the
+ * mirror write — it would claim a number we cannot vouch for — and schedule a
+ * FORCED resync, which recomputes and pushes regardless of the mirror. Costs
+ * nothing in the ordinary case, where the mirror is untouched and this compares
+ * equal.
+ */
 export const recordManagedCardLimit = internalMutation({
-  args: { cardId: v.id("cards"), spendLimitCents: v.number() },
+  args: {
+    cardId: v.id("cards"),
+    spendLimitCents: v.number(),
+    expectedPreviousLimitCents: v.optional(v.union(v.number(), v.null())),
+  },
   handler: async (ctx, args) => {
     const card = await ctx.db.get(args.cardId);
     if (!card) return;
     const fund = await ctx.db.get(card.fundId);
+
+    if (
+      args.expectedPreviousLimitCents !== undefined &&
+      (card.spendLimitCents ?? null) !== args.expectedPreviousLimitCents
+    ) {
+      console.warn(
+        `[finance] recordManagedCardLimit: card ${args.cardId} was re-capped by a concurrent sync (expected ${args.expectedPreviousLimitCents}, found ${card.spendLimitCents ?? null}) — forcing a resync`,
+      );
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.finance.cards.syncManagedCardLimit,
+        { cardId: args.cardId, force: true },
+      );
+      return;
+    }
+
     await ctx.db.patch(args.cardId, {
       spendLimitCents: args.spendLimitCents,
       updatedAt: now(),
@@ -1600,7 +1647,7 @@ export const recordManagedCardLimit = internalMutation({
  * self-heals within the hour.
  */
 export const syncManagedCardLimit = internalAction({
-  args: { cardId: v.id("cards") },
+  args: { cardId: v.id("cards"), force: v.optional(v.boolean()) },
   handler: async (ctx, args): Promise<{ applied: boolean }> => {
     const target = await ctx.runQuery(
       internal.functions.finance.cards.getManagedCardSyncTarget,
@@ -1614,15 +1661,13 @@ export const syncManagedCardLimit = internalAction({
     // one mutation queue two runs; the second finds the number already applied
     // and never touches the provider.
     //
-    // It reads the MIRROR, not the provider, and the mirror is only a record of
-    // what some run last succeeded in pushing. Two runs whose targets differ
-    // can interleave so that the later target reaches the mirror while the
-    // earlier one reached the provider last, and this check will then agree
-    // with itself while the provider holds the older number. That resolves on
-    // the fund's next ledger movement (a new target ≠ the mirror pushes again),
-    // which is why it is a stale cap rather than a stuck one — but it is NOT
-    // corrected by the hourly backstop, which runs through this same check.
-    if (target.currentLimitCents === target.targetLimitCents) {
+    // It reads the MIRROR, not the provider, so it is only as good as the
+    // mirror's claim to describe what the provider holds. `force` is how a run
+    // that KNOWS the mirror can't be trusted gets past it:
+    // `recordManagedCardLimit` sets it after detecting that a concurrent sync
+    // wrote between this run's read and its write, which is the one situation
+    // where the two can disagree.
+    if (!args.force && target.currentLimitCents === target.targetLimitCents) {
       return { applied: false };
     }
 
@@ -1651,7 +1696,13 @@ export const syncManagedCardLimit = internalAction({
     // showing a stale number, because only the first is unfalsifiable.
     await ctx.runMutation(
       internal.functions.finance.cards.recordManagedCardLimit,
-      { cardId: args.cardId, spendLimitCents: target.targetLimitCents },
+      {
+        cardId: args.cardId,
+        spendLimitCents: target.targetLimitCents,
+        // What the mirror said before we called the provider. If it has moved,
+        // another run got there first and ours may have been the stale write.
+        expectedPreviousLimitCents: target.currentLimitCents,
+      },
     );
     return { applied: true };
   },
