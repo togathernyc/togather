@@ -29,7 +29,6 @@ import { requireAuth } from "../../lib/auth";
 import { now, getDisplayName, getMediaUrl } from "../../lib/utils";
 import {
   ADMIN_ROLE_THRESHOLD,
-  PRIMARY_ADMIN_ROLE,
   isCommunityAdmin,
   isPrimaryAdmin,
   assertCommunityNotArchived,
@@ -176,14 +175,18 @@ export const listGrantableFinanceAdmins = query({
       .collect();
 
     const candidates = memberships.filter(
-      (m) =>
-        m.status === 1 &&
-        (m.roles ?? 0) >= ADMIN_ROLE_THRESHOLD &&
-        (m.roles ?? 0) !== PRIMARY_ADMIN_ROLE,
+      (m) => m.status === 1 && (m.roles ?? 0) >= ADMIN_ROLE_THRESHOLD,
     );
 
     const rows = await Promise.all(
       candidates.map(async (membership) => {
+        // `isPrimaryAdmin` rather than comparing `roles` to PRIMARY_ADMIN_ROLE
+        // here: which role values mean "primary admin" is that helper's to
+        // know, and a second copy of the answer in this file is one that goes
+        // stale the moment the definition widens (PR #754 makes it a set).
+        if (await isPrimaryAdmin(ctx, args.communityId, membership.userId)) {
+          return null;
+        }
         const existing = await getActiveCommunityFinanceRole(
           ctx,
           membership.userId,
@@ -283,9 +286,11 @@ export const grantCommunityFinanceRole = mutation({
  *
  * There is no "last admin" guard, unlike `revokeFundRole`. There cannot be a
  * lockout to guard against: the primary admin's access is implicit and
- * survives every revoke. Revoking your own last row is therefore allowed —
- * and the primary admin, whose power is not a row at all, cannot revoke it
- * from themselves even by trying.
+ * survives every revoke, so revoking the LAST grant is allowed and still
+ * leaves someone who can run the community's money. A holder cannot revoke
+ * their own row either way — only the primary admin reaches this mutation at
+ * all — and the primary admin, whose power is not a row, cannot revoke it from
+ * themselves even by trying.
  */
 export const revokeCommunityFinanceRole = mutation({
   args: {

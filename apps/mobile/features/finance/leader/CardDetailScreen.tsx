@@ -8,14 +8,18 @@ import { View, StyleSheet, TouchableOpacity, Text } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useAuthenticatedQuery, useAuthenticatedMutation, api } from "@services/api/convex";
+import {
+  useAuthenticatedQuery,
+  useAuthenticatedMutation,
+  api,
+} from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 import { useAuth } from "@providers/AuthProvider";
 import { useTheme } from "@hooks/useTheme";
 import { DragHandle } from "@components/ui/DragHandle";
 import { ToastManager } from "@components/ui";
 import { useMembersPage } from "@features/leader-tools/hooks/useMembersPage";
-import { formatError } from "@/utils/error-handling";
+import { errorMessage, formatError } from "@/utils/error-handling";
 import { useReceiptUpload } from "../member/useReceiptUpload";
 import { CardDetailView } from "./CardDetailView";
 import type { CardDetail } from "./types";
@@ -24,7 +28,10 @@ export function CardDetailScreen() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { group_id, card_id } = useLocalSearchParams<{ group_id: string; card_id: string }>();
+  const { group_id, card_id } = useLocalSearchParams<{
+    group_id: string;
+    card_id: string;
+  }>();
   const groupId = group_id || "";
   const cardId = card_id || "";
 
@@ -35,8 +42,12 @@ export function CardDetailScreen() {
     cardId ? { cardId: cardId as Id<"cards"> } : "skip",
   );
 
-  const setCardFrozen = useAuthenticatedMutation(api.functions.finance.cards.setCardFrozen);
-  const cancelCard = useAuthenticatedMutation(api.functions.finance.cards.cancelCard);
+  const setCardFrozen = useAuthenticatedMutation(
+    api.functions.finance.cards.setCardFrozen,
+  );
+  const cancelCard = useAuthenticatedMutation(
+    api.functions.finance.cards.cancelCard,
+  );
   const attachExpenseReceipt = useAuthenticatedMutation(
     api.functions.finance.expenses.attachExpenseReceipt,
   );
@@ -48,18 +59,32 @@ export function CardDetailScreen() {
   const { user } = useAuth();
   const [isFreezing, setIsFreezing] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
-  const [attachingExpenseId, setAttachingExpenseId] = useState<string | null>(null);
+  const [attachingExpenseId, setAttachingExpenseId] = useState<string | null>(
+    null,
+  );
 
-  const card: CardDetail | null | undefined = cardRaw === undefined ? undefined : cardRaw === null ? null : toCardDetail(cardRaw);
+  const card: CardDetail | null | undefined =
+    cardRaw === undefined
+      ? undefined
+      : cardRaw === null
+        ? null
+        : toCardDetail(cardRaw);
 
   const handleToggleFrozen = async () => {
     if (!card || isFreezing) return;
     setIsFreezing(true);
     try {
-      await setCardFrozen({ cardId: cardId as Id<"cards">, frozen: card.status !== "disabled" });
-      ToastManager.success(card.status === "disabled" ? "Card unfrozen" : "Card frozen");
+      await setCardFrozen({
+        cardId: cardId as Id<"cards">,
+        frozen: card.status !== "disabled",
+      });
+      ToastManager.success(
+        card.status === "disabled" ? "Card unfrozen" : "Card frozen",
+      );
     } catch (error) {
-      ToastManager.error(formatError(error, "Failed to update card"));
+      ToastManager.error(
+        errorMessage(error, formatError(error, "Failed to update card")),
+      );
     } finally {
       setIsFreezing(false);
     }
@@ -73,7 +98,9 @@ export function CardDetailScreen() {
       ToastManager.success("Card canceled");
       handleBack();
     } catch (error) {
-      ToastManager.error(formatError(error, "Failed to cancel card"));
+      ToastManager.error(
+        errorMessage(error, formatError(error, "Failed to cancel card")),
+      );
     } finally {
       setIsCancelling(false);
     }
@@ -95,13 +122,20 @@ export function CardDetailScreen() {
       // Two different promises, and only one of them is true at a time: at a
       // provider with a receipt API the file leaves Togather, and saying so is
       // the difference between an accurate record and a surprise.
+      //
+      // "sending", not "sent": the forward is a scheduled action that has not
+      // run when this toast appears, and it can fail at the provider without
+      // anything telling the cardholder. Past tense would make that failure
+      // indistinguishable from a success.
       ToastManager.success(
         card?.capabilities.receiptForwarding
-          ? "Saved and sent to your card provider"
+          ? "Saved — sending to your card provider"
           : "Saved to the fund",
       );
     } catch (error) {
-      ToastManager.error(formatError(error, "Couldn't attach that receipt"));
+      ToastManager.error(
+        errorMessage(error, formatError(error, "Couldn't attach that receipt")),
+      );
     } finally {
       setAttachingExpenseId(null);
     }
@@ -110,15 +144,34 @@ export function CardDetailScreen() {
   return (
     <>
       <DragHandle />
-      <View style={[styles.header, { paddingTop: insets.top + 8, backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
-        <TouchableOpacity style={styles.backButton} onPress={handleBack} testID="back-button">
+      <View
+        style={[
+          styles.header,
+          {
+            paddingTop: insets.top + 8,
+            backgroundColor: colors.surface,
+            borderBottomColor: colors.border,
+          },
+        ]}
+      >
+        <TouchableOpacity
+          style={styles.backButton}
+          onPress={handleBack}
+          testID="back-button"
+        >
           <Ionicons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
         <View style={styles.headerContent}>
-          <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={1}>
+          <Text
+            style={[styles.headerTitle, { color: colors.text }]}
+            numberOfLines={1}
+          >
             {card?.name || "Card"}
           </Text>
-          <Text style={[styles.headerSubtitle, { color: colors.textSecondary }]} numberOfLines={1}>
+          <Text
+            style={[styles.headerSubtitle, { color: colors.textSecondary }]}
+            numberOfLines={1}
+          >
             {card ? `Virtual card ··${card.last4}` : "Loading…"}
           </Text>
         </View>

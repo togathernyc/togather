@@ -18,12 +18,16 @@ import { View, StyleSheet } from "react-native";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "@providers/AuthProvider";
-import { useAuthenticatedQuery, useAuthenticatedMutation, api } from "@services/api/convex";
+import {
+  useAuthenticatedQuery,
+  useAuthenticatedMutation,
+  api,
+} from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 import { useTheme } from "@hooks/useTheme";
 import { ToastManager } from "@components/ui";
 import { WaSubScreenHeader } from "@components/wa";
-import { formatError } from "@/utils/error-handling";
+import { errorMessage, formatError } from "@/utils/error-handling";
 import {
   FinancialControlsView,
   FINANCIAL_CONTROLS_DENIED_MESSAGE,
@@ -59,7 +63,9 @@ export function FinancialControlsScreen() {
       <WaSubScreenHeader title="Financial controls" onBack={handleBack} />
       <CommunityFinanceAccessBoundary
         fallback={
-          <CommunityFinanceAccessDenied message={FINANCIAL_CONTROLS_DENIED_MESSAGE} />
+          <CommunityFinanceAccessDenied
+            message={FINANCIAL_CONTROLS_DENIED_MESSAGE}
+          />
         }
       >
         <FinancialControlsContent />
@@ -98,22 +104,26 @@ function FinancialControlsContent() {
 
   const [isGranting, setIsGranting] = useState(false);
   const [grantError, setGrantError] = useState<string | null>(null);
-  const [revokeTargetUserId, setRevokeTargetUserId] = useState<string | null>(null);
+  const [revokeTargetUserId, setRevokeTargetUserId] = useState<string | null>(
+    null,
+  );
   const [isRevoking, setIsRevoking] = useState(false);
   const [revokeError, setRevokeError] = useState<string | null>(null);
 
-  const state: FinancialControlsState = !isAuthLoading && !isCommunityAdmin
-    ? "not-allowed"
-    : rosterRaw === undefined
-      ? "loading"
-      : "ready";
+  const state: FinancialControlsState =
+    !isAuthLoading && !isCommunityAdmin
+      ? "not-allowed"
+      : rosterRaw === undefined
+        ? "loading"
+        : "ready";
 
   // Revoked grants are filtered out HERE rather than server-side: the query
   // returns both because the roster is the audit surface for the people it
   // governs, and this screen has decided (see FinancialControlsView's header)
   // that a dimmed "used to have access" row reads as access.
   const roles: CommunityFinanceRoleRow[] = useMemo(
-    () => (rosterRaw?.roles ?? []).filter((r: any) => r.isActive).map(toRoleRow),
+    () =>
+      (rosterRaw?.roles ?? []).filter((r: any) => r.isActive).map(toRoleRow),
     [rosterRaw],
   );
 
@@ -135,7 +145,13 @@ function FinancialControlsContent() {
       setIsPickerOpen(false);
     } catch (error) {
       setGrantError(
-        formatError(error, "Couldn't give financial controls. Please try again."),
+        errorMessage(
+          error,
+          formatError(
+            error,
+            "Couldn't give financial controls. Please try again.",
+          ),
+        ),
       );
     } finally {
       setIsGranting(false);
@@ -158,7 +174,13 @@ function FinancialControlsContent() {
       // card-provider disconnect guard: the refusal names who may do this
       // instead, and the person needs it in front of them.
       setRevokeError(
-        formatError(error, "Couldn't remove financial controls. Please try again."),
+        errorMessage(
+          error,
+          formatError(
+            error,
+            "Couldn't remove financial controls. Please try again.",
+          ),
+        ),
       );
     } finally {
       setIsRevoking(false);

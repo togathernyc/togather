@@ -35,7 +35,7 @@ import type { Id } from "@services/api/convex";
 import { useTheme } from "@hooks/useTheme";
 import { ToastManager } from "@components/ui";
 import { WaSubScreenHeader } from "@components/wa";
-import { formatError } from "@/utils/error-handling";
+import { errorMessage, formatError } from "@/utils/error-handling";
 import {
   CardProviderView,
   CARD_PROVIDER_DENIED_MESSAGE,
@@ -73,7 +73,11 @@ export function CardProviderScreen() {
     >
       <WaSubScreenHeader title="Card provider" onBack={handleBack} />
       <CommunityFinanceAccessBoundary
-        fallback={<CommunityFinanceAccessDenied message={CARD_PROVIDER_DENIED_MESSAGE} />}
+        fallback={
+          <CommunityFinanceAccessDenied
+            message={CARD_PROVIDER_DENIED_MESSAGE}
+          />
+        }
       >
         <CardProviderContent />
       </CommunityFinanceAccessBoundary>
@@ -114,11 +118,12 @@ function CardProviderContent() {
   const [isDisconnecting, setIsDisconnecting] = useState(false);
   const [disconnectError, setDisconnectError] = useState<string | null>(null);
 
-  const state: CardProviderState = !isAuthLoading && !isCommunityAdmin
-    ? "not-allowed"
-    : status === undefined
-      ? "loading"
-      : "ready";
+  const state: CardProviderState =
+    !isAuthLoading && !isCommunityAdmin
+      ? "not-allowed"
+      : status === undefined
+        ? "loading"
+        : "ready";
 
   const connection: CardProviderConnection | null = status?.connection
     ? toCardProviderConnection(status.connection)
@@ -163,7 +168,13 @@ function CardProviderContent() {
       // reason for refusing, which is the only thing that tells the admin
       // whether to fix the key or fix their account.
       setConnectError(
-        formatError(error, "Couldn't connect that account. Please try again."),
+        errorMessage(
+          error,
+          formatError(
+            error,
+            "Couldn't connect that account. Please try again.",
+          ),
+        ),
       );
     } finally {
       setIsConnecting(false);
@@ -191,7 +202,13 @@ function CardProviderContent() {
       // establish that the key is compromised, which is the only case that
       // justifies stranding live cards.
       setDisconnectError(
-        formatError(error, "Couldn't disconnect this provider. Please try again."),
+        errorMessage(
+          error,
+          formatError(
+            error,
+            "Couldn't disconnect this provider. Please try again.",
+          ),
+        ),
       );
     } finally {
       setIsDisconnecting(false);

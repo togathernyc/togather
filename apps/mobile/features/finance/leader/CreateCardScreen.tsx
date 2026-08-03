@@ -11,11 +11,19 @@
  */
 import React, { useMemo, useState } from "react";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useAuthenticatedQuery, useAuthenticatedMutation, api } from "@services/api/convex";
+import {
+  useAuthenticatedQuery,
+  useAuthenticatedMutation,
+  api,
+} from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 import { ToastManager } from "@components/ui";
-import { formatError } from "@/utils/error-handling";
-import { CreateCardView, type CreateCardState, type LimitSelection } from "./CreateCardView";
+import { errorMessage, formatError } from "@/utils/error-handling";
+import {
+  CreateCardView,
+  type CreateCardState,
+  type LimitSelection,
+} from "./CreateCardView";
 import { financeDisplayName } from "./utils";
 import type { CardholderCandidate, CardLimitPeriod } from "./types";
 
@@ -59,9 +67,13 @@ export function CreateCardScreen() {
     fundId ? { fundId } : "skip",
   );
 
-  const createFundCard = useAuthenticatedMutation(api.functions.finance.cards.createFundCard);
+  const createFundCard = useAuthenticatedMutation(
+    api.functions.finance.cards.createFundCard,
+  );
 
-  const [selectedHolderUserId, setSelectedHolderUserId] = useState<string | null>(null);
+  const [selectedHolderUserId, setSelectedHolderUserId] = useState<
+    string | null
+  >(null);
   const [name, setName] = useState("");
   const [limitSelection, setLimitSelection] = useState<LimitSelection>("none");
   const [amountText, setAmountText] = useState("");
@@ -90,11 +102,13 @@ export function CreateCardScreen() {
 
   const liveCardCount = useMemo(
     () =>
-      (cardsRaw?.cards ?? []).filter((card: any) => !DEAD_CARD_STATUSES.has(card.status))
-        .length,
+      (cardsRaw?.cards ?? []).filter(
+        (card: any) => !DEAD_CARD_STATUSES.has(card.status),
+      ).length,
     [cardsRaw],
   );
-  const cardSlotFull = maxCardsPerFund !== null && liveCardCount >= maxCardsPerFund;
+  const cardSlotFull =
+    maxCardsPerFund !== null && liveCardCount >= maxCardsPerFund;
 
   const state: CreateCardState =
     myFundRole === undefined || cardsRaw === undefined
@@ -151,9 +165,16 @@ export function CreateCardScreen() {
             : {}),
       });
       ToastManager.success("Card created");
-      router.replace(`/(user)/leader-tools/${groupId}/giving/cards/${cardId}` as any);
+      router.replace(
+        `/(user)/leader-tools/${groupId}/giving/cards/${cardId}` as any,
+      );
     } catch (err) {
-      setError(formatError(err, "Couldn't create this card. Please try again."));
+      setError(
+        errorMessage(
+          err,
+          formatError(err, "Couldn't create this card. Please try again."),
+        ),
+      );
     } finally {
       setIsSubmitting(false);
     }
@@ -170,7 +191,9 @@ export function CreateCardScreen() {
       isLoadingCandidates={fundId != null && rolesRaw === undefined}
       selectedHolderUserId={selectedHolderUserId}
       onSelectHolder={setSelectedHolderUserId}
-      onGrantRolePress={() => router.push(`/(user)/leader-tools/${groupId}/giving/roles` as any)}
+      onGrantRolePress={() =>
+        router.push(`/(user)/leader-tools/${groupId}/giving/roles` as any)
+      }
       name={name}
       onNameChange={setName}
       limitSelection={limitSelection}
