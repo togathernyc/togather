@@ -1756,7 +1756,11 @@ export const pollCardProviderTransactions = internalAction({
         await ctx.runMutation(
           internal.functions.finance.cardProviderConnections
             .recordConnectionSync,
-          { connectionId: connection.connectionId, error: message },
+          {
+            connectionId: connection.connectionId,
+            error: message,
+            credentialRejected: isCredentialRejection(error),
+          },
         );
       }
     }
@@ -1764,6 +1768,26 @@ export const pollCardProviderTransactions = internalAction({
     return { polled: connections.length, recorded };
   },
 });
+
+/**
+ * Did the provider refuse OUR KEY, or did the call merely fail?
+ *
+ * Only the first justifies deactivating a church's connection — that flips
+ * `status` to "error", which stops card operations and makes the webhook route
+ * answer perfectly good signed deliveries with `ignored`. A rate limit, a
+ * gateway timeout, or a vendor 5xx must not buy that; it retries next hour.
+ *
+ * Read structurally (an optional numeric `status` on the thrown error, which
+ * `PrivacyApiError` carries) rather than by matching message text, and
+ * deliberately provider-agnostic: this fan-out is the shared BYO poller, so
+ * the next adapter opts in simply by attaching a status to what it throws.
+ * An error with no status is treated as transient, which is the safe default —
+ * the cost is one wasted poll, versus silently dropped settlements.
+ */
+function isCredentialRejection(error: unknown): boolean {
+  const status = (error as { status?: unknown } | null | undefined)?.status;
+  return status === 401 || status === 403;
+}
 
 /**
  * One connection's pull. Split out so the fan-out above stays a loop with a
@@ -1822,6 +1846,10 @@ async function pollOneConnection(
       // listTransactions — because losing this one number silently re-imports
       // or silently skips, and both are bad in ways nobody notices for weeks.
       syncCursor: page.nextCursor ?? undefined,
+      // Everything above this line is one HTTP round trip long, and an admin
+      // can disconnect or rotate the key inside it. Snapshot in, snapshot
+      // checked — see recordConnectionSync.
+      expectedUpdatedAt: loaded.updatedAt,
     },
   );
 
@@ -1831,6 +1859,10 @@ async function pollOneConnection(
 /**
  * The connection row (credential still encrypted) plus the community's
  * resolved provider name, in one read — the action has no `ctx.db`.
+ *
+ * `updatedAt` comes back too: it is the generation marker the poll hands to
+ * `recordConnectionSync` so a result cannot be applied to a connection that
+ * was disconnected or re-keyed while the provider call was in flight.
  */
 export const getConnectionForPoll = internalQuery({
   args: { connectionId: v.id("cardProviderConnections") },
@@ -1842,6 +1874,7 @@ export const getConnectionForPoll = internalQuery({
     return {
       providerName: await resolveCardProviderName(ctx, row.communityId),
       connection,
+      updatedAt: row.updatedAt,
     };
   },
 });

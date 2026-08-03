@@ -68,6 +68,30 @@ export function privacyClient(apiKey: string): PrivacyClient {
 // Request plumbing
 // ============================================================================
 
+/**
+ * A non-2xx from Privacy, carrying the STATUS as well as the message.
+ *
+ * The status is not decoration: the hourly poll has to tell "this key was
+ * revoked" (401/403 — deactivate the connection and make a human reconnect)
+ * from "Privacy had a bad minute" (429/5xx/timeout — retry next hour, and on
+ * no account stop accepting this church's settlements in the meantime).
+ * Deciding that by substring-matching a message would break the first time the
+ * wording changed.
+ *
+ * `message` carries the vendor's response body and is surfaced to a finance
+ * admin. It never contains the API key — the key travels in a header, and
+ * nothing here echoes headers.
+ */
+export class PrivacyApiError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = "PrivacyApiError";
+  }
+}
+
 interface PrivacyRequestOptions {
   method: "GET" | "POST" | "PATCH";
   body?: unknown;
@@ -116,7 +140,8 @@ async function privacyRequest<T>(
 
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(
+    throw new PrivacyApiError(
+      response.status,
       `Privacy.com API ${options.method} ${path} failed (${response.status}): ${text}`,
     );
   }

@@ -24,7 +24,7 @@ import { modules } from "../test.setup";
 import type { Id } from "../_generated/dataModel";
 import { generateTokens } from "../lib/auth";
 import { decryptCredential } from "../lib/finance/credentialCrypto";
-import { signPrivacyWebhook } from "../lib/finance/privacy";
+import { PrivacyApiError, signPrivacyWebhook } from "../lib/finance/privacy";
 
 process.env.JWT_SECRET = "test-jwt-secret-for-unit-tests-minimum-32-chars";
 /** 32 zero bytes, base64 — a valid AES-256 key for the envelope crypto. */
@@ -927,7 +927,7 @@ describe("finance-card-txn-poll", () => {
     expect(params.begin).toBe("2026-07-30T00:00:00Z");
   });
 
-  test("a failing key flips that connection to error and keeps its cursor", async () => {
+  test("a REJECTED key flips that connection to error and keeps its cursor", async () => {
     const t = convexTest(schema, modules);
     await connectedWithCard(t);
     await t.run(async (ctx) => {
@@ -935,7 +935,10 @@ describe("finance-card-txn-poll", () => {
       await ctx.db.patch(row!._id, { syncCursor: "2026-07-30T00:00:00Z" });
     });
     privacy.listPrivacyTransactions.mockRejectedValue(
-      new Error("Privacy.com API GET /transactions failed (401): revoked"),
+      new PrivacyApiError(
+        401,
+        "Privacy.com API GET /transactions failed (401): revoked",
+      ),
     );
 
     const result = await t.action(
@@ -963,7 +966,7 @@ describe("finance-card-txn-poll", () => {
     let call = 0;
     privacy.listPrivacyTransactions.mockImplementation(async () => {
       call++;
-      if (call === 1) throw new Error("failed (401): revoked");
+      if (call === 1) throw new PrivacyApiError(401, "failed (401): revoked");
       return { data: [SETTLED_TXN], page: 1, total_pages: 1 } as any;
     });
 
@@ -978,6 +981,144 @@ describe("finance-card-txn-poll", () => {
       ctx.db.query("cardProviderConnections").collect(),
     );
     expect(rows.map((r) => r.status).sort()).toEqual(["active", "error"]);
+  });
+
+  test("a TRANSIENT failure records the error but keeps the connection live", async () => {
+    // "error" is read by loadActiveProviderConnection as "this credential is
+    // dead" — it stops card operations AND makes the webhook route answer
+    // signed deliveries with `ignored`. A gateway timeout must not buy that,
+    // or five minutes of Privacy being unwell becomes settlements dropped
+    // until a human notices and reconnects.
+    const t = convexTest(schema, modules);
+    await connectedWithCard(t);
+    privacy.listPrivacyTransactions.mockRejectedValue(
+      new PrivacyApiError(503, "Privacy.com API GET /transactions failed (503): "),
+    );
+
+    await t.action(
+      internal.functions.finance.jobs.pollCardProviderTransactions,
+      {},
+    );
+
+    const row = await t.run(async (ctx) =>
+      ctx.db.query("cardProviderConnections").first(),
+    );
+    expect(row!.status).toBe("active");
+    expect(row!.lastError).toContain("503");
+
+    // And the next hour's run, once Privacy is well again, just works —
+    // no reconnect, no operator.
+    privacy.listPrivacyTransactions.mockResolvedValue({
+      data: [SETTLED_TXN],
+      page: 1,
+      total_pages: 1,
+    } as any);
+    const recovered = await t.action(
+      internal.functions.finance.jobs.pollCardProviderTransactions,
+      {},
+    );
+    expect(recovered.recorded).toBe(1);
+    const healed = await t.run(async (ctx) =>
+      ctx.db.query("cardProviderConnections").first(),
+    );
+    expect(healed!.lastError).toBeUndefined();
+  });
+
+  test("a poll that finishes after a disconnect cannot resurrect the connection", async () => {
+    // The poll is an HTTP round trip long. An admin who revokes a compromised
+    // key inside that window must stay revoked — a stale success patching
+    // `status: "active"` back would put a retired credential into service.
+    const t = convexTest(schema, modules);
+    await connectedWithCard(t);
+
+    privacy.listPrivacyTransactions.mockImplementation(async () => {
+      // Disconnect lands WHILE the provider call is outstanding.
+      await t.run(async (ctx) => {
+        const row = await ctx.db.query("cardProviderConnections").first();
+        await ctx.db.patch(row!._id, {
+          status: "revoked",
+          updatedAt: Date.now() + 1,
+        });
+      });
+      return { data: [SETTLED_TXN], page: 1, total_pages: 1 } as any;
+    });
+
+    await t.action(
+      internal.functions.finance.jobs.pollCardProviderTransactions,
+      {},
+    );
+
+    const row = await t.run(async (ctx) =>
+      ctx.db.query("cardProviderConnections").first(),
+    );
+    expect(row!.status).toBe("revoked");
+    expect(row!.syncCursor).toBeUndefined();
+  });
+});
+
+// ============================================================================
+// Switching issuers
+// ============================================================================
+
+describe("switching card providers", () => {
+  test("refuses to connect while live cards remain at the OLD provider", async () => {
+    // `cardProvider` is resolved community-wide, so flipping it re-points every
+    // existing card's pause/cancel/limit call at an issuer that has never seen
+    // its id. That is `disconnectCardProvider`'s stranding hazard reached from
+    // the other side, and it gets the same answer: close the old cards first.
+    const t = convexTest(schema, modules);
+    const f = await seed(t);
+    await t.run(async (ctx) => {
+      const fund = await ctx.db.get(f.fundId);
+      await ctx.db.insert("cards", {
+        fundId: f.fundId,
+        holderUserId: f.cardholderUserId,
+        provider: "increase",
+        providerCardId: "card_increase_live",
+        increaseCardId: "card_increase_live",
+        status: "active",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      expect(fund).not.toBeNull();
+    });
+
+    await expect(connect(t, f)).rejects.toThrow(
+      /still open at this community's current card provider/i,
+    );
+
+    const rows = await t.run(async (ctx) =>
+      ctx.db.query("cardProviderConnections").collect(),
+    );
+    expect(rows).toHaveLength(0);
+  });
+
+  test("rotating the key on the SAME provider is still allowed with live cards", async () => {
+    const t = convexTest(schema, modules);
+    const f = await seed(t);
+    await connect(t, f);
+    await issueCard(t, f);
+
+    await connect(t, f, "privacy_live_rotated_key");
+
+    const row = await t.run(async (ctx) =>
+      ctx.db.query("cardProviderConnections").first(),
+    );
+    expect(row!.status).toBe("active");
+    expect(
+      await decryptCredential(
+        {
+          ciphertext: row!.credentialCiphertext,
+          iv: row!.credentialIv,
+          keyVersion: row!.keyVersion,
+        },
+        {
+          communityId: f.communityId,
+          provider: "privacy",
+          purpose: "apiKey",
+        },
+      ),
+    ).toBe("privacy_live_rotated_key");
   });
 });
 

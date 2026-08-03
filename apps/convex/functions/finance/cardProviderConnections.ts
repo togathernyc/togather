@@ -182,6 +182,31 @@ export const saveCardProviderConnection = internalMutation({
   handler: async (ctx, args) => {
     await requireCommunityFinanceAccess(ctx, args.userId, args.communityId);
 
+    // SWITCHING issuers is not the same act as connecting one, and this is the
+    // transaction that would perform it silently. `cardProvider` is resolved
+    // COMMUNITY-WIDE (cards.ts reads it per operation, not per card), so the
+    // moment it flips, every card the community already holds at the OLD
+    // issuer starts routing its pause/cancel/limit calls to the NEW one —
+    // which will be handed an id it has never seen. The church is left with
+    // live spending instruments Togather can no longer control: the exact
+    // outcome `disconnectCardProvider` refuses to cause, arrived at from the
+    // other direction.
+    //
+    // ADR-033 puts provider switching and card migration in Phase 3. Until
+    // that exists, the honest answer is the same one disconnect gives: close
+    // the old cards first. Rotating a key on the SAME provider is untouched —
+    // that is the reconnect path this guard must not break.
+    const strandedCards = await countLiveCardsOnOtherProviders(
+      ctx,
+      args.communityId,
+      args.provider,
+    );
+    if (strandedCards > 0) {
+      throw new ConvexError(
+        `${strandedCards} card${strandedCards === 1 ? "" : "s"} ${strandedCards === 1 ? "is" : "are"} still open at this community's current card provider. Close ${strandedCards === 1 ? "it" : "them"} before connecting ${args.provider} — switching now would leave ${strandedCards === 1 ? "a card" : "cards"} spending that Togather could no longer pause or track.`,
+      );
+    }
+
     const timestamp = now();
     const existing = await ctx.db
       .query("cardProviderConnections")
@@ -200,6 +225,19 @@ export const saveCardProviderConnection = internalMutation({
         // in the transaction feed: the new key may be for a different Privacy
         // account entirely, whose transaction history has nothing to do with
         // the cursor we were holding.
+        //
+        // KNOWN GAP, and the guard above does not close it: a same-provider
+        // reconnect is the key-ROTATION path, so it must be allowed, but
+        // nothing here proves the new key opens the SAME Privacy account. If
+        // it doesn't, live cards from the old account become unmanageable
+        // (their state calls go to the new account, their webhooks fail HMAC,
+        // the poll reads the wrong feed). Closing it needs a stable account
+        // identity from Privacy — the funding-source token is the candidate,
+        // and whether it is stable and order-independent is on this phase's
+        // "not verifiable without a live key" list.
+        // TODO: compare a proven account identity on reconnect and require
+        // migration/closure when it changes (ADR-033 Phase 3, with the connect
+        // UI and the live account that can settle the question).
         lastError: undefined,
         syncCursor: undefined,
         connectedById: args.userId,
@@ -416,18 +454,49 @@ export const disconnectCardProvider = mutation({
   },
 });
 
-/**
- * How many of this community's cards are still alive at `provider`.
- *
- * Walks funds -> cards because `cards` has no community index (a card belongs
- * to a fund, and the fund carries the community). Bounded by the community's
- * own fund count, which is one per giving-enabled group — small by
- * construction, and this runs once per disconnect.
- */
+/** How many of this community's cards are still alive at `provider`. */
 async function countLiveProviderCards(
   ctx: { db: any },
   communityId: Id<"communities">,
   provider: string,
+): Promise<number> {
+  return await countLiveCards(
+    ctx,
+    communityId,
+    (cardProvider) => cardProvider === provider,
+  );
+}
+
+/**
+ * How many live cards this community holds at an issuer OTHER than `provider`.
+ *
+ * The inverse of the above, and the guard on connecting. A card with no
+ * `provider` column is an Increase card from before ADR-033 (schema.ts says
+ * so) — reading the absence as "increase" is what makes this count the cards
+ * that would actually be stranded, rather than zero.
+ */
+async function countLiveCardsOnOtherProviders(
+  ctx: { db: any },
+  communityId: Id<"communities">,
+  provider: string,
+): Promise<number> {
+  return await countLiveCards(
+    ctx,
+    communityId,
+    (cardProvider) => (cardProvider ?? "increase") !== provider,
+  );
+}
+
+/**
+ * Walks funds -> cards because `cards` has no community index (a card belongs
+ * to a fund, and the fund carries the community). Bounded by the community's
+ * own fund count, which is one per giving-enabled group — small by
+ * construction, and this runs once per connect/disconnect.
+ */
+async function countLiveCards(
+  ctx: { db: any },
+  communityId: Id<"communities">,
+  matches: (cardProvider: string | undefined) => boolean,
 ): Promise<number> {
   const funds = await ctx.db
     .query("funds")
@@ -441,7 +510,7 @@ async function countLiveProviderCards(
       .withIndex("by_fund", (q: any) => q.eq("fundId", fund._id))
       .collect();
     for (const card of cards) {
-      if (card.provider !== provider) continue;
+      if (!matches(card.provider)) continue;
       if (DEAD_CARD_STATUSES.has(card.status)) continue;
       live++;
     }
@@ -460,21 +529,62 @@ async function countLiveProviderCards(
  * `syncCursor` is only ADVANCED, never cleared — see the Privacy adapter's
  * `listTransactions` for why a cursor that can go backwards is worse than one
  * that stalls.
+ *
+ * TWO THINGS THIS DELIBERATELY DOES NOT DO:
+ *
+ * - It does not deactivate a connection because a poll FAILED. "error" is read
+ *   by `loadActiveProviderConnection` as "this credential is dead", which stops
+ *   card operations AND makes the webhook route answer signed deliveries with
+ *   `ignored` — so treating a timeout or a vendor 502 as an error would turn a
+ *   five-minute outage into settlements silently dropped until a human
+ *   reconnects. Only a REJECTED CREDENTIAL (`credentialRejected`) does that,
+ *   because only that is a fact about the key rather than about the network.
+ * - It does not apply a result the connection has moved on from. See
+ *   `expectedUpdatedAt`.
  */
 export const recordConnectionSync = internalMutation({
   args: {
     connectionId: v.id("cardProviderConnections"),
     syncCursor: v.optional(v.string()),
-    /** Present when the poll failed — flips the connection to "error". */
+    /** Present when the poll failed. Recorded either way; see `credentialRejected`. */
     error: v.optional(v.string()),
+    /** The provider refused the KEY (401/403) — the one failure that deactivates. */
+    credentialRejected: v.optional(v.boolean()),
+    /**
+     * The row's `updatedAt` when the poll STARTED. A poll is an HTTP round trip
+     * long, and an admin can disconnect or reconnect inside it; without this,
+     * a stale success would patch `status: "active"` back over a `revoked` row
+     * and resurrect a credential someone deliberately retired, or write a dead
+     * account's cursor onto a freshly connected one. Both writes that matter
+     * here (`disconnectCardProvider`, `saveCardProviderConnection`) stamp
+     * `updatedAt`, so a mismatch means "not the connection we polled".
+     */
+    expectedUpdatedAt: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const connection = await ctx.db.get(args.connectionId);
     if (!connection) return;
+    if (
+      args.expectedUpdatedAt !== undefined &&
+      connection.updatedAt !== args.expectedUpdatedAt
+    ) {
+      console.log(
+        `[finance] recordConnectionSync: connection ${args.connectionId} changed while polling — discarding the stale result`,
+      );
+      return;
+    }
+    // Belt and braces on the one transition that must never happen by
+    // accident: `revoked` is a human decision, and nothing a background job
+    // observes can undo it.
+    if (connection.status === "revoked") return;
 
     if (args.error !== undefined) {
       await ctx.db.patch(args.connectionId, {
-        status: "error",
+        // Only a rejected credential deactivates. Everything else keeps the
+        // connection live so the next hourly run retries it.
+        ...(args.credentialRejected === true
+          ? { status: "error" as const }
+          : {}),
         // Truncated vendor text; untrusted, shown to an operator as-is.
         lastError: args.error.slice(0, 500),
         updatedAt: now(),

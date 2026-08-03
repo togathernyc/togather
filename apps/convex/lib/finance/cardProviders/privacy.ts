@@ -356,6 +356,17 @@ export function createPrivacyCardProvider(
       // The memo is what a church admin sees in THEIR Privacy dashboard, so
       // it names the fund and marks the card as ours — they have their own
       // cards on this account and must be able to tell them apart at a glance.
+      //
+      // `input.idempotencyKey` IS DROPPED, because Privacy has no header to
+      // put it in (see lib/finance/privacy.ts's createPrivacyCard). The residual
+      // risk is bounded but real: if the POST succeeds and the response is lost,
+      // Privacy holds a live card that Togather records as failed — an orphan on
+      // the church's account, visible in their dashboard by its memo. It cannot
+      // become a DOUBLE issue today, because nothing retries this call: a
+      // failure is recorded (recordCardProvisionFailed) and stays recorded.
+      // TODO: before any retry is added here, reconcile first — list the
+      // account's cards and match on memo — or a lost response becomes two
+      // spending instruments instead of one orphan.
       try {
         const card = await createPrivacyCard(client, {
           type: "UNLOCKED",
