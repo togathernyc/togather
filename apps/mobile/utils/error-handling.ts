@@ -56,7 +56,10 @@ const USER_FRIENDLY_ERRORS: Record<string, string> = {
   "Only group leaders can update group": "You don't have permission to edit this group.",
   "You don't have permission to edit this group": "You don't have permission to edit this group.",
   "Community admin role required": "You don't have permission to perform this action.",
-  "Primary Admin role required": "Only the primary admin can perform this action.",
+  // A community can have more than one primary admin, so the copy says "a",
+  // not "the" — telling someone "only THE primary admin" when they know two
+  // people hold the role reads as a bug.
+  "Primary Admin role required": "Only a primary admin can perform this action.",
 
   // Authentication errors
   "Authentication required": "Please sign in to continue.",
