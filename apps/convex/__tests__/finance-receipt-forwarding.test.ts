@@ -330,7 +330,9 @@ describe("attachExpenseReceipt", () => {
         .withIndex("by_fund", (q) => q.eq("fundId", f.fundId))
         .collect(),
     );
-    expect(events.some((e) => e.action === "expense.receipt_attached")).toBe(true);
+    expect(events.some((e) => e.action === "expense.receipt_attached")).toBe(
+      true,
+    );
   });
 
   test("someone else's uploaded key is refused", async () => {
@@ -363,6 +365,32 @@ describe("attachExpenseReceipt", () => {
         receiptKey: key,
       }),
     ).rejects.toThrow();
+  });
+
+  test("re-attaching the SAME key does not queue a second forward", async () => {
+    // A double-tap, or a client retry of a mutation that already committed,
+    // sends the identical key twice. Both runs would pass the staleness guard
+    // (the key IS still current) and BILL would file the same image twice.
+    const t = convexTest(schema, modules);
+    const f = await seed(t, "bill");
+    await connectBill(t, f);
+    const { expenseId } = await seedCardCharge(t, f, "bill");
+    const key = await grantUpload(t, f.cardholderUserId, "r2:uploads/same.jpg");
+
+    for (let i = 0; i < 2; i += 1) {
+      await t.mutation(api.functions.finance.expenses.attachExpenseReceipt, {
+        token: await tokenFor(f.cardholderUserId),
+        expenseId,
+        receiptKey: key,
+      });
+    }
+
+    const queued = await t.run(async (ctx) => {
+      const rows = await ctx.db.system.query("_scheduled_functions").collect();
+      return rows.filter((r) => r.name.includes("forwardExpenseReceipt"))
+        .length;
+    });
+    expect(queued).toBe(1);
   });
 
   test("a reimbursement is refused — its receipt comes from submission", async () => {
@@ -420,10 +448,13 @@ describe("forwarding to the card provider", () => {
       });
 
       const queued = await t.run(async (ctx) => {
-        const rows = await ctx.db.system.query("_scheduled_functions").collect();
+        const rows = await ctx.db.system
+          .query("_scheduled_functions")
+          .collect();
         return rows.filter(
           (r) =>
-            r.name.includes("forwardExpenseReceipt") && r.state.kind === "pending",
+            r.name.includes("forwardExpenseReceipt") &&
+            r.state.kind === "pending",
         ).length;
       });
       expect(queued, `provider ${provider}`).toBe(expected);
@@ -485,6 +516,43 @@ describe("forwarding to the card provider", () => {
     );
   });
 
+  test("a card whose issuer is no longer the community's connection forwards NOTHING", async () => {
+    // A church closes its BILL cards and connects a different issuer. The old
+    // BILL card_charge rows stay in the history, and a receipt attached to one
+    // of them would address BILL's endpoint while holding the only credential
+    // the community now has — the other vendor's — and send it as an `apiToken`
+    // header to a vendor that never issued it.
+    const t = convexTest(schema, modules);
+    const f = await seed(t, "bill");
+    await connectBill(t, f);
+    const { expenseId } = await seedCardCharge(t, f, "bill");
+    const key = await grantUpload(t, f.cardholderUserId, "r2:uploads/old.jpg");
+
+    await t.mutation(api.functions.finance.expenses.attachExpenseReceipt, {
+      token: await tokenFor(f.cardholderUserId),
+      expenseId,
+      receiptKey: key,
+    });
+
+    // The community switches issuers, leaving the BILL card behind.
+    await t.run(async (ctx) => {
+      const connection = await ctx.db
+        .query("cardProviderConnections")
+        .withIndex("by_community", (q) => q.eq("communityId", f.communityId))
+        .first();
+      await ctx.db.patch(connection!._id, { provider: "privacy" });
+    });
+
+    fetchCalls = [];
+    const result = await t.action(
+      internal.functions.finance.expenses.forwardExpenseReceipt,
+      { expenseId, receiptKey: key },
+    );
+    expect(result).toEqual({ forwarded: false });
+    // Not one request — not even the read of the image.
+    expect(fetchCalls).toEqual([]);
+  });
+
   test("a run whose receipt has since been REPLACED does nothing", async () => {
     // The dedupe half of the mechanism: with no `forwardedAt` column, "is this
     // run still current?" is answered by the receipt key itself.
@@ -492,8 +560,16 @@ describe("forwarding to the card provider", () => {
     const f = await seed(t, "bill");
     await connectBill(t, f);
     const { expenseId } = await seedCardCharge(t, f, "bill");
-    const first = await grantUpload(t, f.cardholderUserId, "r2:uploads/first.jpg");
-    const second = await grantUpload(t, f.cardholderUserId, "r2:uploads/second.jpg");
+    const first = await grantUpload(
+      t,
+      f.cardholderUserId,
+      "r2:uploads/first.jpg",
+    );
+    const second = await grantUpload(
+      t,
+      f.cardholderUserId,
+      "r2:uploads/second.jpg",
+    );
 
     await t.mutation(api.functions.finance.expenses.attachExpenseReceipt, {
       token: await tokenFor(f.cardholderUserId),

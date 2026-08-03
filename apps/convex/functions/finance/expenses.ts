@@ -340,11 +340,18 @@ export const attachExpenseReceipt = mutation({
     //      still the key it was scheduled with.
     //
     // Together those make a re-attachment forward the NEW receipt and never the
-    // old one, and make a duplicate/stale run a no-op. What they deliberately
-    // do not do is prevent forwarding the same image twice if a human attaches
-    // the identical file twice — which is a duplicate document in BILL, not a
-    // wrong one, and is not worth a schema change or a listing call to avoid.
-    if (expense.cardId) {
+    // old one, and make a duplicate/stale run a no-op.
+    //
+    // The one hole those two facts leave is RE-ATTACHING THE SAME KEY: a
+    // double-tap, or a client retry of a mutation that already committed, sends
+    // the identical key twice, both runs pass the staleness guard (the key IS
+    // still current) and BILL gets the same image filed twice. Comparing
+    // against the key already on the row closes it inside this transaction,
+    // where Convex's OCC makes the check-then-write atomic. What it still does
+    // not cover is a human uploading the same FILE twice, which produces a new
+    // key and is a duplicate document rather than a wrong one.
+    const alreadyAttached = expense.receiptKey === args.receiptKey;
+    if (expense.cardId && !alreadyAttached) {
       const card = await ctx.db.get(expense.cardId);
       if (card && cardProviderSupportsReceipts(card.provider)) {
         await ctx.scheduler.runAfter(
@@ -370,8 +377,10 @@ export const attachExpenseReceipt = mutation({
  */
 function cardProviderSupportsReceipts(provider: string | undefined): boolean {
   if (!provider) return false;
-  return describeProviderCapabilities(provider as CardProviderName)
-    ?.receiptForwarding === true;
+  return (
+    describeProviderCapabilities(provider as CardProviderName)
+      ?.receiptForwarding === true
+  );
 }
 
 /** Everything `forwardExpenseReceipt` needs, in one round trip. */
@@ -384,6 +393,13 @@ export const getExpenseForReceiptForward = internalQuery({
     // replaced must not upload the outdated image.
     if (!expense || expense.receiptKey !== args.receiptKey) return null;
     if (!expense.cardId) return null;
+    // RE-ASSERTED, not assumed. The action server-side `fetch`es whatever URL
+    // this returns, and `getMediaUrl` passes an `http(s)://` value through
+    // verbatim — so "the key is an R2 object we minted" is the only thing
+    // standing between a receipt key and an arbitrary-host request. Every
+    // writer of `expenses.receiptKey` checks it today
+    // (`assertReceiptOwnedBy`); this makes the guarantee survive the next one.
+    if (!args.receiptKey.startsWith("r2:")) return null;
     // The provider's own transaction id — what BILL's receipt endpoint is
     // addressed by. Card-charge expenses store it in `increaseTransactionId`,
     // which is provider-neutral in practice despite its name (webhooks.ts's
@@ -394,6 +410,22 @@ export const getExpenseForReceiptForward = internalQuery({
     if (!card?.provider) return null;
     const fund = await ctx.db.get(expense.fundId);
     if (!fund) return null;
+    // The card belongs to the expense's own fund, or the two rows disagree
+    // about whose money this was and neither is safe to act on.
+    if (card.fundId !== expense.fundId) return null;
+
+    const connection = isBringYourOwnProvider(card.provider as CardProviderName)
+      ? await loadActiveProviderConnection(ctx, fund.communityId)
+      : null;
+    // THE CARD'S ISSUER AND THE COMMUNITY'S CURRENT CONNECTION MUST BE THE SAME
+    // ISSUER. A church that closes its BILL cards and connects Privacy still
+    // has BILL card_charge rows in its history, and a receipt attached to one
+    // of those would address BILL's endpoint while holding the only credential
+    // the community now has — the PRIVACY key — and send it as an `apiToken`
+    // header to a vendor that never issued it. Decryption does not catch this:
+    // the AAD binds the ciphertext to the connection it came from, not to the
+    // card. So the check is here, and a mismatch forwards nothing.
+    if (connection && connection.provider !== card.provider) return null;
 
     const grant = await ctx.db
       .query("uploadGrants")
@@ -407,9 +439,7 @@ export const getExpenseForReceiptForward = internalQuery({
       providerTxnId: expense.increaseTransactionId,
       receiptUrl: getMediaUrl(args.receiptKey) ?? null,
       contentType: grant?.contentType ?? null,
-      connection: isBringYourOwnProvider(card.provider as CardProviderName)
-        ? await loadActiveProviderConnection(ctx, fund.communityId)
-        : null,
+      connection,
     };
   },
 });
@@ -456,6 +486,9 @@ export const recordReceiptForward = internalMutation({
  * The audit row is what makes it visible, and re-attaching the photo is the
  * manual retry.
  */
+/** A receipt is a photo of a till slip; 10 MB is generous for one. */
+const MAX_RECEIPT_BYTES = 10 * 1024 * 1024;
+
 export const forwardExpenseReceipt = internalAction({
   args: { expenseId: v.id("expenses"), receiptKey: v.string() },
   handler: async (ctx, args): Promise<{ forwarded: boolean }> => {
@@ -486,7 +519,9 @@ export const forwardExpenseReceipt = internalAction({
     };
 
     if (!loaded.receiptUrl) {
-      return await fail("the receipt has no readable URL (R2_PUBLIC_URL unset?)");
+      return await fail(
+        "the receipt has no readable URL (R2_PUBLIC_URL unset?)",
+      );
     }
 
     try {
@@ -507,7 +542,22 @@ export const forwardExpenseReceipt = internalAction({
       if (!response.ok) {
         return await fail(`could not read the receipt (${response.status})`);
       }
+      // CHECKED BEFORE BUFFERING. `getR2FileUploadUrl` mints grants for objects
+      // up to 50 MB, and `arrayBuffer()` pulls the whole thing into this
+      // action's memory before anything else gets a say — so a 50 MB "receipt"
+      // is an OOM, not a rejected upload. A receipt is a photo of a till slip.
+      const declaredBytes = Number(response.headers.get("content-length"));
+      if (Number.isFinite(declaredBytes) && declaredBytes > MAX_RECEIPT_BYTES) {
+        return await fail(
+          `the receipt is too large to forward (${declaredBytes} bytes, max ${MAX_RECEIPT_BYTES})`,
+        );
+      }
       const bytes = await response.arrayBuffer();
+      if (bytes.byteLength > MAX_RECEIPT_BYTES) {
+        return await fail(
+          `the receipt is too large to forward (${bytes.byteLength} bytes, max ${MAX_RECEIPT_BYTES})`,
+        );
+      }
 
       await provider.forwardReceipt(loaded.providerTxnId, {
         bytes,
@@ -518,7 +568,8 @@ export const forwardExpenseReceipt = internalAction({
           loaded.contentType ??
           response.headers.get("content-type") ??
           "application/octet-stream",
-        filename: args.receiptKey.replace(/^r2:/, "").split("/").pop() ?? "receipt",
+        filename:
+          args.receiptKey.replace(/^r2:/, "").split("/").pop() ?? "receipt",
       });
     } catch (error) {
       return await fail(error instanceof Error ? error.message : String(error));
@@ -598,7 +649,11 @@ export const approveExpense = mutation({
       fundId: fund._id,
       actorUserId: userId,
       action: "expense.approved",
-      details: { expenseId: args.expenseId, decision: outcome.status, firstOrSecond },
+      details: {
+        expenseId: args.expenseId,
+        decision: outcome.status,
+        firstOrSecond,
+      },
     });
 
     if (outcome.status === "approved") {
@@ -680,7 +735,11 @@ export const denyExpense = mutation({
  */
 async function getPayoutDestination(
   _submitterId: Id<"users">,
-): Promise<{ routingNumber: string; accountNumber: string; individualName?: string } | null> {
+): Promise<{
+  routingNumber: string;
+  accountNumber: string;
+  individualName?: string;
+} | null> {
   return null;
 }
 
@@ -911,7 +970,9 @@ export const listExpenses = query({
     }
     rows.sort((a, b) => b.createdAt - a.createdAt);
 
-    const submitters = await Promise.all(rows.map((r) => ctx.db.get(r.submitterId)));
+    const submitters = await Promise.all(
+      rows.map((r) => ctx.db.get(r.submitterId)),
+    );
 
     return rows.map((row, i) => ({
       id: row._id,
