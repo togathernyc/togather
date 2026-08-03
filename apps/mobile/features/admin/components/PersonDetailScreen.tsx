@@ -212,7 +212,7 @@ export function PersonDetailScreen() {
     // First confirmation
     Alert.alert(
       "Transfer Primary Admin",
-      `Are you sure you want to make ${member?.first_name} ${member?.last_name} the Primary Admin of this community?`,
+      `Are you sure you want to make ${member?.first_name} ${member?.last_name} a Primary Admin of this community? You will be demoted to a regular Admin.`,
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -646,7 +646,7 @@ export function PersonDetailScreen() {
                 )}
               </TouchableOpacity>
               <Text style={[styles.transferHelpText, { color: colors.textTertiary }]}>
-                This will make {member.first_name} the Primary Admin. You will be demoted to a regular Admin. This action cannot be undone.
+                This will make {member.first_name} a Primary Admin. You will be demoted to a regular Admin. This action cannot be undone. Any other Primary Admins keep their role.
               </Text>
             </View>
           </View>

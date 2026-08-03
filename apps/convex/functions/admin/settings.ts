@@ -65,8 +65,9 @@ export const getCommunitySettings = query({
  * one can enter, switch into, or join it, and it disappears from search and
  * discovery. Existing sessions are booted the next time their token refreshes.
  *
- * Only the Primary Admin (the single community owner) may archive — reversing
- * this is a manual DB action, so it is deliberately gated to the owner.
+ * Only a Primary Admin may archive — reversing this is a manual DB action, so
+ * it is deliberately gated to the community's owners. A community may have
+ * several primary admins (see PRIMARY_ADMIN_ROLE); any one of them can archive.
  */
 export const archiveCommunity = mutation({
   args: {
