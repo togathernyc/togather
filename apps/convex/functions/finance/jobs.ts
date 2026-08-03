@@ -1746,8 +1746,14 @@ export const pollCardProviderTransactions = internalAction({
 
     let recorded = 0;
     for (const connection of connections) {
+      // Captured OUTSIDE the try so the failure path can use it: pollOneConnection
+      // reads the row first, and the generation it read is what makes a stale
+      // failure discardable.
+      let expectedUpdatedAt: number | null = null;
       try {
-        recorded += await pollOneConnection(ctx, connection);
+        recorded += await pollOneConnection(ctx, connection, (updatedAt) => {
+          expectedUpdatedAt = updatedAt;
+        });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.error(
@@ -1760,6 +1766,11 @@ export const pollCardProviderTransactions = internalAction({
             connectionId: connection.connectionId,
             error: message,
             credentialRejected: isCredentialRejection(error),
+            // The generation matters MORE on this path than on the success
+            // one: an old key's 401 arriving after an admin has already
+            // reconnected would otherwise mark the fresh credential "error"
+            // and disable the very thing that fixed the problem.
+            expectedUpdatedAt: expectedUpdatedAt ?? undefined,
           },
         );
       }
@@ -1807,12 +1818,15 @@ async function pollOneConnection(
     provider: string;
     syncCursor: string | null;
   },
+  /** Reports the generation read, so a THROW can still be attributed correctly. */
+  onGeneration: (updatedAt: number) => void,
 ): Promise<number> {
   const loaded = await ctx.runQuery(
     internal.functions.finance.jobs.getConnectionForPoll,
     { connectionId: connection.connectionId },
   );
   if (!loaded) return 0;
+  onGeneration(loaded.updatedAt);
 
   const provider = await getCardProviderByName(
     loaded.providerName,

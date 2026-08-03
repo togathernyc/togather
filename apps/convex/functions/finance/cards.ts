@@ -81,7 +81,10 @@ import {
   loadActiveProviderConnection,
   resolveCardProviderName,
 } from "../../lib/finance/cardProviders";
-import type { NormalizedLimit } from "../../lib/finance/cardProviders/types";
+import type {
+  CardState,
+  NormalizedLimit,
+} from "../../lib/finance/cardProviders/types";
 import {
   requireFundRole,
   requireFundRoleOrGroupLeader,
@@ -407,6 +410,40 @@ export const recordCardProvisionRefused = internalMutation({
  * ADR-033 Phase 1 moves those readers over. A BYOC card writes only the pair,
  * which is why those guards must move rather than be duplicated.
  */
+/**
+ * The adapter's normalized state -> the word stored in `cards.status`.
+ *
+ * `cards.status` is read by the mobile UI (badge copy, whether a freeze button
+ * appears) and by this module's own guards, and its vocabulary is Increase's:
+ * `active` | `disabled` | `canceled` | `pending` | `failed`. Writing the
+ * PROVIDER's raw word instead would put "OPEN"/"PAUSED"/"CLOSED" in there for
+ * Privacy — a card that renders no badge, offers no freeze, and is refused by
+ * `setCardLimit`'s own status check. That is a card nobody can control.
+ *
+ * Lossless for Increase, whose raw enum round-trips through
+ * `increaseStatusToCardState` to exactly these five words — so this changes
+ * nothing for the cards in production today. It is the BYO adapters it exists
+ * for, and it is why `ProviderCard` carries a normalized `state` at all.
+ *
+ * TODO: when a finance migration next runs, rename these to the neutral
+ * vocabulary (`paused`/`closed`) and migrate the column — the mapping is here
+ * only because the stored words predate the adapter seam.
+ */
+function cardStateToStoredStatus(state: CardState): string {
+  switch (state) {
+    case "active":
+      return "active";
+    case "paused":
+      return "disabled";
+    case "closed":
+      return "canceled";
+    case "pending":
+      return "pending";
+    case "failed":
+      return "failed";
+  }
+}
+
 export const recordCardProvisioned = internalMutation({
   args: {
     cardId: v.id("cards"),
@@ -521,7 +558,7 @@ export const provisionCard = internalAction({
         provider: provider.name,
         providerCardId: providerCard.providerCardId,
         last4: providerCard.last4,
-        status: providerCard.providerStatus,
+        status: cardStateToStoredStatus(providerCard.state),
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -581,15 +618,13 @@ export const setCardFrozen = mutation({
       );
     }
 
-    // TODO(ADR-033 Phase 1): move this readiness guard onto `providerCardId`.
-    // `recordCardProvisioned` writes `increaseCardId` only when the provider
-    // IS Increase, so a BYOC card would read as "never provisioned" here and
-    // could not be frozen, canceled, or re-limited — the kill switch failing
-    // closed on exactly the path ADR-033 exists to open. Unreachable today
-    // (`createFundCard` requires `fund.increaseAccountId`, and
-    // `getCardProviderByName` throws for every non-Increase name), which is
-    // why it is deferred rather than fixed here — see this module's header.
-    if (!card.increaseCardId) {
+    // Provider-NEUTRAL readiness. `recordCardProvisioned` writes
+    // `increaseCardId` only when the provider is Increase, so asking for it
+    // alone would read a perfectly live Privacy card as "never provisioned" —
+    // the kill switch failing closed on exactly the path ADR-033 opens, and no
+    // longer hypothetical now that `createFundCard` issues BYO cards. Same
+    // `providerCardId ?? increaseCardId` order the action side already uses.
+    if (!card.providerCardId && !card.increaseCardId) {
       throw new Error("This card hasn't finished provisioning yet");
     }
 
@@ -637,15 +672,13 @@ export const cancelCard = mutation({
     }
     await requireFundRole(ctx, fund._id, userId, "finance_admin");
 
-    // TODO(ADR-033 Phase 1): move this readiness guard onto `providerCardId`.
-    // `recordCardProvisioned` writes `increaseCardId` only when the provider
-    // IS Increase, so a BYOC card would read as "never provisioned" here and
-    // could not be frozen, canceled, or re-limited — the kill switch failing
-    // closed on exactly the path ADR-033 exists to open. Unreachable today
-    // (`createFundCard` requires `fund.increaseAccountId`, and
-    // `getCardProviderByName` throws for every non-Increase name), which is
-    // why it is deferred rather than fixed here — see this module's header.
-    if (!card.increaseCardId) {
+    // Provider-NEUTRAL readiness. `recordCardProvisioned` writes
+    // `increaseCardId` only when the provider is Increase, so asking for it
+    // alone would read a perfectly live Privacy card as "never provisioned" —
+    // the kill switch failing closed on exactly the path ADR-033 opens, and no
+    // longer hypothetical now that `createFundCard` issues BYO cards. Same
+    // `providerCardId ?? increaseCardId` order the action side already uses.
+    if (!card.providerCardId && !card.increaseCardId) {
       throw new Error("This card hasn't finished provisioning yet");
     }
 
@@ -744,7 +777,7 @@ export const applyCardStatus = internalAction({
     const result = await provider.setCardState(providerCardId, args.state);
     await ctx.runMutation(internal.functions.finance.cards.recordCardStatus, {
       cardId: args.cardId,
-      status: result.providerStatus,
+      status: cardStateToStoredStatus(result.state),
     });
   },
 });
@@ -798,15 +831,13 @@ export const setCardLimit = mutation({
     if (fund.status !== "active") {
       throw new Error("This fund isn't active — card limits can't be changed");
     }
-    // TODO(ADR-033 Phase 1): move this readiness guard onto `providerCardId`.
-    // `recordCardProvisioned` writes `increaseCardId` only when the provider
-    // IS Increase, so a BYOC card would read as "never provisioned" here and
-    // could not be frozen, canceled, or re-limited — the kill switch failing
-    // closed on exactly the path ADR-033 exists to open. Unreachable today
-    // (`createFundCard` requires `fund.increaseAccountId`, and
-    // `getCardProviderByName` throws for every non-Increase name), which is
-    // why it is deferred rather than fixed here — see this module's header.
-    if (!card.increaseCardId) {
+    // Provider-NEUTRAL readiness. `recordCardProvisioned` writes
+    // `increaseCardId` only when the provider is Increase, so asking for it
+    // alone would read a perfectly live Privacy card as "never provisioned" —
+    // the kill switch failing closed on exactly the path ADR-033 opens, and no
+    // longer hypothetical now that `createFundCard` issues BYO cards. Same
+    // `providerCardId ?? increaseCardId` order the action side already uses.
+    if (!card.providerCardId && !card.increaseCardId) {
       throw new Error("This card hasn't finished provisioning yet");
     }
     // "canceled" is irreversible and "failed"/"pending" have no card at the

@@ -159,6 +159,12 @@ export const recordCardSettlement = internalMutation({
     /** Absolute cents — callers strip the sign (a provider debit may be signed). */
     amountCents: v.number(),
     merchantDescription: v.string(),
+    /**
+     * When the charge happened at the PROVIDER, not when we heard about it.
+     * Optional because the Increase path doesn't carry it yet; absent means
+     * "use now()", which is what every caller did before ADR-033.
+     */
+    occurredAtMs: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     // Legacy cards carry only `increaseCardId`; ADR-033 cards carry the
@@ -251,7 +257,13 @@ export const recordCardSettlement = internalMutation({
       return; // Already recorded — a redelivered webhook (or a re-polled cursor boundary) is a no-op.
     }
 
-    const timestamp = now();
+    const recordedAt = now();
+    // A charge is filed under WHEN IT HAPPENED. The hourly poll is a backstop
+    // for missed webhooks, so it routinely imports charges hours or days late;
+    // stamping those with the import time would put them in the wrong month's
+    // books and measure them against the wrong spend-limit window. `updatedAt`
+    // stays the write time — that one really is about this row, not the money.
+    const timestamp = args.occurredAtMs ?? recordedAt;
     const expenseId = await ctx.db.insert("expenses", {
       fundId: fund._id,
       submitterId: card.holderUserId,
@@ -262,7 +274,7 @@ export const recordCardSettlement = internalMutation({
       cardId: card._id,
       increaseTransactionId: args.providerTxnId,
       createdAt: timestamp,
-      updatedAt: timestamp,
+      updatedAt: recordedAt,
     });
 
     await postLedgerEntry(ctx, {
@@ -727,6 +739,13 @@ export async function recordProviderTransaction(
     provider,
     providerCardId: txn.providerCardId,
     providerTxnId: txn.providerTxnId,
+    // WHEN it happened, not when we heard about it. The hourly backstop exists
+    // precisely to import charges hours after the fact, and stamping those
+    // with `now()` files them in the wrong month and evaluates them against
+    // the wrong spend-limit window.
+    occurredAtMs: Number.isFinite(txn.occurredAtMs)
+      ? txn.occurredAtMs
+      : undefined,
     // No `accountRef`: this provider has no per-fund account to cross-check
     // against. See recordCardSettlement's comment on hardFundIsolation.
     amountCents: txn.amountCents,

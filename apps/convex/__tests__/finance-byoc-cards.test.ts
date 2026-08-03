@@ -490,8 +490,52 @@ describe("issuing a card on a BYO provider", () => {
     // The legacy Increase column stays EMPTY — writing a Privacy token into it
     // would put a foreign card on the Increase webhook's lookup index.
     expect(card!.increaseCardId).toBeUndefined();
-    expect(card!.status).toBe("OPEN");
+    // NORMALIZED, not Privacy's raw "OPEN". `cards.status` is Increase's
+    // vocabulary and is read by the mobile badge, the freeze button, and
+    // setCardLimit's own guard — a raw "OPEN" is a card nobody can see the
+    // state of or control.
+    expect(card!.status).toBe("active");
     expect(card!.last4).toBe("1111");
+  });
+
+  test("a BYO card can be frozen, re-limited, and cancelled", async () => {
+    // The kill switch. These guards used to ask for `increaseCardId`, which a
+    // Privacy card never has — so issuing one and then being unable to stop it
+    // would have been the worst possible shape for this feature to ship in.
+    const t = convexTest(schema, modules);
+    const f = await seed(t);
+    await connect(t, f);
+    const cardId = await issueCard(t, f);
+    const token = await tokenFor(f.primaryAdminUserId);
+
+    await t.mutation(api.functions.finance.cards.setCardFrozen, {
+      token,
+      cardId,
+      frozen: true,
+    });
+    await t.action(internal.functions.finance.cards.applyCardStatus, {
+      cardId,
+      state: "paused",
+    });
+    expect((await t.run(async (ctx) => ctx.db.get(cardId)))!.status).toBe(
+      "disabled",
+    );
+
+    await t.mutation(api.functions.finance.cards.setCardLimit, {
+      token,
+      cardId,
+      spendLimitCents: 10_000,
+      limitPeriod: "month",
+    });
+
+    await t.mutation(api.functions.finance.cards.cancelCard, { token, cardId });
+    await t.action(internal.functions.finance.cards.applyCardStatus, {
+      cardId,
+      state: "closed",
+    });
+    expect((await t.run(async (ctx) => ctx.db.get(cardId)))!.status).toBe(
+      "canceled",
+    );
   });
 
   test("without a connection, creation is refused with a route forward", async () => {
@@ -628,6 +672,10 @@ describe("POST /card-provider-webhook/privacy", () => {
       kind: "card_charge",
       description: "OFFICE SUPPLY CO",
       increaseTransactionId: "txn_privacy_1",
+      // Filed under when it HAPPENED, not when we heard about it — the hourly
+      // backstop routinely imports charges late, and the import time would put
+      // them in the wrong month and the wrong spend-limit window.
+      createdAt: Date.parse("2026-08-01T12:00:00Z"),
     });
 
     const ledger = await t.run(async (ctx) =>
