@@ -237,9 +237,52 @@ export interface CardProviderAdapter {
   ): Promise<ProviderCard>;
 
   /**
-   * Pull transactions since `cursor`. Present only on providers whose
-   * `capabilities.webhooks` is not `"all"`; callers must check before use.
-   * Phase 1 wires this up — nothing calls it today.
+   * Pull transactions since `cursor`.
+   *
+   * Present on any provider whose settlement feed has to be reconciled — for
+   * a `webhooks: "all"` provider that still means SOMETHING, since a webhook
+   * endpoint that was down for an hour loses those deliveries forever unless a
+   * poll backstops them (`finance-card-txn-poll`, functions/finance/jobs.ts).
+   * Callers must check for the method before calling it.
+   *
+   * `cursor` is opaque to the caller and provider-defined: an ISO high-water
+   * mark for Privacy, potentially a page token elsewhere. Whatever comes back
+   * as `nextCursor` is what gets stored and handed back next time.
    */
   listTransactions?(cursor: string | null): Promise<ProviderTxnPage>;
+
+  /**
+   * Prove the stored credential still works, and say whose account it is.
+   *
+   * Present only on BRING-YOUR-OWN providers, where the credential belongs to
+   * the community and can be revoked, rotated, or pasted wrong by a human. A
+   * platform-key provider (Increase) has nothing to check that isn't already a
+   * deployment misconfiguration, so it doesn't implement this.
+   *
+   * MUST be read-only at the provider — this runs on a key someone just typed
+   * into a form, and validating a credential must never be able to move money.
+   *
+   * Throws when the credential is bad; the thrown message is shown to a
+   * finance admin. `accountLabel` is display text from the provider — treat it
+   * as untrusted.
+   */
+  checkConnection?(): Promise<{ accountLabel: string | null }>;
+
+  /**
+   * Verify a webhook delivery's signature.
+   *
+   * On the adapter rather than in the HTTP route because for a BYO provider
+   * the signing key is the COMMUNITY's credential, which only the
+   * credential-bound adapter holds. Providers whose webhook secret is a
+   * deployment env var (Increase) verify in their own module instead.
+   *
+   * `payload` is the PARSED body, not the raw bytes: providers that sign a
+   * canonical re-rendering (Privacy sorts keys and strips whitespace) cannot
+   * be verified from the wire bytes at all. An adapter that needs the raw
+   * bytes must take them another way.
+   *
+   * Returns a boolean and never throws — a malformed signature is "not from
+   * them", not a server error.
+   */
+  verifyWebhook?(payload: unknown, signature: string | null): Promise<boolean>;
 }

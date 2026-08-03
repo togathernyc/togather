@@ -10,6 +10,7 @@
 
 import { ConvexError } from "convex/values";
 import type { Id } from "../../../_generated/dataModel";
+import { decryptCredential, type EncryptedCredential } from "../credentialCrypto";
 import type { CardProviderAdapter } from "./types";
 
 export type {
@@ -33,7 +34,58 @@ export type CardProviderName = "increase" | "privacy" | "bill" | "none";
  * without a type gymnastics import.
  */
 interface DbCtx {
-  db: { query: (table: "communityFinance") => any };
+  db: { query: (table: "communityFinance" | "cardProviderConnections") => any };
+}
+
+/**
+ * A community's live connection to a bring-your-own issuer, as the resolver
+ * hands it around: the credential is still ENCRYPTED here. It is decrypted
+ * exactly once, inside `getCardProviderByName`, straight into the adapter
+ * closure — never assigned to a variable a caller can reach, never returned,
+ * never logged. "The key stays in memory only" is a claim this shape has to
+ * make structurally true, because a comment cannot.
+ */
+export interface ProviderConnection {
+  connectionId: Id<"cardProviderConnections">;
+  credential: EncryptedCredential;
+  accountLabel?: string;
+  syncCursor?: string;
+}
+
+/**
+ * The community's ACTIVE connection row, or null.
+ *
+ * "Active" excludes `revoked` (we disconnected — the ciphertext is dead) and
+ * `error` (the credential stopped working). Both are deliberate: a card
+ * operation on a broken connection should fail with "reconnect your card
+ * provider", not with whatever the vendor says about a stale key.
+ *
+ * Lives here rather than in a function module so the ACTION-side callers
+ * (`provisionCard` et al, which have no `ctx.db`) can load it inside the
+ * internalQuery they already run, in one round trip.
+ */
+export async function loadActiveProviderConnection(
+  ctx: DbCtx,
+  communityId: Id<"communities">,
+): Promise<ProviderConnection | null> {
+  const rows = await ctx.db
+    .query("cardProviderConnections")
+    .withIndex("by_community", (q: any) => q.eq("communityId", communityId))
+    .collect();
+  const active = rows.find(
+    (row: { status: string }) => row.status === "active",
+  );
+  if (!active) return null;
+  return {
+    connectionId: active._id,
+    credential: {
+      ciphertext: active.credentialCiphertext,
+      iv: active.credentialIv,
+      keyVersion: active.keyVersion,
+    },
+    accountLabel: active.accountLabel,
+    syncCursor: active.syncCursor,
+  };
 }
 
 /**
@@ -81,33 +133,60 @@ export async function getCardProvider(
   ctx: DbCtx,
   communityId: Id<"communities">,
 ): Promise<CardProviderAdapter> {
+  const name = await resolveCardProviderName(ctx, communityId);
   return await getCardProviderByName(
-    await resolveCardProviderName(ctx, communityId),
+    name,
+    // Only BYO providers have a connection to load; asking for one on Increase
+    // would be a wasted read on every card operation the platform performs.
+    name === "increase" || name === "none"
+      ? null
+      : await loadActiveProviderConnection(ctx, communityId),
   );
 }
 
 /**
  * The db-free half of `getCardProvider`, for ACTIONS.
  *
- * An action has no `ctx.db`, so the card actions resolve the name inside the
- * internalQuery they already run (`getCardForProvisioning` /
- * `getCardInternal`) and pass it here. Splitting the resolution from the
- * import is what keeps that from costing a second round trip.
+ * An action has no `ctx.db`, so the card actions resolve the name AND load the
+ * (still-encrypted) connection inside the internalQuery they already run
+ * (`getCardForProvisioning` / `getCardInternal`) and pass both here. Splitting
+ * the resolution from the import is what keeps that from costing a second
+ * round trip.
+ *
+ * `connection` is required for a BRING-YOUR-OWN provider and ignored for
+ * Increase, whose key is the platform's. DECRYPTION HAPPENS HERE and nowhere
+ * else in the card path: the plaintext key is passed straight into the adapter
+ * factory and is unreachable from any caller afterwards.
  */
 export async function getCardProviderByName(
   name: CardProviderName,
+  connection: ProviderConnection | null = null,
 ): Promise<CardProviderAdapter> {
   switch (name) {
     case "increase": {
       const { increaseCardProvider } = await import("./increase");
       return increaseCardProvider;
     }
-    case "privacy":
+    case "privacy": {
+      if (!connection) {
+        // A community set to "privacy" with no live connection is a real
+        // state, not a bug: they disconnected, or the key stopped working and
+        // the connection went to "error". Say which thing to do, since the
+        // person reading this is the finance admin who has to do it.
+        throw new ConvexError(
+          "This community's Privacy.com account isn't connected — reconnect it in Community Settings → Finance before issuing or changing cards",
+        );
+      }
+      const { createPrivacyCardProvider } = await import("./privacy");
+      return createPrivacyCardProvider(
+        await decryptCredential(connection.credential),
+      );
+    }
     case "bill":
-      // Phase 1 lands these adapters. Until then a community cannot be put on
-      // one (nothing writes `cardProvider`), so reaching this is a
-      // hand-edited row — say so plainly rather than falling back to Increase,
-      // which would issue a card at the wrong bank.
+      // A later phase lands this adapter. Until then a community cannot be put
+      // on it, so reaching this is a hand-edited row — say so plainly rather
+      // than falling back to Increase, which would issue a card at the wrong
+      // bank.
       throw new ConvexError(
         `The "${name}" card provider isn't available yet — this community's card provider setting is ahead of the code`,
       );
@@ -116,4 +195,11 @@ export async function getCardProviderByName(
         "No card provider is configured for this community — finish finance setup before issuing cards",
       );
   }
+}
+
+/** Does this provider bring its own, community-held credential? */
+export function isBringYourOwnProvider(
+  name: CardProviderName,
+): name is "privacy" | "bill" {
+  return name === "privacy" || name === "bill";
 }
