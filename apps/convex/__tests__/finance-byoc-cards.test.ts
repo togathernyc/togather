@@ -269,13 +269,18 @@ describe("connectCardProvider", () => {
     expect(row!.credentialCiphertext).not.toBe(API_KEY);
     expect(JSON.stringify(row)).not.toContain(API_KEY);
 
-    // ...and they are genuinely the key, not merely different from it.
+    // ...and they are genuinely the key, not merely different from it. The
+    // decrypt must present the row's own (community, provider) identity —
+    // that is the AAD binding, and it is itself part of what this asserts.
     await expect(
-      decryptCredential({
-        ciphertext: row!.credentialCiphertext,
-        iv: row!.credentialIv,
-        keyVersion: row!.keyVersion,
-      }),
+      decryptCredential(
+        {
+          ciphertext: row!.credentialCiphertext,
+          iv: row!.credentialIv,
+          keyVersion: row!.keyVersion,
+        },
+        { communityId: f.communityId, provider: "privacy", purpose: "apiKey" },
+      ),
     ).resolves.toBe(API_KEY);
 
     const finance = await t.run(async (ctx) =>
@@ -378,11 +383,18 @@ describe("connectCardProvider", () => {
     // nothing to do with the position we were holding.
     expect(rows[0].syncCursor).toBeUndefined();
     await expect(
-      decryptCredential({
-        ciphertext: rows[0].credentialCiphertext,
-        iv: rows[0].credentialIv,
-        keyVersion: rows[0].keyVersion,
-      }),
+      decryptCredential(
+        {
+          ciphertext: rows[0].credentialCiphertext,
+          iv: rows[0].credentialIv,
+          keyVersion: rows[0].keyVersion,
+        },
+        {
+          communityId: rows[0].communityId,
+          provider: "privacy",
+          purpose: "apiKey",
+        },
+      ),
     ).resolves.toBe("rotated-key");
   });
 });

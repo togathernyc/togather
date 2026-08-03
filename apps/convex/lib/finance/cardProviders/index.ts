@@ -47,6 +47,11 @@ interface DbCtx {
  */
 export interface ProviderConnection {
   connectionId: Id<"cardProviderConnections">;
+  /** Carried for the decrypt AAD: the ciphertext only opens for the row's own
+   * (community, provider) identity, so a credential lifted onto another row
+   * refuses to decrypt (see credentialCrypto.ts's CredentialContext). */
+  communityId: Id<"communities">;
+  provider: string;
   credential: EncryptedCredential;
   accountLabel?: string;
   syncCursor?: string;
@@ -78,6 +83,8 @@ export async function loadActiveProviderConnection(
   if (!active) return null;
   return {
     connectionId: active._id,
+    communityId,
+    provider: active.provider,
     credential: {
       ciphertext: active.credentialCiphertext,
       iv: active.credentialIv,
@@ -179,7 +186,11 @@ export async function getCardProviderByName(
       }
       const { createPrivacyCardProvider } = await import("./privacy");
       return createPrivacyCardProvider(
-        await decryptCredential(connection.credential),
+        await decryptCredential(connection.credential, {
+          communityId: connection.communityId,
+          provider: connection.provider,
+          purpose: "apiKey",
+        }),
       );
     }
     case "bill":

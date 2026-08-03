@@ -309,7 +309,11 @@ export const connectCardProvider = action({
       );
     }
 
-    const encrypted = await encryptCredential(apiKey);
+    const encrypted = await encryptCredential(apiKey, {
+      communityId: args.communityId,
+      provider: args.provider,
+      purpose: "apiKey",
+    });
     await ctx.runMutation(
       internal.functions.finance.cardProviderConnections
         .saveCardProviderConnection,
