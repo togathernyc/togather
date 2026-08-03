@@ -77,6 +77,8 @@ import {
 } from "../../lib/finance/cardPolicy";
 import {
   getCardProviderByName,
+  isBringYourOwnProvider,
+  loadActiveProviderConnection,
   resolveCardProviderName,
 } from "../../lib/finance/cardProviders";
 import type { NormalizedLimit } from "../../lib/finance/cardProviders/types";
@@ -189,6 +191,38 @@ export const listFundCards = query({
 // createFundCard
 // ============================================================================
 
+/**
+ * Why this fund CAN'T have a card issued right now, or `null` if it can.
+ *
+ * Returns the sentence rather than a boolean because the two providers fail
+ * for genuinely different reasons and a shared "not ready" would send an admin
+ * looking in the wrong place — one of them needs to wait for Increase, the
+ * other needs to go paste an API key.
+ *
+ * Called TWICE: once in `createFundCard`, and again inside
+ * `getCardForProvisioning` right before the provider call. Not belt-and-braces
+ * — those run in different transactions, however far apart, and a connection
+ * revoked in the gap would otherwise still produce a live card.
+ */
+async function describeCardIssuingReadiness(
+  ctx: { db: any },
+  fund: Doc<"funds">,
+  providerName: Awaited<ReturnType<typeof resolveCardProviderName>>,
+): Promise<string | null> {
+  if (providerName === "none") {
+    return "This community hasn't set up a card provider yet — connect one in Community Settings → Finance";
+  }
+  if (isBringYourOwnProvider(providerName)) {
+    const connection = await loadActiveProviderConnection(ctx, fund.communityId);
+    return connection
+      ? null
+      : `This community's ${providerName} account isn't connected — reconnect it in Community Settings → Finance`;
+  }
+  // Increase: the fund's own Account is the card's boundary, so no Account
+  // means no card that could be safely scoped to this fund.
+  return fund.increaseAccountId ? null : "This fund's bank account isn't ready yet";
+}
+
 export const createFundCard = mutation({
   args: {
     token: v.string(),
@@ -217,8 +251,26 @@ export const createFundCard = mutation({
     if (fund.status !== "active") {
       throw new Error("This fund isn't active — cards can't be issued");
     }
-    if (!fund.increaseAccountId) {
-      throw new Error("This fund's bank account isn't ready yet");
+
+    // "Is this community ready to issue a card?" has TWO answers since
+    // ADR-033, and they are not variations of one check:
+    //
+    //   increase — the fund needs its own Increase Account, because the card
+    //              is bound to it and the bank enforces the fund boundary.
+    //   BYO      — there is no per-fund account to need; what must exist is a
+    //              live connection to the church's own issuer.
+    //
+    // The old single `!fund.increaseAccountId` gate is why a BYO community
+    // could not issue a card at all: it asked for an artifact their model
+    // never produces.
+    const providerName = await resolveCardProviderName(ctx, fund.communityId);
+    const readiness = await describeCardIssuingReadiness(
+      ctx,
+      fund,
+      providerName,
+    );
+    if (readiness) {
+      throw new Error(readiness);
     }
 
     // The holder must ACTUALLY hold cardholder+ on the fund's own fundRoles
@@ -298,13 +350,20 @@ export const getCardForProvisioning = internalQuery({
       .query("communityFinance")
       .withIndex("by_community", (q) => q.eq("communityId", fund.communityId))
       .first();
+    // Resolved here, in the query, because `provisionCard` is an ACTION and
+    // has no `ctx.db` to resolve any of this with (ADR-033).
+    const providerName = await resolveCardProviderName(ctx, fund.communityId);
     return {
       card,
       fund,
       onboardingStatus: finance?.onboardingStatus ?? null,
-      // Resolved here, in the query, because `provisionCard` is an ACTION and
-      // has no `ctx.db` to resolve it with (ADR-033).
-      providerName: await resolveCardProviderName(ctx, fund.communityId),
+      providerName,
+      /** Null when ready; otherwise the sentence explaining what's missing. */
+      readiness: await describeCardIssuingReadiness(ctx, fund, providerName),
+      /** Encrypted; the resolver decrypts it into the adapter. Null for Increase. */
+      connection: isBringYourOwnProvider(providerName)
+        ? await loadActiveProviderConnection(ctx, fund.communityId)
+        : null,
     };
   },
 });
@@ -410,26 +469,25 @@ export const provisionCard = internalAction({
       );
       return;
     }
-    const { card, fund, onboardingStatus, providerName } = loaded;
+    const { card, fund, onboardingStatus, providerName, readiness, connection } =
+      loaded;
 
     // Re-check every gate createFundCard checked, immediately before the
     // provider call. createFundCard's checks ran in a DIFFERENT transaction,
-    // however long ago; a fund frozen (e.g. its group was archived) or a
-    // community knocked out of "live" in the gap would otherwise still get a
-    // live card at the bank — an app-side freeze that quietly issues spending
-    // power is worse than no freeze at all. Refuse loudly and audit; do not
-    // retry, because the state that changed is a deliberate one.
-    const accountId = fund.increaseAccountId;
-    const refusal = !accountId
-      ? "fund has no Increase Account"
-      : fund.status !== "active"
+    // however long ago; a fund frozen (e.g. its group was archived), a
+    // community knocked out of "live", or a card provider disconnected in the
+    // gap would otherwise still get a live card at the issuer — an app-side
+    // freeze that quietly issues spending power is worse than no freeze at
+    // all. Refuse loudly and audit; do not retry, because the state that
+    // changed is a deliberate one.
+    const refusal =
+      readiness ??
+      (fund.status !== "active"
         ? `fund status is "${fund.status}"`
         : onboardingStatus !== "live"
           ? `community onboarding status is "${onboardingStatus ?? "missing"}"`
-          : null;
-    // `!accountId` is re-tested only so TypeScript can narrow it below —
-    // the `refusal` chain above already covers that case.
-    if (refusal !== null || !accountId) {
+          : null);
+    if (refusal !== null) {
       console.error(
         `[finance] provisionCard: refusing to provision card ${args.cardId} — ${refusal}`,
       );
@@ -444,9 +502,13 @@ export const provisionCard = internalAction({
       // ADR-033: the card module talks to an ADAPTER, never to a named
       // provider client. Resolution happened in getCardForProvisioning (an
       // action has no ctx.db); this only turns the name into the adapter.
-      const provider = await getCardProviderByName(providerName);
+      const provider = await getCardProviderByName(providerName, connection);
       const providerCard = await provider.createCard({
-        fundAccountRef: accountId,
+        // Empty string for a provider with no per-fund account — the adapter
+        // ignores it, which is `capabilities.hardFundIsolation: false` made
+        // literal. `readiness` above already proved this is non-empty for the
+        // providers that DO bind a card to an account.
+        fundAccountRef: fund.increaseAccountId ?? "",
         description: `${fund.name} — ${card.name ?? "Card"}`,
         idempotencyKey: `finance:card:${args.cardId}`,
         // The spend limit the finance_admin picked. Sent AT CREATION so there
@@ -625,9 +687,16 @@ export const getCardInternal = internalQuery({
     if (!card) return null;
     const fund = await ctx.db.get(card.fundId);
     if (!fund) return null;
+    const providerName = await resolveCardProviderName(ctx, fund.communityId);
     return {
       card,
-      providerName: await resolveCardProviderName(ctx, fund.communityId),
+      providerName,
+      // Loaded here, alongside the name, for the same reason the name is:
+      // the action has no `ctx.db`. Still ENCRYPTED — the resolver decrypts it
+      // into the adapter and nothing in this module ever sees the key.
+      connection: isBringYourOwnProvider(providerName)
+        ? await loadActiveProviderConnection(ctx, fund.communityId)
+        : null,
     };
   },
 });
@@ -668,7 +737,10 @@ export const applyCardStatus = internalAction({
       return;
     }
 
-    const provider = await getCardProviderByName(loaded.providerName);
+    const provider = await getCardProviderByName(
+      loaded.providerName,
+      loaded.connection,
+    );
     const result = await provider.setCardState(providerCardId, args.state);
     await ctx.runMutation(internal.functions.finance.cards.recordCardStatus, {
       cardId: args.cardId,
@@ -882,7 +954,10 @@ export const applyCardLimit = internalAction({
     // the world in opposite states — see recordCardLimitFailed. Mirrors
     // provisionCard's catch-and-record shape; a limit change that silently
     // vanished is the one outcome nobody can detect from the app.
-    const provider = await getCardProviderByName(loaded.providerName);
+    const provider = await getCardProviderByName(
+      loaded.providerName,
+      loaded.connection,
+    );
     try {
       await provider.setSpendLimit(
         providerCardId,
