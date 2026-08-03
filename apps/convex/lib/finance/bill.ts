@@ -156,7 +156,16 @@ interface BillRequestOptions {
   nullOn404?: boolean;
 }
 
-/** Thrown for a non-2xx that isn't a tolerated 404. Carries the status for callers that branch on it. */
+/**
+ * Thrown for a non-2xx that isn't a tolerated 404.
+ *
+ * `status` is not decoration: `pollCardProviderTransactions` reads it to decide
+ * whether a failure DEACTIVATES the connection (401/403 — the credential was
+ * refused) or merely records an error and retries next hour (429, 5xx — the
+ * credential is fine, the moment isn't). A client that threw a bare `Error`
+ * would silently stop deactivating revoked tokens, and a church would keep a
+ * dead connection showing green.
+ */
 export class BillApiError extends Error {
   constructor(
     message: string,
@@ -165,6 +174,25 @@ export class BillApiError extends Error {
     super(message);
     this.name = "BillApiError";
   }
+}
+
+/**
+ * Remove the API token from text that is about to be shown, logged, or stored.
+ *
+ * Mirrors `redactApiKey` in lib/finance/privacy.ts, and for the same reason: an
+ * error body is vendor text headed for a finance admin's screen via
+ * `recordCardProvisionFailed`, and a provider that echoes the credential it
+ * rejected would put a live spending token in a place we deliberately never
+ * write one.
+ *
+ * A plain `split`/`join` rather than a regex — the token is arbitrary text and
+ * would need escaping to be a safe pattern. Short values are ignored: nothing
+ * under 8 characters is a real BILL token, and blindly replacing a 3-character
+ * string would mangle unrelated error text.
+ */
+export function redactApiToken(text: string, apiToken: string): string {
+  if (apiToken.length < 8) return text;
+  return text.split(apiToken).join("[redacted]");
 }
 
 /**
@@ -211,7 +239,7 @@ async function billRequest<T>(
   if (response.status === 404 && options.nullOn404) return null;
 
   if (!response.ok) {
-    const text = await response.text();
+    const text = redactApiToken(await response.text(), client.apiToken);
     throw new BillApiError(
       `BILL API ${options.method} ${path} failed (${response.status}): ${text}`,
       response.status,

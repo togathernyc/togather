@@ -617,6 +617,10 @@ interface PrivacyWebhookPayload {
  * be found via the payload's own card token). Quoting through `JSON.stringify`
  * escapes newlines and control characters, so a token cannot forge a second
  * log entry, and the length bound stops one request from flooding the log.
+ *
+ * The BILL route needs this MORE, not less: BILL publishes no signature at
+ * all, so every field it logs is attacker-supplied at every point in the
+ * handler, not merely before a check that eventually rejects.
  */
 function forLog(value: string): string {
   return JSON.stringify(value.length > 64 ? `${value.slice(0, 64)}…` : value);
@@ -799,7 +803,7 @@ export async function handleBillWebhookRequest(
   );
   if (!resolved) {
     console.log(
-      `[BillWebhook] No Togather card (or no active connection) for card ${cardUuid} — ignoring`,
+      `[BillWebhook] No Togather card (or no active connection) for card ${forLog(cardUuid)} — ignoring`,
     );
     return ok({ ignored: true });
   }
@@ -836,7 +840,7 @@ export async function handleBillWebhookRequest(
     // The fetch itself failed (rate limit, revoked token, BILL down). 500 so
     // BILL redelivers; the hourly poll covers it either way.
     console.error(
-      `[BillWebhook] Could not re-fetch transaction ${transactionUuid}:`,
+      `[BillWebhook] Could not re-fetch transaction ${forLog(transactionUuid)}:`,
       error,
     );
     return new Response("Webhook processing failed", { status: 500 });
@@ -847,7 +851,7 @@ export async function handleBillWebhookRequest(
     // for an object that no longer exists — both are "write nothing", and
     // neither is worth a retry.
     console.log(
-      `[BillWebhook] BILL has no transaction ${transactionUuid} — ignoring (payloads are hints, not evidence)`,
+      `[BillWebhook] BILL has no transaction ${forLog(transactionUuid)} — ignoring (payloads are hints, not evidence)`,
     );
     return ok({ ignored: true });
   }

@@ -148,6 +148,18 @@ const BILL_USER_MAX_PAGES = 20;
  * budget, which is BILL's only expression of "uncapped". Stated EXPLICITLY
  * rather than by omission, because omitting fields on a PATCH leaves whatever
  * the card already had.
+ *
+ * UNREACHABLE FROM THE APP, exactly as Privacy's equivalent branch is: BILL has
+ * no hard fund isolation, so `requiresSpendLimit("bill")` is true and
+ * `createFundCard` / `setCardLimit` refuse to make an uncapped card. This
+ * branch is the adapter honouring its own contract ("no limit must be stated
+ * explicitly"), not a path anything takes.
+ *
+ * Likewise `week`: `supportsWeeklyLimits("bill")` is false, so the gate refuses
+ * a weekly limit before it reaches here rather than letting a card say
+ * "/ week" while capping a flat amount. The mapping below stays because the
+ * adapter must still answer honestly if it is ever handed one — the refusal
+ * lives at the gate, not in two divergent copies.
  */
 export function toBillCardLimit(limit: NormalizedLimit | null): {
   limit?: number;
@@ -412,23 +424,26 @@ export function createBillCardProvider(apiToken: string): CardProviderAdapter {
 
       if (state !== "closed") return providerCard;
 
-      // THE ONE PLACE THIS ADAPTER DOES NOT PASS BILL'S STRING THROUGH
-      // VERBATIM, and it is load-bearing rather than tidy.
+      // OVERRIDE THE NORMALIZED STATE, AND ONLY THAT. It is load-bearing
+      // rather than tidy.
       //
       // A closed BILL card and a paused one are both `FROZEN` at the vendor —
-      // BILL has no word for what we just did. But `cards.status` stores this
-      // string, and real readers branch on it: `countLiveProviderCards`
-      // (functions/finance/cardProviderConnections.ts) refuses to disconnect a
-      // provider while cards are alive, and it decides "alive" from exactly
-      // this value. Passing `FROZEN` through would mean a church that closed
+      // BILL has no word for what we just did, so `billStatusToCardState`
+      // reads the response as `paused`. But `state` is what
+      // `cardStateToStoredStatus` turns into `cards.status` at the write, and
+      // `countLiveProviderCards` decides whether a card is still spending from
+      // exactly that. Leaving it `paused` would store "disabled" — a live card
+      // as far as the disconnect guard is concerned — and a church that closed
       // every card could never disconnect BILL without `force`.
       //
-      // So a close reports `CLOSED`: already in that module's dead set, already
-      // the vocabulary Privacy uses, and TRUE about what Togather did. What it
-      // must not be read as is a claim that the card is destroyed at the bank —
-      // `capabilities.cardCloseReversible: true` is the field that says
-      // otherwise, and the UI copy hangs off that, not off this string.
-      return { ...providerCard, state: "closed", providerStatus: "CLOSED" };
+      // `providerStatus` is deliberately NOT touched: it stays BILL's own
+      // `FROZEN`, verbatim, because that is literally what the card is at the
+      // bank and the field's whole contract is to carry the vendor's word
+      // unedited. The two together say the true thing — Togather considers
+      // this card closed, BILL has it frozen — and
+      // `capabilities.cardCloseReversible: true` is what stops the UI from
+      // promising a destruction that never happened.
+      return { ...providerCard, state: "closed" };
     },
 
     /**
@@ -469,10 +484,26 @@ export function createBillCardProvider(apiToken: string): CardProviderAdapter {
      * feed at all — a purchase that authorized last week and CLEARS today is
      * updated today, and an occurredTime cursor would have walked past it.
      *
-     * IF THE BACKLOG EXCEEDS `BILL_TXN_MAX_PAGES`, the cursor does NOT advance.
-     * The next poll re-reads the same window rather than skipping ahead — a
-     * stall an operator notices, instead of a hole in a church's books that
-     * nobody does. Everything fetched is still returned and recorded.
+     * IF THE BACKLOG EXCEEDS `BILL_TXN_MAX_PAGES`, the cursor does NOT advance
+     * and the page comes back `truncated: true`. The next poll re-reads the
+     * same window rather than skipping ahead, and `pollOneConnection` records
+     * the stall as a visible error — an operator notices, instead of a hole in
+     * a church's books that nobody does. Everything fetched is still recorded.
+     *
+     * THE CURSOR ALSO STOPS BELOW THE OLDEST STILL-CHANGEABLE TRANSACTION, the
+     * same invariant the Privacy adapter holds. The reasoning transfers even
+     * though the mechanism differs: an `AUTHORIZATION` is one we deliberately
+     * did not record, and BILL turns it into a `CLEAR` by UPDATING THE SAME
+     * uuid. In principle that bumps `updatedTime` and a plain high-water mark
+     * would still catch it — but "BILL always bumps `updatedTime` on
+     * settlement" is precisely the sort of vendor claim this integration lists
+     * as unverified, and if it is ever false the settled charge is imported by
+     * nothing at all. Holding below the oldest pending row costs one re-read
+     * per poll and removes the assumption entirely.
+     *
+     * Held on `updatedTime`, NOT `occurredTime`: the cursor is a high-water
+     * mark over `updatedTime`, and holding one field back while advancing on
+     * another would leave exactly the gap this is meant to close.
      */
     async listTransactions(cursor: string | null): Promise<ProviderTxnPage> {
       const since =
@@ -503,19 +534,34 @@ export function createBillCardProvider(apiToken: string): CardProviderAdapter {
         // dropping it here keeps the recorder from logging a mystery.
         .filter((txn) => txn.providerTxnId !== "" && txn.providerCardId !== "");
 
-      // Only advance past what we know we've seen ALL of.
+      // The oldest `updatedTime` that can still change state. Terminal rows
+      // (settled, declined) are safe to pass: settled is already recorded, and
+      // a later refund on it is work the recorder skips either way.
+      let holdBackFrom: number | null = null;
+      for (const row of collected) {
+        if (billTxnState(row.transactionType ?? "") !== "pending") continue;
+        const parsed = Date.parse(row.updatedTime ?? "");
+        if (Number.isNaN(parsed)) continue;
+        if (holdBackFrom === null || parsed < holdBackFrom) {
+          holdBackFrom = parsed;
+        }
+      }
+
+      // Only advance past what we know we've seen ALL of, and never past
+      // something still in flight.
       let nextCursor = cursor;
       if (exhausted) {
-        for (const txn of collected) {
-          const parsed = Date.parse(txn.updatedTime ?? "");
+        for (const row of collected) {
+          const parsed = Date.parse(row.updatedTime ?? "");
           if (Number.isNaN(parsed)) continue;
+          if (holdBackFrom !== null && parsed >= holdBackFrom) continue;
           if (nextCursor === null || parsed > Date.parse(nextCursor)) {
             nextCursor = new Date(parsed).toISOString();
           }
         }
       }
 
-      return { transactions, nextCursor };
+      return { transactions, nextCursor, truncated: !exhausted };
     },
 
     /**

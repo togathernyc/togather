@@ -29,6 +29,7 @@ import { modules } from "../test.setup";
 import type { Id } from "../_generated/dataModel";
 import { generateTokens } from "../lib/auth";
 import { decryptCredential } from "../lib/finance/credentialCrypto";
+import { BillApiError } from "../lib/finance/bill";
 
 process.env.JWT_SECRET = "test-jwt-secret-for-unit-tests-minimum-32-chars";
 /** 32 bytes, base64 — a valid AES-256 key for the envelope crypto. */
@@ -470,7 +471,9 @@ describe("issuing a BILL card", () => {
     // The legacy Increase column stays EMPTY — writing a BILL uuid into it
     // would put a foreign card on the Increase webhook's lookup index.
     expect(row!.increaseCardId).toBeUndefined();
-    expect(row!.status).toBe("ACTIVATED");
+    // The NORMALIZED state is what gets persisted, not BILL's `ACTIVATED` —
+    // `cards.status` speaks one vocabulary whatever the issuer calls it.
+    expect(row!.status).toBe("active");
     expect(row!.last4).toBe("9999");
   });
 
@@ -729,9 +732,39 @@ describe("finance-card-txn-poll on BILL", () => {
     return f;
   }
 
+  /**
+   * Connecting SEEDS the cursor at the connect moment, so a poll whose mocked
+   * feed predates that would legitimately advance nothing. Tests that assert
+   * advancement therefore rewind the cursor first, exactly as a connection a
+   * few days old would be.
+   */
+  async function rewindCursor(
+    t: ReturnType<typeof convexTest>,
+    to = "2026-07-30T00:00:00.000Z",
+  ) {
+    await t.run(async (ctx) => {
+      const row = await ctx.db.query("cardProviderConnections").first();
+      await ctx.db.patch(row!._id, { syncCursor: to });
+    });
+  }
+
+  test("connecting seeds a cursor so a failing first poll can't slide its horizon", async () => {
+    const t = convexTest(schema, modules);
+    const f = await seed(t);
+    await connect(t, f);
+
+    const row = await t.run(async (ctx) =>
+      ctx.db.query("cardProviderConnections").first(),
+    );
+    // An ISO timestamp, which is what BILL's cursor is defined to be — the
+    // adapter's `updatedTime:gte` filter consumes it directly.
+    expect(row!.syncCursor).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+
   test("records clearings and advances the updatedTime cursor", async () => {
     const t = convexTest(schema, modules);
     await connectedWithCard(t);
+    await rewindCursor(t);
     bill.listBillTransactions.mockResolvedValue({
       results: [
         CLEARED_TXN,
@@ -793,10 +826,7 @@ describe("finance-card-txn-poll on BILL", () => {
   test("a resumed poll filters from the stored cursor", async () => {
     const t = convexTest(schema, modules);
     await connectedWithCard(t);
-    await t.run(async (ctx) => {
-      const row = await ctx.db.query("cardProviderConnections").first();
-      await ctx.db.patch(row!._id, { syncCursor: "2026-07-30T00:00:00.000Z" });
-    });
+    await rewindCursor(t);
 
     await t.action(internal.functions.finance.jobs.pollCardProviderTransactions, {});
     const [, params] = bill.listBillTransactions.mock.calls[0] as any[];
@@ -821,15 +851,18 @@ describe("finance-card-txn-poll on BILL", () => {
     expect(await countWrites(t)).toEqual({ expenses: 1, ledger: 1 });
   });
 
-  test("a revoked token flips the connection to error and keeps its cursor", async () => {
+  test("a REVOKED token (401) deactivates the connection and keeps its cursor", async () => {
+    // The rejection is detected off `error.status`, so this asserts the join
+    // between BillApiError carrying the status and the poll acting on it — a
+    // client that threw a bare Error would silently stop deactivating.
     const t = convexTest(schema, modules);
     await connectedWithCard(t);
-    await t.run(async (ctx) => {
-      const row = await ctx.db.query("cardProviderConnections").first();
-      await ctx.db.patch(row!._id, { syncCursor: "2026-07-30T00:00:00.000Z" });
-    });
+    await rewindCursor(t);
     bill.listBillTransactions.mockRejectedValue(
-      new Error("BILL API GET /v3/spend/transactions failed (401): revoked"),
+      new BillApiError(
+        "BILL API GET /v3/spend/transactions failed (401): revoked",
+        401,
+      ),
     );
 
     const result = await t.action(
@@ -845,6 +878,81 @@ describe("finance-card-txn-poll on BILL", () => {
     expect(row!.lastError).toContain("401");
     // Never rewound: the next successful poll re-reads from where we stopped.
     expect(row!.syncCursor).toBe("2026-07-30T00:00:00.000Z");
+  });
+
+  test("a RATE LIMIT (429) records the error but keeps the connection live", async () => {
+    // Only a rejected credential deactivates. BILL allows 60 calls a minute
+    // per token and a busy church can brush it — flipping a working connection
+    // to "error" for that would send a finance admin to re-paste a token that
+    // was never the problem.
+    const t = convexTest(schema, modules);
+    await connectedWithCard(t);
+    bill.listBillTransactions.mockRejectedValue(
+      new BillApiError("BILL API GET /v3/spend/transactions failed (429): slow down", 429),
+    );
+
+    await t.action(internal.functions.finance.jobs.pollCardProviderTransactions, {});
+
+    const row = await t.run(async (ctx) =>
+      ctx.db.query("cardProviderConnections").first(),
+    );
+    expect(row!.status).toBe("active");
+    expect(row!.lastError).toContain("429");
+  });
+
+  test("A TRUNCATED BACKLOG IS A VISIBLE ERROR, not a silent healthy poll", async () => {
+    // The adapter held its cursor because it couldn't read to the end of the
+    // feed. Without this the connection would look healthy forever while
+    // everything past the page budget never arrived.
+    const t = convexTest(schema, modules);
+    await connectedWithCard(t);
+    await rewindCursor(t);
+    bill.listBillTransactions.mockResolvedValue({
+      results: [CLEARED_TXN],
+      nextPage: "always-more",
+    });
+
+    await t.action(internal.functions.finance.jobs.pollCardProviderTransactions, {});
+
+    const row = await t.run(async (ctx) =>
+      ctx.db.query("cardProviderConnections").first(),
+    );
+    expect(row!.lastError).toMatch(/backlog exceeds one poll/i);
+    // The credential is fine — the volume isn't — so the connection stays live.
+    expect(row!.status).toBe("active");
+    expect(row!.syncCursor).toBe("2026-07-30T00:00:00.000Z");
+  });
+
+  test("THE CURSOR HOLDS BELOW AN UNSETTLED AUTHORIZATION", async () => {
+    // End-to-end form of the adapter-level invariant: the authorization is not
+    // recorded, so the cursor must not step past it — otherwise a settlement
+    // that BILL fails to re-timestamp is imported by nothing at all.
+    const t = convexTest(schema, modules);
+    await connectedWithCard(t);
+    await rewindCursor(t);
+    bill.listBillTransactions.mockResolvedValue({
+      results: [
+        { ...CLEARED_TXN, uuid: "txr_settled", updatedTime: "2026-08-01T09:00:00.000+00:00" },
+        {
+          ...CLEARED_TXN,
+          uuid: "txr_pending",
+          transactionType: "AUTHORIZATION",
+          updatedTime: "2026-08-01T10:00:00.000+00:00",
+        },
+      ],
+      nextPage: null,
+    });
+
+    const result = await t.action(
+      internal.functions.finance.jobs.pollCardProviderTransactions,
+      {},
+    );
+    expect(result.recorded).toBe(1);
+
+    const row = await t.run(async (ctx) =>
+      ctx.db.query("cardProviderConnections").first(),
+    );
+    expect(row!.syncCursor).toBe("2026-08-01T09:00:00.000Z");
   });
 });
 
@@ -869,6 +977,14 @@ describe("a Privacy church and a BILL church in one fan-out", () => {
     await connect(t, privacyChurch, "privacy");
     const privacyCardId = await issueCard(t, privacyChurch);
     expect(billChurch.communityId).not.toBe(privacyChurch.communityId);
+
+    // Both connections seeded a cursor at connect; rewind both so the mocked
+    // feeds (which predate this run) are in range.
+    await t.run(async (ctx) => {
+      for (const row of await ctx.db.query("cardProviderConnections").collect()) {
+        await ctx.db.patch(row._id, { syncCursor: "2026-07-30T00:00:00.000Z" });
+      }
+    });
 
     bill.listBillTransactions.mockResolvedValue({
       results: [CLEARED_TXN],

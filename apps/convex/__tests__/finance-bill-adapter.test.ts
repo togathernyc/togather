@@ -42,6 +42,10 @@ import {
   exactUsdCents,
   type BillTransaction,
 } from "../lib/finance/bill";
+import {
+  requiresSpendLimit,
+  supportsWeeklyLimits,
+} from "../lib/finance/cardProviders";
 
 const API_TOKEN = "bill-test-api-token";
 const BASE = "https://gateway.stage.bill.com/connect";
@@ -195,6 +199,34 @@ describe("capabilities", () => {
   test("repayment is in-product — Togather can neither show nor reconcile it", () => {
     expect(BILL_CAPABILITIES.repaymentVisibility).toBe("in_product");
     expect(BILL_CAPABILITIES.maxCardsPerMonth).toBeNull();
+  });
+
+  test("the NAME-keyed gates cannot drift from the capabilities", () => {
+    // `supportsWeeklyLimits` / `requiresSpendLimit` are keyed on the provider
+    // NAME because the mutations that gate a limit have no credential to build
+    // an adapter from. That duplication is the risk these two lines exist to
+    // catch: a capability flipped here without the gate following it is a
+    // promise the app then makes and the bank then breaks.
+    expect(supportsWeeklyLimits("bill")).toBe(BILL_CAPABILITIES.weeklyLimits);
+    expect(requiresSpendLimit("bill")).toBe(!BILL_CAPABILITIES.hardFundIsolation);
+  });
+
+  test("an UNCAPPED BILL card is refused, for the same reason as Privacy", () => {
+    // BILL cards are a charge card against the org's shared credit line —
+    // there is no per-fund pot at the bank, so an uncapped card draws the whole
+    // budget and the card limit is the only boundary Togather controls.
+    expect(requiresSpendLimit("bill")).toBe(true);
+    // Increase is the contrast: a fund owns its Account, so the bank enforces
+    // the boundary and "no limit" honestly means "up to this fund's balance".
+    expect(requiresSpendLimit("increase")).toBe(false);
+  });
+
+  test("a WEEKLY BILL limit is refused rather than silently flattened", () => {
+    // toBillCardLimit would map it to a non-recurring cap at the same number —
+    // safe for the money, but the card screen still says "/ week" and the
+    // cardholder learns the truth by being declined for three weeks.
+    expect(supportsWeeklyLimits("bill")).toBe(false);
+    expect(supportsWeeklyLimits("increase")).toBe(true);
   });
 });
 
@@ -547,6 +579,40 @@ describe("createCard", () => {
       /Budget has insufficient funds/,
     );
   });
+
+  test("a vendor error that ECHOES THE TOKEN is redacted before it is thrown", async () => {
+    // That message ends up on a finance admin's screen via
+    // recordCardProvisionFailed. A provider echoing the credential it just
+    // rejected would put a live spending token somewhere we deliberately never
+    // write one.
+    seedAccount();
+    route("POST", "/v3/spend/cards", () => ({
+      status: 401,
+      body: { message: `Token ${API_TOKEN} is not authorized` },
+    }));
+
+    await expect(adapter().createCard(CREATE_INPUT)).rejects.toThrow(
+      /\[redacted\] is not authorized/,
+    );
+    await expect(adapter().createCard(CREATE_INPUT)).rejects.not.toThrow(
+      new RegExp(API_TOKEN),
+    );
+  });
+
+  test("the thrown error carries the STATUS the poll branches on", async () => {
+    // 401/403 deactivates a connection; everything else retries next hour.
+    // A bare Error here would silently stop revoked tokens from deactivating.
+    route("GET", "/v3/spend/users/current", () => ({ status: 401, body: {} }));
+    await expect(adapter().checkConnection!()).rejects.toMatchObject({
+      status: 401,
+    });
+
+    routes = [];
+    route("GET", "/v3/spend/users/current", () => ({ status: 429, body: {} }));
+    await expect(adapter().checkConnection!()).rejects.toMatchObject({
+      status: 429,
+    });
+  });
 });
 
 // ============================================================================
@@ -580,19 +646,22 @@ describe("setCardState", () => {
     expect(card.state).toBe("active");
   });
 
-  test("closed is freeze + rename, and reports CLOSED rather than FROZEN", async () => {
+  test("closed is freeze + rename, and reports state `closed` over BILL's FROZEN", async () => {
     const card = await adapter().setCardState("crd_1", "closed");
 
     expect(callsTo("POST", "/v3/spend/cards/crd_1/freeze")).toHaveLength(1);
     const [renamed] = callsTo("PATCH", "/v3/spend/cards/crd_1");
     expect(renamed.body.name).toBe(`Youth Ministry — Supplies${BILL_CLOSED_SUFFIX}`);
 
-    // Load-bearing: `cards.status` stores this string and
-    // countLiveProviderCards decides "still spending?" from it. FROZEN here
-    // would mean a church that closed every card could never disconnect BILL
-    // without --force.
-    expect(card.providerStatus).toBe("CLOSED");
+    // Load-bearing: `state` is what cardStateToStoredStatus turns into
+    // `cards.status`, and countLiveProviderCards decides "still spending?"
+    // from that. `paused` here would store "disabled" — a live card — and a
+    // church that closed every card could never disconnect BILL without --force.
     expect(card.state).toBe("closed");
+    // But BILL's own word is carried through UNEDITED, because that is
+    // literally what the card is at the bank and providerStatus's whole
+    // contract is to be the vendor's string.
+    expect(card.providerStatus).toBe("FROZEN");
   });
 
   test("a close whose RENAME fails still reports closed — the card is stopped", async () => {
@@ -602,7 +671,7 @@ describe("setCardState", () => {
     route("PATCH", "/v3/spend/cards/crd_1", () => ({ status: 500, body: { message: "nope" } }));
 
     const card = await adapter().setCardState("crd_1", "closed");
-    expect(card.providerStatus).toBe("CLOSED");
+    expect(card.state).toBe("closed");
     expect(warn).toHaveBeenCalled();
   });
 
@@ -776,16 +845,78 @@ describe("listTransactions", () => {
     vi.useRealTimers();
   });
 
-  test("A BACKLOG PAST THE PAGE CAP STALLS the cursor rather than skipping ahead", async () => {
-    // A stall is something an operator notices. A skip is a hole in a church's
-    // books that nobody notices for weeks. Everything fetched is still returned.
+  test("A BACKLOG PAST THE PAGE CAP STALLS the cursor and says so", async () => {
+    // A stall is something an operator notices — `truncated` is what
+    // pollOneConnection turns into a visible error. A silent skip is a hole in
+    // a church's books that nobody notices for weeks. Everything fetched is
+    // still returned and recorded.
     route("GET", "/v3/spend/transactions", () => ({
       body: { results: [CLEARED], nextPage: "always-more" },
     }));
 
     const page = await adapter().listTransactions!("2026-07-01T00:00:00.000Z");
     expect(page.nextCursor).toBe("2026-07-01T00:00:00.000Z");
+    expect(page.truncated).toBe(true);
     expect(callsTo("GET", "/v3/spend/transactions")).toHaveLength(20);
+  });
+
+  test("a complete read is not truncated", async () => {
+    route("GET", "/v3/spend/transactions", () => ({
+      body: { results: [CLEARED], nextPage: null },
+    }));
+    const page = await adapter().listTransactions!("2026-08-01T00:00:00.000Z");
+    expect(page.truncated).toBe(false);
+  });
+
+  test("THE CURSOR STOPS BELOW AN UNSETTLED AUTHORIZATION", async () => {
+    // The invariant Privacy's adapter holds, for the same reason. An
+    // AUTHORIZATION is one we deliberately did NOT record, and BILL turns it
+    // into a CLEAR by updating the same uuid. Advancing past it relies on BILL
+    // always bumping `updatedTime` on settlement — an unverified vendor claim,
+    // and if it is ever false the settled charge is imported by nothing.
+    route("GET", "/v3/spend/transactions", () => ({
+      body: {
+        results: [
+          { ...CLEARED, uuid: "txr_old", updatedTime: "2026-08-01T09:00:00.000+00:00" },
+          {
+            ...CLEARED,
+            uuid: "txr_pending",
+            transactionType: "AUTHORIZATION",
+            updatedTime: "2026-08-01T10:00:00.000+00:00",
+          },
+          { ...CLEARED, uuid: "txr_new", updatedTime: "2026-08-01T11:00:00.000+00:00" },
+        ],
+        nextPage: null,
+      },
+    }));
+
+    const page = await adapter().listTransactions!("2026-08-01T00:00:00.000Z");
+    // Everything read is still returned — the hold-back is about the CURSOR,
+    // not about dropping work.
+    expect(page.transactions).toHaveLength(3);
+    // Stops below the pending row, not at the newest settled one.
+    expect(page.nextCursor).toBe("2026-08-01T09:00:00.000Z");
+  });
+
+  test("a DECLINE is terminal and does not hold the cursor back", async () => {
+    // Nothing further will happen to it, so passing it strands nothing.
+    route("GET", "/v3/spend/transactions", () => ({
+      body: {
+        results: [
+          {
+            ...CLEARED,
+            uuid: "txr_declined",
+            transactionType: "DECLINE",
+            updatedTime: "2026-08-01T09:00:00.000+00:00",
+          },
+          { ...CLEARED, uuid: "txr_new", updatedTime: "2026-08-01T11:00:00.000+00:00" },
+        ],
+        nextPage: null,
+      },
+    }));
+
+    const page = await adapter().listTransactions!("2026-08-01T00:00:00.000Z");
+    expect(page.nextCursor).toBe("2026-08-01T11:00:00.000Z");
   });
 
   test("rows with no uuid or no card are dropped, not half-recorded", async () => {

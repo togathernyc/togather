@@ -255,9 +255,15 @@ export async function createUnsavedProvider(
  * still says "/ week" with a Monday reset, so the cardholder learns the truth
  * by being declined for three weeks. An honest refusal at the gate beats a
  * safe number under a false label.
+ *
+ * BILL is the same answer for a slightly different shape (ADR-033 Phase 2): a
+ * BILL card limit is a plain AMOUNT with an optional recurrence, and the only
+ * period in the model belongs to the BUDGET, not the card. So "$100/week"
+ * degrades to a $100 cap that does not reset weekly — same false label, same
+ * three weeks of unexplained declines, same refusal.
  */
 export function supportsWeeklyLimits(name: CardProviderName): boolean {
-  return name !== "privacy";
+  return name !== "privacy" && name !== "bill";
 }
 
 /**
@@ -272,14 +278,22 @@ export function supportsWeeklyLimits(name: CardProviderName): boolean {
  * promises the opposite, and no pooled-balance authorization control exists
  * yet (ADR-033 Phase 2).
  *
+ * BILL is the same answer and, if anything, a starker version of it (ADR-033
+ * Phase 2). Its cards are a CHARGE CARD against the organization's shared
+ * credit line — there is no per-fund pot at the bank at all, and a budget is a
+ * spending policy rather than segregated money. An uncapped BILL card
+ * (`shareBudgetFunds: true`) draws the whole budget, and the budget is
+ * whatever the church set it to. So the card limit is again the only boundary
+ * Togather controls, and it must exist.
+ *
  * So the limit stops being a preference and becomes the only boundary there
  * is. Same shape as `supportsWeeklyLimits` and for the same reason: keyed on
  * the NAME, because the mutations that gate a limit have no credential to
- * build an adapter from. MUST agree with `capabilities.hardFundIsolation`; a
- * test pins that the two cannot drift.
+ * build an adapter from. MUST agree with `capabilities.hardFundIsolation` FOR
+ * EVERY PROVIDER; a test pins that the two cannot drift.
  */
 export function requiresSpendLimit(name: CardProviderName): boolean {
-  return name === "privacy";
+  return name === "privacy" || name === "bill";
 }
 
 /** Does this provider bring its own, community-held credential? */

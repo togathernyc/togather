@@ -621,8 +621,10 @@ async function countLiveCards(
  * AFTER a connection exists, so there is no Togather card whose spending could
  * predate this.
  *
- * FORMAT NOTE: an ISO timestamp, which is what today's one BYO adapter defines
- * its cursor to be (`syncCursor` is otherwise opaque and provider-defined). A
+ * FORMAT NOTE: an ISO timestamp, which is what BOTH of today's BYO adapters
+ * define their cursor to be (`syncCursor` is otherwise opaque and
+ * provider-defined) — Privacy's is a high-water mark over `created`, BILL's
+ * over `updatedTime`, and each feeds it straight back as a filter bound. A
  * future adapter that paginates by opaque token must seed its own — which is
  * why this is a named function rather than an inline `toISOString()`.
  */
