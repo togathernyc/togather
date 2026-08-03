@@ -73,12 +73,20 @@ export function GivingHubScreen() {
   const denyExpense = useAuthenticatedMutation(api.functions.finance.expenses.denyExpense);
   const enableGroupGiving = useAuthenticatedMutation(api.functions.finance.onboarding.enableGroupGiving);
 
-  // ADR-033: community-wide finance surfaces key off financial-controls
+  // ADR-033: COMMUNITY-WIDE finance surfaces key off financial-controls
   // access (primary admin or an explicit grant), no longer plain community
-  // admin. `user.is_admin` is the Togather SUPERUSER flag and is unrelated.
-  const canManageCommunityFinance = !!(
-    user?.is_admin || myFundRole?.canManageCommunityFinance
-  );
+  // admin.
+  //
+  // `user?.is_admin` is deliberately NOT OR'd in here. It is not a superuser
+  // flag — AuthProvider sets it from the active community membership's
+  // `isAdmin`, so it is exactly the plain-community-admin signal ADR-033
+  // removes from these surfaces. Including it would re-admit that whole
+  // population client-side and show them the "Enable Giving" CTA below, which
+  // can now only throw against `enableGroupGiving`'s new gate — the
+  // affordance-that-only-errors trap cards.ts calls out. (It is also the
+  // wrong community: `is_admin` is scoped to the viewer's ACTIVE community,
+  // while `myFundRole` is computed server-side for the FUND's community.)
+  const canManageCommunityFinance = !!myFundRole?.canManageCommunityFinance;
 
   const state: GivingHubState = useMemo(() => {
     if (isLoadingGroup || givingContext === undefined) return "loading";
@@ -109,10 +117,16 @@ export function GivingHubScreen() {
     };
   }, [overview]);
 
+  // FUND-scoped, so it keeps the community-admin fallback ADR-033 explicitly
+  // did NOT tighten: `approveExpense` still runs through `requireFundRole`,
+  // whose `resolveEffectiveRole` resolves a community admin to finance_admin.
+  // Dropping `user?.is_admin` here would make the UI stricter than the server
+  // and hide buttons that would have worked.
   const canApprove =
     myFundRole?.role === "manager" ||
     myFundRole?.role === "finance_admin" ||
-    canManageCommunityFinance;
+    canManageCommunityFinance ||
+    !!user?.is_admin;
 
   // Mirrors createFundCard's own gate (finance_admin, incl. the
   // community-admin override) — a group leader without a finance role can

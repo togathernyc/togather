@@ -519,6 +519,14 @@ export const setCardFrozen = mutation({
       );
     }
 
+    // TODO(ADR-033 Phase 1): move this readiness guard onto `providerCardId`.
+    // `recordCardProvisioned` writes `increaseCardId` only when the provider
+    // IS Increase, so a BYOC card would read as "never provisioned" here and
+    // could not be frozen, canceled, or re-limited — the kill switch failing
+    // closed on exactly the path ADR-033 exists to open. Unreachable today
+    // (`createFundCard` requires `fund.increaseAccountId`, and
+    // `getCardProviderByName` throws for every non-Increase name), which is
+    // why it is deferred rather than fixed here — see this module's header.
     if (!card.increaseCardId) {
       throw new Error("This card hasn't finished provisioning yet");
     }
@@ -567,6 +575,14 @@ export const cancelCard = mutation({
     }
     await requireFundRole(ctx, fund._id, userId, "finance_admin");
 
+    // TODO(ADR-033 Phase 1): move this readiness guard onto `providerCardId`.
+    // `recordCardProvisioned` writes `increaseCardId` only when the provider
+    // IS Increase, so a BYOC card would read as "never provisioned" here and
+    // could not be frozen, canceled, or re-limited — the kill switch failing
+    // closed on exactly the path ADR-033 exists to open. Unreachable today
+    // (`createFundCard` requires `fund.increaseAccountId`, and
+    // `getCardProviderByName` throws for every non-Increase name), which is
+    // why it is deferred rather than fixed here — see this module's header.
     if (!card.increaseCardId) {
       throw new Error("This card hasn't finished provisioning yet");
     }
@@ -710,6 +726,14 @@ export const setCardLimit = mutation({
     if (fund.status !== "active") {
       throw new Error("This fund isn't active — card limits can't be changed");
     }
+    // TODO(ADR-033 Phase 1): move this readiness guard onto `providerCardId`.
+    // `recordCardProvisioned` writes `increaseCardId` only when the provider
+    // IS Increase, so a BYOC card would read as "never provisioned" here and
+    // could not be frozen, canceled, or re-limited — the kill switch failing
+    // closed on exactly the path ADR-033 exists to open. Unreachable today
+    // (`createFundCard` requires `fund.increaseAccountId`, and
+    // `getCardProviderByName` throws for every non-Increase name), which is
+    // why it is deferred rather than fixed here — see this module's header.
     if (!card.increaseCardId) {
       throw new Error("This card hasn't finished provisioning yet");
     }

@@ -570,7 +570,7 @@ describe("spend-limit validation", () => {
 // ============================================================================
 
 describe("recordCardProvisioned / recordCardProvisionFailed", () => {
-  test("recordCardProvisioned patches increaseCardId/last4/status", async () => {
+  test("recordCardProvisioned patches provider/providerCardId/last4/status", async () => {
     const t = convexTest(schema, modules);
     const { fundId, financeAdminUserId, cardholderUserId } =
       await seedCardFixture(t);
