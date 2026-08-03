@@ -579,7 +579,7 @@ describe("issuing a card on a BYO provider", () => {
         holderUserId: f.cardholderUserId,
         name: "Supplies",
       }),
-    ).rejects.toThrow(/only thing keeping this card inside its fund/i);
+    ).rejects.toThrow(/only cap on what this card can reach/i);
 
     // …and the limit can't be REMOVED from a card that already has one.
     const cardId = await issueCard(t, f);
@@ -588,7 +588,7 @@ describe("issuing a card on a BYO provider", () => {
         token: await tokenFor(f.primaryAdminUserId),
         cardId,
       }),
-    ).rejects.toThrow(/only thing keeping this card inside its fund/i);
+    ).rejects.toThrow(/only cap on what this card can reach/i);
   });
 
   test("a WEEKLY limit is refused, not silently widened to a month", async () => {

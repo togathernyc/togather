@@ -255,9 +255,21 @@ function assertLimitPeriodSupported(
  * owns the Account the card draws from and the bank enforces that. At Privacy
  * every card draws the community's single pooled funding source, so the same
  * choice means "up to the church's entire account" — another group's giving
- * included — while the card screen still promises the fund is the ceiling.
- * Until a pooled-balance authorization control exists (ADR-033 Phase 2), the
- * limit IS the fund boundary, so it cannot be optional.
+ * included.
+ *
+ * BE PRECISE ABOUT WHAT THIS BUYS, because it is easy to over-read: a provider
+ * spend limit is per CARD and per PERIOD. It is not an aggregate fund-balance
+ * control, and it cannot be — Privacy has no notion of our funds. A `charge`
+ * limit caps each purchase but not their number; a `month` limit can exceed
+ * the fund's balance, and several cards can each carry one. What requiring it
+ * does is turn unbounded exposure into a bounded, deliberately chosen number,
+ * which is the strongest guarantee available at a pooled-account issuer.
+ *
+ * The real control — authorizing against the fund's own balance — is ADR-033
+ * Phase 2, and `capabilities.hardFundIsolation: false` is the flag that says
+ * so out loud. Until it lands, over-spend against a fund is an app-side
+ * reconciliation concern (see recordCardSettlement's skipped account
+ * cross-check), not something this gate should be read as preventing.
  */
 function assertLimitRequired(
   providerName: Awaited<ReturnType<typeof resolveCardProviderName>>,
@@ -267,7 +279,7 @@ function assertLimitRequired(
   if (!requiresSpendLimit(providerName)) return;
   if (spendLimitCents !== undefined && limitPeriod !== undefined) return;
   throw new Error(
-    `Cards at ${providerName} draw on this community's whole account, not a per-fund one — set a spending limit, because it's the only thing keeping this card inside its fund`,
+    `Cards at ${providerName} draw on this community's whole account, not a per-fund one — set a spending limit, because it's the only cap on what this card can reach`,
   );
 }
 
