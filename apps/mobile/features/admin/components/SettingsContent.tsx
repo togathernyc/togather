@@ -318,6 +318,32 @@ export function SettingsContent() {
     }
   };
 
+  /**
+   * `SettingsContent` renders in BOTH shells, and in the WhatsApp one it sits
+   * inside `/(user)/you/admin/community` — i.e. inside the `(user)` route
+   * group, which `app/_layout.tsx` declares `presentation: "modal"`. A native
+   * modal sits above EVERY navigator screen, so pushing a ROOT-stack route
+   * (`/finance-setup/...`) from here lands the destination *behind* the still-
+   * open settings modal on iOS: the admin taps "Card provider" and nothing
+   * appears to happen. Dismiss the modal stack first, then push.
+   *
+   * Same pattern (and same comment) as `CommunityPageScreen`'s
+   * `pushOutOfModal`, `useStartDirectMessage`, `NotificationFeedScreen` and
+   * `NativeRunSheetView`.
+   *
+   * In the legacy shell this component renders in `/(tabs)/admin`, where there
+   * is no modal to dismiss — `canDismiss()` is false there and this degrades
+   * to a plain push, which is why one call site works for both shells.
+   *
+   * Destinations that stay INSIDE `(user)` (`/(user)/admin/*`,
+   * `/leader-tools/*`) must NOT go through this — they belong to the modal's
+   * own stack.
+   */
+  const pushOutOfModal = (path: string) => {
+    if (router.canDismiss?.()) router.dismissAll();
+    router.push(path as never);
+  };
+
   const toggleExploreGroupType = (groupTypeId: string) => {
     setExploreGroupTypes((prev) =>
       prev.includes(groupTypeId)
@@ -431,7 +457,7 @@ export function SettingsContent() {
           <>
           <TouchableOpacity
             style={[styles.quickLinkItem, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
-            onPress={() => router.push("/finance-setup")}
+            onPress={() => pushOutOfModal("/finance-setup")}
           >
             <View style={[styles.quickLinkIcon, { backgroundColor: colors.surface }]}>
               <Ionicons name="wallet-outline" size={20} color={themePrimaryColor} />
@@ -459,7 +485,7 @@ export function SettingsContent() {
               isn't there. */}
           <TouchableOpacity
             style={[styles.quickLinkItem, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
-            onPress={() => router.push("/finance-setup/card-provider")}
+            onPress={() => pushOutOfModal("/finance-setup/card-provider")}
           >
             <View style={[styles.quickLinkIcon, { backgroundColor: colors.surface }]}>
               <Ionicons name="card-outline" size={20} color={themePrimaryColor} />
@@ -474,7 +500,7 @@ export function SettingsContent() {
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.quickLinkItem, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
-            onPress={() => router.push("/finance-setup/financial-controls")}
+            onPress={() => pushOutOfModal("/finance-setup/financial-controls")}
           >
             <View style={[styles.quickLinkIcon, { backgroundColor: colors.surface }]}>
               <Ionicons name="key-outline" size={20} color={themePrimaryColor} />
