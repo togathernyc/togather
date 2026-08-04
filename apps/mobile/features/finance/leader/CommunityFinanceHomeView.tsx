@@ -26,12 +26,12 @@
  * choose it, and "Card provider ›" with no name is exactly the row an admin
  * has to open to learn anything.
  */
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import { View, Text, StyleSheet, ScrollView } from "react-native";
 import { useTheme } from "@hooks/useTheme";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { waAccentPalette } from "@utils/waPalette";
-import { Skeleton } from "@components/ui";
+import { Skeleton, ConfirmModal } from "@components/ui";
 import { WaCell, WaInsetGroup } from "@components/wa";
 import {
   WA_CELL_PADDING,
@@ -88,6 +88,7 @@ export function CommunityFinanceHomeView({
 }: CommunityFinanceHomeViewProps) {
   const { colors, isDark } = useTheme();
   const { primaryColor } = useCommunityTheme();
+  const [confirmingDetailsEdit, setConfirmingDetailsEdit] = useState(false);
   const accent = useMemo(
     () => waAccentPalette(primaryColor, isDark).accent,
     [primaryColor, isDark],
@@ -217,16 +218,40 @@ export function CommunityFinanceHomeView({
               onPress={onOpenFinancialControls}
               testID="community-finance-controls"
             />
+            {/* THE INTAKE FORM IS NOT AN EDITOR. Its submit calls
+                `startOnboarding`, which sets `onboardingStatus` back to
+                "collecting" unconditionally and re-schedules provisioning —
+                and `prepareDonationIntent` refuses any community that isn't
+                "live", so re-submitting even the unchanged prefilled values
+                stops new donations until Stripe's `account.updated` webhook
+                puts the community back. This screen only ever renders for a
+                LIVE community (the wrapper hands the screen to the checklist
+                otherwise), so that is the only case this row has. Correcting a
+                wrong EIN is still a real need, so the row stays — behind a
+                confirmation that states the consequence BEFORE the tap that
+                causes it, which is this screen's whole thesis. */}
             <WaCell
               icon="document-text-outline"
               title="Organization details"
               description="Legal name, EIN, and address"
-              onPress={onOpenOrganizationDetails}
+              onPress={() => setConfirmingDetailsEdit(true)}
               testID="community-finance-organization-details"
             />
           </WaInsetGroup>
         </View>
       </ScrollView>
+
+      <ConfirmModal
+        visible={confirmingDetailsEdit}
+        title="Editing these pauses giving"
+        message="Changing your organization's details re-submits them to our payments and banking partners, so your community goes back into verification and can't take new donations until it clears. Existing funds and cards are untouched."
+        confirmText="Edit details"
+        onConfirm={() => {
+          setConfirmingDetailsEdit(false);
+          onOpenOrganizationDetails();
+        }}
+        onCancel={() => setConfirmingDetailsEdit(false)}
+      />
     </View>
   );
 }

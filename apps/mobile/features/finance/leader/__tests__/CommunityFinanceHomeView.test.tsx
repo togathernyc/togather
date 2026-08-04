@@ -226,12 +226,21 @@ describe("CommunityFinanceHomeView", () => {
       expect(screen.getByText("Primary admins only")).toBeTruthy();
     });
 
-    it("keeps the organization's own details reachable once setup is done", () => {
+    // The intake form re-runs onboarding (`startOnboarding` drops the status
+    // back to "collecting"), which stops new donations until verification
+    // clears. The row stays — a wrong EIN has to be fixable — but the
+    // consequence is stated BEFORE the tap that causes it, not after.
+    it("warns that editing the organization's details pauses giving, and only then opens the form", () => {
       render(<CommunityFinanceHomeView {...baseProps} />);
       expect(screen.getByText("Organization details")).toBeTruthy();
+
       fireEvent.press(
         screen.getByTestId("community-finance-organization-details"),
       );
+      expect(baseProps.onOpenOrganizationDetails).not.toHaveBeenCalled();
+      expect(screen.getByText(/can't take new donations/i)).toBeTruthy();
+
+      fireEvent.press(screen.getByText("Edit details"));
       expect(baseProps.onOpenOrganizationDetails).toHaveBeenCalled();
     });
 
