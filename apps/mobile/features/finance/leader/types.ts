@@ -153,15 +153,6 @@ export interface CardDetail extends FundCard {
   viewerCanCancel: boolean;
 }
 
-/** `listFundCards`' return shape — a fund's card roster plus whether the
- * viewer can issue new cards (finance_admin, incl. the community-admin
- * override — same gate `createFundCard` enforces). */
-export interface ListFundCardsResult {
-  cards: FundCard[];
-  viewerCanManageCards: boolean;
-  capabilities: CardCapabilities;
-}
-
 /** A fund member eligible to hold a card — cardholder role or higher. */
 export interface CardholderCandidate {
   userId: string;
@@ -288,6 +279,101 @@ export interface CommunityFinanceRoleRow {
  */
 export const FINANCIAL_CONTROLS_NOTE =
   "The community's primary admin always has financial controls and is the only person who can give or take them. Anyone they give them to must already be a community admin.";
+
+// ============================================================================
+// Community Finance home (the parent of every surface above)
+// ============================================================================
+
+/** Every issuer a community can be on, as an admin should hear it named. */
+export const CARD_PROVIDER_DISPLAY_NAMES: Record<
+  "increase" | "privacy" | "bill" | "none",
+  string
+> = {
+  increase: "Togather-issued cards",
+  privacy: BYO_PROVIDER_LABELS.privacy.name,
+  bill: BYO_PROVIDER_LABELS.bill.name,
+  none: "Not set up",
+};
+
+/** One fund's line on the Finance home. Mirrors `getCommunityFinanceOverview`. */
+export interface CommunityFundRow {
+  fundId: string;
+  /** Null for the community's general fund, which belongs to no group. */
+  groupId: string | null;
+  groupName: string | null;
+  fundName: string;
+  type: "group" | "general";
+  status: "active" | "frozen" | "closed";
+  balanceCents: number;
+  monthDonatedCents: number;
+  monthSpentCents: number;
+  /** LIVE cards only — a canceled or failed one isn't a card the fund has. */
+  cardCount: number;
+}
+
+/** A group giving could be turned on for. */
+export interface CommunityGroupWithoutFund {
+  groupId: string;
+  groupName: string;
+}
+
+export interface CommunityFinanceOverview {
+  onboardingStatus: OnboardingStatus | null;
+  /** `enableGroupGiving`'s first precondition: the community's giving is live. */
+  canEnableGiving: boolean;
+  provider: {
+    name: "increase" | "privacy" | "bill" | "none";
+    connected: boolean;
+    /** Provider-supplied text — untrusted, rendered as text only. */
+    accountLabel: string | null;
+    status: CardProviderConnectionStatus | null;
+  };
+  totals: {
+    balanceCents: number;
+    monthDonatedCents: number;
+    monthSpentCents: number;
+    cardCount: number;
+    fundCount: number;
+  };
+  funds: CommunityFundRow[];
+  groupsWithoutFunds: CommunityGroupWithoutFund[];
+  /** Active grants. The primary admin holds the controls with no row at all. */
+  financeGrantCount: number;
+}
+
+/**
+ * The label on every "turn giving on for this group" control, wherever it
+ * appears — the Finance home's per-group row and the group Giving hub's empty
+ * state both call `enableGroupGiving`, so they have to say the same thing.
+ */
+export const ENABLE_GIVING_LABEL = "Enable giving";
+export const ENABLE_GIVING_PENDING_LABEL = "Enabling…";
+
+/**
+ * Why "Enable giving" can't be pressed yet, in the admin's words — or `null`
+ * when it can.
+ *
+ * These are `enableGroupGiving`'s OWN preconditions, restated before the tap
+ * rather than after it: the mutation's refusals are accurate but they arrive
+ * as a toast on a screen that can't act on them, and the fix always lives back
+ * on the Finance home.
+ */
+export function enableGivingBlockedReason(
+  onboardingStatus: OnboardingStatus | null,
+): string | null {
+  switch (onboardingStatus) {
+    case "live":
+      return null;
+    case null:
+    case undefined:
+      return "Set up giving for your community first — that's the Setup section on this screen.";
+    case "stripe_blocked":
+    case "increase_blocked":
+      return "Your community's giving setup needs attention before groups can be enabled.";
+    default:
+      return "Your community's giving setup isn't finished yet — finish verification first, then enable groups.";
+  }
+}
 
 /**
  * Giving hub balance header + month-to-date stat tiles. Mirrors the fields

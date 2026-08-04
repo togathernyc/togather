@@ -76,7 +76,7 @@ export function FinanceOnboardingFormScreen() {
         </TouchableOpacity>
         <View style={styles.headerContent}>
           <Text style={[styles.headerTitle, { color: colors.text }]}>Set up giving</Text>
-          <Text style={[styles.headerSubtitle, { color: colors.textSecondary }]}>Church details</Text>
+          <Text style={[styles.headerSubtitle, { color: colors.textSecondary }]}>Organization details</Text>
         </View>
       </View>
 

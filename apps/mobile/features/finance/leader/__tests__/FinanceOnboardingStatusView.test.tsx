@@ -116,7 +116,7 @@ describe("FinanceOnboardingStatusView", () => {
     expect(baseProps.onRetryProvisioning).toHaveBeenCalled();
     // Deterministic provider rejections need corrected data, not a retry —
     // the failure state must offer a path back to the intake form.
-    fireEvent.press(screen.getByText("Edit church details"));
+    fireEvent.press(screen.getByText("Edit organization details"));
     expect(baseProps.onStartForm).toHaveBeenCalled();
     expect(screen.queryByText("Continue identity verification")).toBeNull();
   });

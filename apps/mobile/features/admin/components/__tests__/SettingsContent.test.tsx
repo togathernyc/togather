@@ -160,14 +160,19 @@ describe("SettingsContent — leaves the (user) settings modal before pushing", 
     );
   };
 
-  it.each([
-    ["Community Finance", "/finance-setup"],
-    ["Card provider", "/finance-setup/card-provider"],
-    ["Financial controls", "/finance-setup/financial-controls"],
-  ])("dismisses before opening %s", (label, path) => {
+  it("dismisses before opening Finance", () => {
     const { getByText } = render(<SettingsContent />);
-    fireEvent.press(getByText(label));
-    expectDismissedThenPushed(path);
+    fireEvent.press(getByText("Finance"));
+    expectDismissedThenPushed("/finance-setup");
+  });
+
+  // Card provider and Financial controls are sections of the Finance home now,
+  // not rows here — the home is their parent. Their routes still exist for
+  // deep links; this asserts Settings has stopped duplicating them.
+  it("no longer lists the finance sub-surfaces beside it", () => {
+    const { queryByText } = render(<SettingsContent />);
+    expect(queryByText("Card provider")).toBeNull();
+    expect(queryByText("Financial controls")).toBeNull();
   });
 
   it("keeps in-(user) destinations a plain push", () => {
@@ -181,8 +186,8 @@ describe("SettingsContent — leaves the (user) settings modal before pushing", 
     // `/(tabs)/admin` renders this same component with nothing to dismiss.
     mockCanDismiss.mockReturnValue(false);
     const { getByText } = render(<SettingsContent />);
-    fireEvent.press(getByText("Card provider"));
+    fireEvent.press(getByText("Finance"));
     expect(mockDismissAll).not.toHaveBeenCalled();
-    expect(mockPush).toHaveBeenCalledWith("/finance-setup/card-provider");
+    expect(mockPush).toHaveBeenCalledWith("/finance-setup");
   });
 });

@@ -79,7 +79,11 @@ import type {
   GivingHubBalanceSummary,
   CardStatus,
 } from "./types";
-import { formatCardLimit } from "./types";
+import {
+  formatCardLimit,
+  ENABLE_GIVING_LABEL,
+  ENABLE_GIVING_PENDING_LABEL,
+} from "./types";
 
 export type GivingHubState = "loading" | "no-fund-admin" | "no-fund-member" | "ready";
 
@@ -117,6 +121,15 @@ export interface GivingHubViewProps {
 
   onEnableGiving: () => void;
   isEnablingGiving: boolean;
+  /**
+   * Why `enableGroupGiving` would refuse right now, or `null` when it wouldn't
+   * — `enableGivingBlockedReason`, the same function the Finance home's
+   * per-group rows use, so the two surfaces never disagree about whether
+   * giving can be turned on.
+   */
+  enableGivingBlockedReason?: string | null;
+  /** Opens the community Finance home. Undefined hides the link. */
+  onOpenCommunityFinance?: () => void;
 
   onViewRoles: () => void;
   onCreateCardPress: () => void;
@@ -143,6 +156,8 @@ export function GivingHubView({
   onDeny,
   onEnableGiving,
   isEnablingGiving,
+  enableGivingBlockedReason = null,
+  onOpenCommunityFinance,
   onViewRoles,
   onCreateCardPress,
   onSharePress,
@@ -171,29 +186,57 @@ export function GivingHubView({
     );
   }
 
-  // Not-set-up states: same logic and copy as before the restyle, re-hosted on
-  // the grouped canvas the screen wrapper paints.
+  // Not-set-up states. The ADMIN one turns the action on THIS screen rather
+  // than sending someone to find it: both this and the Finance home's
+  // per-group row call the same `enableGroupGiving` and share their copy
+  // through `types.ts`, so neither can drift into promising something the
+  // other refuses.
   if (state === "no-fund-admin") {
     return (
-      <View style={styles.container}>
+      <View style={styles.container} testID="giving-hub-no-fund-admin">
         <EmptyState
           icon="wallet-outline"
           title="Giving isn't set up for this group yet"
-          message={`Enable giving for ${groupName} so members can donate directly and leaders can spend and reimburse from a group fund.`}
-          actionLabel={isEnablingGiving ? "Enabling…" : "Enable giving for this group"}
-          onAction={onEnableGiving}
+          message={
+            enableGivingBlockedReason
+              ? `${enableGivingBlockedReason} Then you can enable giving for ${groupName} here.`
+              : `Enable giving for ${groupName} so members can donate directly and leaders can spend and reimburse from a group fund.`
+          }
+          // Blocked is a real state, not a disabled button: the precondition is
+          // stated above and the fix lives on the Finance home, which the link
+          // below opens.
+          actionLabel={
+            enableGivingBlockedReason
+              ? undefined
+              : isEnablingGiving
+                ? ENABLE_GIVING_PENDING_LABEL
+                : `${ENABLE_GIVING_LABEL} for this group`
+          }
+          onAction={enableGivingBlockedReason ? undefined : onEnableGiving}
         />
+        {onOpenCommunityFinance ? (
+          <TouchableOpacity
+            onPress={onOpenCommunityFinance}
+            accessibilityRole="button"
+            style={styles.emptyStateLink}
+            testID="giving-hub-open-community-finance"
+          >
+            <Text style={[styles.emptyStateLinkText, { color: accent }]}>
+              Open community Finance
+            </Text>
+          </TouchableOpacity>
+        ) : null}
       </View>
     );
   }
 
   if (state === "no-fund-member") {
     return (
-      <View style={styles.container}>
+      <View style={styles.container} testID="giving-hub-no-fund-member">
         <EmptyState
           icon="wallet-outline"
           title="Giving isn't set up for this group yet"
-          message="Ask a community admin to enable giving for this group from Community Finance settings."
+          message="Ask someone with your community's financial controls to enable giving for this group from Community settings › Finance."
         />
       </View>
     );
@@ -281,7 +324,14 @@ export function GivingHubView({
                 <WaCell
                   key={card.id}
                   icon="card-outline"
-                  title={`${card.name} ·· ${card.last4}`}
+                  // Same guard as the card detail header: a card that never
+                  // issued has no last4, and interpolating it rendered
+                  // "Groceries ·· null" in the roster.
+                  title={
+                    card.last4
+                      ? `${card.name ?? "Card"} ·· ${card.last4}`
+                      : (card.name ?? "Card")
+                  }
                   description={`${card.holderName} · ${formatCardLimit(card, formatCents)}`}
                   onPress={() => onViewCard(card.id)}
                   testID={`giving-hub-card-${card.id}`}
@@ -599,6 +649,15 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     fontSize: WA_TYPE_SUBTITLE,
+  },
+  emptyStateLink: {
+    alignSelf: "center",
+    paddingVertical: 12,
+    paddingHorizontal: WA_CELL_PADDING,
+  },
+  emptyStateLinkText: {
+    fontSize: WA_TYPE_SUBTITLE,
+    fontWeight: WA_WEIGHT_SEMIBOLD,
   },
   cardTrailing: {
     flexDirection: "row",
