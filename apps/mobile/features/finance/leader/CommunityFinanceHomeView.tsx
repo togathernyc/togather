@@ -46,7 +46,7 @@ import {
   CARD_PROVIDER_DISPLAY_NAMES,
   ENABLE_GIVING_LABEL,
   ENABLE_GIVING_PENDING_LABEL,
-  enableGivingBlockedReason,
+  enableGivingBlockedReasonFor,
   type CommunityFinanceOverview,
   type CommunityFundRow,
 } from "./types";
@@ -111,7 +111,7 @@ export function CommunityFinanceHomeView({
   }
 
   const { totals, funds, groupsWithoutFunds, provider } = overview;
-  const blockedReason = enableGivingBlockedReason(overview.onboardingStatus);
+  const blockedReason = enableGivingBlockedReasonFor(overview);
 
   return (
     <View style={styles.container}>

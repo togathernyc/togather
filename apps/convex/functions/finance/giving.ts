@@ -416,10 +416,15 @@ export const getFundOverview = query({
  * one screen, this fans out over the community's funds and uses the SAME
  * `by_fund` range `getFundOverview` uses — an indexed read bounded by the
  * month, not by the fund's history. That is 2 indexed reads per fund (ledger
- * window + card list) plus 3 fixed ones, i.e. O(funds), and a fund only exists
- * where an admin turned giving on. If a community ever has enough funds for
- * that to hurt, the fix is the compound index and a single scan — not
- * pagination of a summary.
+ * window + card list), and a fund only exists where an admin turned giving on.
+ *
+ * The rest is six indexed reads that don't scale with the ledger: the finance
+ * row, the provider connection, the provider name, the fund list, the group
+ * list, and the finance-role grants. Two of those (`groups`, `funds`) are
+ * whole-community collects, so the query is O(groups + funds) — the same
+ * order the screen it feeds is, since it draws a row for each. If a community
+ * ever has enough of either for that to hurt, the fix is the compound index
+ * and a single scan, plus paginating the LIST — not paginating a summary.
  *
  * The balance is `funds.balanceCents` — the ledger-maintained cache every
  * other surface reads, so this screen can't disagree with the fund screen.

@@ -275,6 +275,23 @@ describe("getMyCommunityFinanceAccess", () => {
     expect(result.canEnableGiving).toBe(false);
     expect(result.onboardingStatus).toBe("verifying");
   });
+
+  // The gap between this non-throwing wrapper and the throwing one:
+  // `requireCommunityFinanceAccess` refuses an ARCHIVED community, and
+  // `enableGroupGiving` goes through it. If `canEnableGiving` ignored that,
+  // the hub would offer a button the mutation always refuses.
+  test("an archived community can't have giving enabled, live or not", async () => {
+    const t = convexTest(schema, modules);
+    const f = await seed(t);
+    await t.run(async (ctx) => {
+      await ctx.db.patch(f.communityId, { isArchived: true });
+    });
+
+    const result = await ask(t, f, f.primaryAdminUserId);
+    expect(result.canManage).toBe(true);
+    expect(result.onboardingStatus).toBe("live");
+    expect(result.canEnableGiving).toBe(false);
+  });
 });
 
 // ============================================================================

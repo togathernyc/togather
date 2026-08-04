@@ -96,6 +96,15 @@ async function requirePrimaryAdminForFinance(
  * "Enable giving" is unavailable when the community's own giving isn't live —
  * `enableGroupGiving`'s first precondition. Non-holders get `null` for it:
  * they have no action to explain, and it is finance information.
+ *
+ * ONE PREDICATE, TWO WRAPPERS. `canManage` is `canManageCommunityFinance`
+ * itself — the same function `requireCommunityFinanceAccess` throws on — so
+ * the two can never disagree about who holds the controls. The throwing
+ * wrapper adds one thing this one can't (it refuses an ARCHIVED community),
+ * and `canEnableGiving` carries that clause too: otherwise an archived
+ * community's finance holder would be offered an "Enable giving" button that
+ * `enableGroupGiving` — which goes through the throwing wrapper — always
+ * refuses.
  */
 export const getMyCommunityFinanceAccess = query({
   args: { token: v.string(), communityId: v.id("communities") },
@@ -115,10 +124,11 @@ export const getMyCommunityFinanceAccess = query({
       .withIndex("by_community", (q) => q.eq("communityId", args.communityId))
       .first();
     const onboardingStatus = finance?.onboardingStatus ?? null;
+    const community = await ctx.db.get(args.communityId);
     return {
       canManage: true,
       onboardingStatus,
-      canEnableGiving: onboardingStatus === "live",
+      canEnableGiving: onboardingStatus === "live" && !community?.isArchived,
     };
   },
 });

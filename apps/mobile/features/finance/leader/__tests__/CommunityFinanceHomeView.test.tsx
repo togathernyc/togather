@@ -162,6 +162,27 @@ describe("CommunityFinanceHomeView", () => {
       fireEvent.press(screen.getByTestId("community-finance-enable-group-youth"));
       expect(baseProps.onEnableGiving).not.toHaveBeenCalled();
     });
+
+    // The server's `canEnableGiving` is the authority, not the status the
+    // screen happens to be able to read: `enableGroupGiving` also refuses an
+    // archived community, which "live" cannot explain. The action still has
+    // to be withheld, with words rather than a status the row can't map.
+    it("withholds the action whenever the server says it would be refused", () => {
+      render(
+        <CommunityFinanceHomeView
+          {...baseProps}
+          overview={makeOverview({
+            onboardingStatus: "live",
+            canEnableGiving: false,
+          })}
+        />,
+      );
+
+      expect(screen.getByText(/can't be enabled/i)).toBeTruthy();
+      expect(screen.queryByText("Enable giving")).toBeNull();
+      fireEvent.press(screen.getByTestId("community-finance-enable-group-youth"));
+      expect(baseProps.onEnableGiving).not.toHaveBeenCalled();
+    });
   });
 
   describe("setup rows", () => {

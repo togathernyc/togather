@@ -28,7 +28,7 @@ import { useMembersPage } from "@features/leader-tools/hooks/useMembersPage";
 import { formatError } from "@/utils/error-handling";
 import { GivingHubView, type GivingHubState } from "./GivingHubView";
 import type { FundCard, GivingExpense, GivingHubBalanceSummary } from "./types";
-import { enableGivingBlockedReason } from "./types";
+import { enableGivingBlockedReasonFor } from "./types";
 
 export function GivingHubScreen() {
   const { colors } = useTheme();
@@ -109,7 +109,12 @@ export function GivingHubScreen() {
     // answered: guessing "member" for a beat renders the dead-end copy at a
     // finance holder and then swaps it, which reads as a bug.
     if (!givingContext) {
-      if (communityFinanceAccess === undefined && !myFundRole) return "loading";
+      // `community?.id` guards the never-answers case: with no active
+      // community the access query is skipped, so it stays `undefined`
+      // forever and waiting on it would wedge this on the spinner.
+      if (community?.id && communityFinanceAccess === undefined && !myFundRole) {
+        return "loading";
+      }
       return canManageCommunityFinance ? "no-fund-admin" : "no-fund-member";
     }
     return "ready";
@@ -119,6 +124,7 @@ export function GivingHubScreen() {
     canManageCommunityFinance,
     communityFinanceAccess,
     myFundRole,
+    community?.id,
   ]);
 
   const expenses: GivingExpense[] = useMemo(
@@ -273,7 +279,7 @@ export function GivingHubScreen() {
           isEnablingGiving={isEnablingGiving}
           enableGivingBlockedReason={
             communityFinanceAccess?.canManage
-              ? enableGivingBlockedReason(communityFinanceAccess.onboardingStatus)
+              ? enableGivingBlockedReasonFor(communityFinanceAccess)
               : null
           }
           onOpenCommunityFinance={openCommunityFinance}

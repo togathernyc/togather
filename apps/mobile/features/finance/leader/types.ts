@@ -416,6 +416,13 @@ export const ENABLE_GIVING_PENDING_LABEL = "Enabling…";
  * rather than after it: the mutation's refusals are accurate but they arrive
  * as a toast on a screen that can't act on them, and the fix always lives back
  * on the Finance home.
+ *
+ * The wording has to be true on BOTH callers — the Finance home's per-group
+ * row and the group Giving hub's empty state — so it names the community
+ * Finance screen rather than saying "this screen". In practice the hub is the
+ * only place a blocked reason is ever SEEN: the home hands the whole screen
+ * to the onboarding checklist while the status isn't `"live"`, so "this
+ * screen" would have been wrong every time it rendered.
  */
 export function enableGivingBlockedReason(
   onboardingStatus: OnboardingStatus | null,
@@ -425,13 +432,36 @@ export function enableGivingBlockedReason(
       return null;
     case null:
     case undefined:
-      return "Set up giving for your community first — that's the Setup section on this screen.";
+      return "Set up giving for your community first — that's the Setup section on your community's Finance screen.";
     case "stripe_blocked":
     case "increase_blocked":
       return "Your community's giving setup needs attention before groups can be enabled.";
     default:
       return "Your community's giving setup isn't finished yet — finish verification first, then enable groups.";
   }
+}
+
+/** The words for a refusal the onboarding status alone doesn't explain. */
+export const ENABLE_GIVING_UNAVAILABLE_REASON =
+  "Giving can't be enabled for groups in this community right now.";
+
+/**
+ * The one function both surfaces ask. The SERVER decides whether
+ * `enableGroupGiving` would accept (`canEnableGiving`, computed next to the
+ * mutation's own gate); the status only supplies the words. Deriving the
+ * answer from `onboardingStatus` alone would drift the moment the mutation
+ * refuses for a reason the status can't see — an archived community being the
+ * live example — leaving a button that always errors.
+ */
+export function enableGivingBlockedReasonFor(access: {
+  canEnableGiving: boolean;
+  onboardingStatus: OnboardingStatus | null;
+}): string | null {
+  if (access.canEnableGiving) return null;
+  return (
+    enableGivingBlockedReason(access.onboardingStatus) ??
+    ENABLE_GIVING_UNAVAILABLE_REASON
+  );
 }
 
 /**
