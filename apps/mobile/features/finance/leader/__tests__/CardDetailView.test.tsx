@@ -35,6 +35,7 @@ function makeCard(overrides: Partial<CardDetail> = {}): CardDetail {
     viewerCanFreeze: true,
     viewerCanUnfreeze: true,
     viewerCanCancel: true,
+    failureMessage: null,
     ...overrides,
   };
 }
@@ -340,6 +341,65 @@ describe("CardDetailView", () => {
       expect(
         screen.getByText(
           "Saved to the fund and sent on to your community's card provider.",
+        ),
+      ).toBeTruthy();
+    });
+  });
+
+  /**
+   * A card that never got issued. Both halves come from a real staging
+   * failure: Privacy refused with "Insufficient privileges to create UNLOCKED
+   * cards" — an account-plan problem the admin could have acted on — and the
+   * screen showed a generic apology above a card whose number read "··null".
+   */
+  describe("a card that failed to issue", () => {
+    it("does not render a null where the digits would be", () => {
+      render(
+        <CardDetailView
+          {...baseProps}
+          card={makeCard({ status: "failed", last4: null })}
+        />,
+      );
+
+      expect(screen.queryByText(/null/)).toBeNull();
+      expect(screen.getByText("•••• •••• •••• ••••")).toBeTruthy();
+    });
+
+    it("surfaces the provider's own reason when the viewer may read it", () => {
+      render(
+        <CardDetailView
+          {...baseProps}
+          card={makeCard({
+            status: "failed",
+            last4: null,
+            failureMessage:
+              "Insufficient privileges to create UNLOCKED cards — this account may not have general-purpose cards enabled.",
+          })}
+        />,
+      );
+
+      expect(screen.getByTestId("card-failed-strip")).toBeTruthy();
+      expect(
+        screen.getByText(/Insufficient privileges to create UNLOCKED cards/),
+      ).toBeTruthy();
+      expect(
+        screen.queryByText(
+          "Something went wrong issuing this card. Contact support.",
+        ),
+      ).toBeNull();
+    });
+
+    it("keeps the generic line for a viewer the server gave no reason to", () => {
+      render(
+        <CardDetailView
+          {...baseProps}
+          card={makeCard({ status: "failed", last4: null, failureMessage: null })}
+        />,
+      );
+
+      expect(
+        screen.getByText(
+          "Something went wrong issuing this card. Contact support.",
         ),
       ).toBeTruthy();
     });

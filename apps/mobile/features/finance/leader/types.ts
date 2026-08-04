@@ -84,10 +84,12 @@ export type CardLimitPeriod = "week" | "month" | "charge";
 
 export interface FundCard {
   id: string;
-  name: string;
+  /** Null on a card that failed to issue — never interpolate it unguarded. */
+  name: string | null;
   holderUserId: string;
   holderName: string;
-  last4: string;
+  /** Null until the provider issues the card (and forever, if it never does). */
+  last4: string | null;
   status: CardStatus;
   spendLimitCents: number | null;
   limitPeriod: CardLimitPeriod | null;
@@ -151,6 +153,63 @@ export interface CardDetail extends FundCard {
   viewerCanFreeze: boolean;
   viewerCanUnfreeze: boolean;
   viewerCanCancel: boolean;
+  /**
+   * Why a `failed` card was never issued, in the PROVIDER's own words — or
+   * null, which is what every viewer without the community's financial
+   * controls gets. Untrusted vendor text: render it as text, never as markup,
+   * and never let it displace the generic line for people who can't act on it.
+   */
+  failureMessage: string | null;
+}
+
+/** The line a viewer sees when there's no stored reason they may read. */
+export const CARD_FAILED_GENERIC_MESSAGE =
+  "Something went wrong issuing this card. Contact support.";
+
+/**
+ * Card statuses that mean the card is dead and doesn't occupy a fund's slot —
+ * the client-side mirror of `DEAD_CARD_STATUSES` in
+ * `apps/convex/functions/finance/cards.ts`.
+ *
+ * It must contain everything the server's does. Missing an entry doesn't fail
+ * safe: the client would refuse a card the server would happily issue, which
+ * is a fund stuck with no way to replace a dead card. `closed`/`CLOSED` are
+ * the pre-normalization spellings an older build could have written; `failed`
+ * is the one that matters most in practice, because a refused provisioning is
+ * exactly the case where the admin needs to try again.
+ */
+const DEAD_CARD_STATUSES: ReadonlySet<string> = new Set([
+  "canceled",
+  "closed",
+  "CLOSED",
+  "failed",
+]);
+
+/** How many of a fund's cards still occupy its slot. `pending` counts — a row
+ * waiting on the provider is a card about to exist. */
+export function countLiveCards(cards: Array<{ status: string }>): number {
+  return cards.filter((card) => !DEAD_CARD_STATUSES.has(card.status)).length;
+}
+
+/**
+ * Whether the provider's per-fund cap is already used up, so "Create card"
+ * would only error. `null` means the provider declares no cap.
+ */
+export function isCardSlotFull(
+  cards: Array<{ status: string }>,
+  maxCardsPerFund: number | null,
+): boolean {
+  if (maxCardsPerFund === null) return false;
+  return countLiveCards(cards) >= maxCardsPerFund;
+}
+
+/** `listFundCards`' return shape — a fund's card roster plus whether the
+ * viewer can issue new cards (finance_admin, incl. the community-admin
+ * override — same gate `createFundCard` enforces). */
+export interface ListFundCardsResult {
+  cards: FundCard[];
+  viewerCanManageCards: boolean;
+  capabilities: CardCapabilities;
 }
 
 /** A fund member eligible to hold a card — cardholder role or higher. */

@@ -389,7 +389,17 @@ function assertLimitRequired(
  * about to exist at the issuer, and letting a second one through in that window
  * is precisely how a fund ends up with two lifetime caps.
  */
-const DEAD_CARD_STATUSES = new Set(["canceled", "closed", "CLOSED", "failed"]);
+export const DEAD_CARD_STATUSES = new Set([
+  "canceled",
+  "closed",
+  "CLOSED",
+  "failed",
+]);
+
+/** `true` when this card still occupies its fund's slot and is worth counting. */
+export function isLiveCardStatus(status: string): boolean {
+  return !DEAD_CARD_STATUSES.has(status);
+}
 
 /** Cents -> "$1,234.56", for the copy a finance admin reads on a refusal. */
 function usd(cents: number): string {
@@ -1726,6 +1736,63 @@ export const listManagedCards = internalQuery({
 const ACTIVITY_LIMIT = 20;
 
 /**
+ * Both ways a card row ends up `failed`. They write different detail keys
+ * (`message` from the provider, `reason` from our own preflight), and a
+ * screen that only knew about one would show the generic apology for the
+ * other — which is the whole failure this reads back to avoid.
+ */
+const CARD_FAILURE_ACTIONS = new Set([
+  "card.provision_failed",
+  "card.provision_refused",
+]);
+
+/**
+ * How far back to look for it. `financeAuditEvents` has no index on `action`
+ * and the card id lives inside a JSON string, so the only indexed path is the
+ * fund's own log newest-first. A failed card's failure is by construction one
+ * of the most recent things that happened to that fund's card slot, so a
+ * bounded scan finds it or it isn't worth finding — and the alternative,
+ * walking a busy fund's whole audit history for a subtitle, is not.
+ */
+const CARD_FAILURE_SCAN_LIMIT = 200;
+/** Provider text is already capped at 500 on write; a strip is not 500 chars. */
+const CARD_FAILURE_MESSAGE_MAX = 300;
+
+/**
+ * The stored reason a card was never issued, or null if it wasn't recorded.
+ *
+ * Only ever called for a `failed` card being read by someone with the
+ * community's financial controls — see `getCardDetail` for why both halves of
+ * that matter.
+ */
+async function findCardFailureMessage(
+  ctx: { db: any },
+  fundId: Id<"funds">,
+  cardId: Id<"cards">,
+): Promise<string | null> {
+  const events = await ctx.db
+    .query("financeAuditEvents")
+    .withIndex("by_fund", (q: any) => q.eq("fundId", fundId))
+    .order("desc")
+    .take(CARD_FAILURE_SCAN_LIMIT);
+
+  for (const event of events) {
+    if (!CARD_FAILURE_ACTIONS.has(event.action) || !event.detailsJson) continue;
+    let details: any;
+    try {
+      details = JSON.parse(event.detailsJson);
+    } catch {
+      continue; // A malformed row is not a reason to fail the whole screen.
+    }
+    if (String(details?.cardId) !== String(cardId)) continue;
+    const raw = details.message ?? details.reason;
+    if (typeof raw !== "string" || raw.trim() === "") return null;
+    return raw.trim().slice(0, CARD_FAILURE_MESSAGE_MAX);
+  }
+  return null;
+}
+
+/**
  * A single card's detail plus its recent `card_charge` activity. Same viewer
  * gate as `listFundCards`, resolved via the card's fund.
  */
@@ -1774,6 +1841,26 @@ export const getCardDetail = query({
       ? await resolveCardProviderName(ctx, fund.communityId)
       : "none";
 
+    // WHY THE FAILURE REASON IS READ BACK AT ALL. A card that never got issued
+    // showed "Something went wrong issuing this card. Contact support." while
+    // the audit row held the actual, actionable sentence — e.g. Privacy's
+    // "Insufficient privileges to create UNLOCKED cards", which means the
+    // community's own account plan, not a Togather fault. Support was being
+    // asked to relay a message the admin could already have acted on.
+    //
+    // ONLY FOR FINANCE HOLDERS. `getCardDetail`'s gate is deliberately wider
+    // than that (any cardholder or group leader on the fund), and this text is
+    // vendor ACCOUNT detail: it names the provider — which every group-level
+    // card surface is anonymous about on purpose, ADR-033 §1 — and describes a
+    // fix only someone with financial controls can carry out.
+    const viewerCanManageCommunityFinance = fund
+      ? await canManageCommunityFinance(ctx, userId, fund.communityId)
+      : false;
+    const failureMessage =
+      card.status === "failed" && viewerCanManageCommunityFinance && fund
+        ? await findCardFailureMessage(ctx, fund._id, card._id)
+        : null;
+
     return {
       ...toCardSummary(
         card,
@@ -1784,6 +1871,12 @@ export const getCardDetail = query({
       viewerCanFreeze: viewerIsFinanceAdmin || viewerIsHolder,
       viewerCanUnfreeze: viewerIsFinanceAdmin,
       viewerCanCancel: viewerIsFinanceAdmin,
+      /**
+       * The provider's own words for why this card was never issued, or null.
+       * PROVIDER TEXT — untrusted; already truncated at the write, truncated
+       * again here, and rendered as text only.
+       */
+      failureMessage,
       /**
        * Provider capabilities, provider-ANONYMOUS (see `listFundCards`).
        *
