@@ -304,18 +304,68 @@ describe("GivingHubView", () => {
     });
   });
 
+  /**
+   * The no-fund states are the ones the founder hit on staging: a finance
+   * holder was shown the non-holder's "ask a community admin" copy, which is a
+   * dead end pointing at a screen they were already entitled to use. These
+   * pin BOTH viewer classes — the action for the holder, the honest referral
+   * for everyone else.
+   */
   describe("top-level states", () => {
-    it("renders the enable-giving CTA for community admins when no fund exists", () => {
-      render(<GivingHubView {...baseProps} state="no-fund-admin" expenses={[]} />);
+    it("renders the enable-giving CTA for finance holders when no fund exists", () => {
+      const onEnableGiving = jest.fn();
+      render(
+        <GivingHubView
+          {...baseProps}
+          state="no-fund-admin"
+          expenses={[]}
+          onEnableGiving={onEnableGiving}
+        />,
+      );
 
-      expect(screen.getByText("Enable giving for this group")).toBeTruthy();
+      fireEvent.press(screen.getByText("Enable giving for this group"));
+      expect(onEnableGiving).toHaveBeenCalled();
     });
 
-    it("renders an explainer (no CTA) for non-admins when no fund exists", () => {
+    it("links a finance holder to the Finance home from the empty state", () => {
+      const onOpenCommunityFinance = jest.fn();
+      render(
+        <GivingHubView
+          {...baseProps}
+          state="no-fund-admin"
+          expenses={[]}
+          onOpenCommunityFinance={onOpenCommunityFinance}
+        />,
+      );
+
+      fireEvent.press(screen.getByTestId("giving-hub-open-community-finance"));
+      expect(onOpenCommunityFinance).toHaveBeenCalled();
+    });
+
+    // Same precondition text the Finance home's per-group rows use.
+    it("states the precondition instead of a button that could only fail", () => {
+      render(
+        <GivingHubView
+          {...baseProps}
+          state="no-fund-admin"
+          expenses={[]}
+          enableGivingBlockedReason="Your community's giving setup isn't finished yet — finish verification first, then enable groups."
+        />,
+      );
+
+      expect(screen.getByText(/isn't finished yet/i)).toBeTruthy();
+      expect(screen.queryByText("Enable giving for this group")).toBeNull();
+    });
+
+    it("renders an explainer (no CTA) for non-holders when no fund exists", () => {
       render(<GivingHubView {...baseProps} state="no-fund-member" expenses={[]} />);
 
       expect(screen.queryByText("Enable giving for this group")).toBeNull();
-      expect(screen.getByText(/Ask a community admin/)).toBeTruthy();
+      expect(screen.queryByTestId("giving-hub-open-community-finance")).toBeNull();
+      // Names the surface accurately: the referral has to point somewhere the
+      // reader can actually be sent.
+      expect(screen.getByText(/financial controls/i)).toBeTruthy();
+      expect(screen.getByText(/Community settings › Finance/)).toBeTruthy();
     });
   });
 });

@@ -101,8 +101,13 @@ const DEAD_CARD_STATUSES = new Set(["CLOSED", "canceled", "closed", "failed"]);
  * Returns the LATEST row rather than the active one: an admin looking at this
  * screen after a key was revoked needs to see "disconnected", not an empty
  * state that implies they never connected at all.
+ *
+ * Exported for `giving.getCommunityFinanceOverview`, which shows the same
+ * "«provider» · Connected" line inline on the Finance home. One reader of the
+ * "which row counts" rule, not two — a second copy would drift the moment
+ * this one learns about another status.
  */
-async function loadConnectionRow(
+export async function loadConnectionRow(
   ctx: { db: any },
   communityId: Id<"communities">,
 ) {

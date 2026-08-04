@@ -28,6 +28,7 @@ import { useMembersPage } from "@features/leader-tools/hooks/useMembersPage";
 import { formatError } from "@/utils/error-handling";
 import { GivingHubView, type GivingHubState } from "./GivingHubView";
 import type { FundCard, GivingExpense, GivingHubBalanceSummary } from "./types";
+import { enableGivingBlockedReasonFor } from "./types";
 
 export function GivingHubScreen() {
   const { colors } = useTheme();
@@ -83,17 +84,48 @@ export function GivingHubScreen() {
   // removes from these surfaces. Including it would re-admit that whole
   // population client-side and show them the "Enable Giving" CTA below, which
   // can now only throw against `enableGroupGiving`'s new gate — the
-  // affordance-that-only-errors trap cards.ts calls out. (It is also the
-  // wrong community: `is_admin` is scoped to the viewer's ACTIVE community,
-  // while `myFundRole` is computed server-side for the FUND's community.)
-  const canManageCommunityFinance = !!myFundRole?.canManageCommunityFinance;
+  // affordance-that-only-errors trap cards.ts calls out.
+  //
+  // `myFundRole` ALONE cannot answer it on the path that matters. It needs a
+  // `fundId`, and the whole point of the no-fund state is that there isn't
+  // one — so the answer was permanently `false` there and every finance
+  // holder, primary admins included, got the "ask a community admin" dead end
+  // pointing at a screen they were already entitled to use. The community-
+  // level query below has no such dependency, and is non-throwing precisely
+  // so a surface that only needs to decide whether to OFFER an action can ask.
+  // Both are kept: the fund-scoped one still governs the ready state's
+  // controls, where it is computed for the FUND's community rather than the
+  // viewer's active one.
+  const communityFinanceAccess = useAuthenticatedQuery(
+    api.functions.finance.communityRoles.getMyCommunityFinanceAccess,
+    community?.id ? { communityId: community.id as Id<"communities"> } : "skip",
+  );
+  const canManageCommunityFinance =
+    !!myFundRole?.canManageCommunityFinance || !!communityFinanceAccess?.canManage;
 
   const state: GivingHubState = useMemo(() => {
     if (isLoadingGroup || givingContext === undefined) return "loading";
-    if (!givingContext)
+    // Don't decide between the two no-fund states until the access query has
+    // answered: guessing "member" for a beat renders the dead-end copy at a
+    // finance holder and then swaps it, which reads as a bug.
+    if (!givingContext) {
+      // `community?.id` guards the never-answers case: with no active
+      // community the access query is skipped, so it stays `undefined`
+      // forever and waiting on it would wedge this on the spinner.
+      if (community?.id && communityFinanceAccess === undefined && !myFundRole) {
+        return "loading";
+      }
       return canManageCommunityFinance ? "no-fund-admin" : "no-fund-member";
+    }
     return "ready";
-  }, [isLoadingGroup, givingContext, canManageCommunityFinance]);
+  }, [
+    isLoadingGroup,
+    givingContext,
+    canManageCommunityFinance,
+    communityFinanceAccess,
+    myFundRole,
+    community?.id,
+  ]);
 
   const expenses: GivingExpense[] = useMemo(
     () => (expensesRaw ?? []).map(toGivingExpense),
@@ -180,6 +212,19 @@ export function GivingHubScreen() {
     }
   };
 
+  /**
+   * This screen lives under `/(user)/leader-tools/...`, i.e. inside the
+   * `(user)` route group that `app/_layout.tsx` presents as a modal. A native
+   * modal sits above every navigator screen, so pushing the ROOT-stack
+   * `/finance-setup` from here would land it BEHIND the still-open modal on
+   * iOS. Dismiss the modal stack first — same pattern as `CommunityPageScreen`'s
+   * `pushOutOfModal` and `SettingsContent`'s.
+   */
+  const openCommunityFinance = () => {
+    if (router.canDismiss?.()) router.dismissAll();
+    router.push("/finance-setup" as never);
+  };
+
   const handleShareFund = async () => {
     if (!group?.shortId) return;
     const groupUrl = DOMAIN_CONFIG.groupShareUrl(group.shortId);
@@ -232,6 +277,12 @@ export function GivingHubScreen() {
           onDeny={handleDeny}
           onEnableGiving={handleEnableGiving}
           isEnablingGiving={isEnablingGiving}
+          enableGivingBlockedReason={
+            communityFinanceAccess?.canManage
+              ? enableGivingBlockedReasonFor(communityFinanceAccess)
+              : null
+          }
+          onOpenCommunityFinance={openCommunityFinance}
           onViewRoles={() => router.push(`/(user)/leader-tools/${groupId}/giving/roles`)}
           onCreateCardPress={() => router.push(`/(user)/leader-tools/${groupId}/giving/cards/new` as any)}
           onSharePress={group?.shortId ? handleShareFund : undefined}

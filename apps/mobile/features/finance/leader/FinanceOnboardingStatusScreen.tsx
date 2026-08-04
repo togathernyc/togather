@@ -3,6 +3,13 @@
  * onboarding checklist (ADR-032 §2 step 4). Convex reactivity keeps
  * `getOnboardingStatus` fresh as Stripe/Increase webhooks land, so this
  * screen needs no manual polling.
+ *
+ * `FinanceOnboardingStatusContent` is the same thing WITHOUT chrome, so the
+ * Finance home can take the screen over with this checklist while the
+ * community's giving isn't live yet — and hand it back the moment it is.
+ * Before that split, `/finance-setup` was the checklist and nothing else: a
+ * community whose setup was finished landed on four ticked boxes with no way
+ * onward, which is precisely the dead end the Finance home exists to close.
  */
 import React, { useState } from "react";
 import { View, StyleSheet, TouchableOpacity, Text, Platform } from "react-native";
@@ -34,6 +41,27 @@ const FINANCE_SETUP_DEEP_LINK = `${DOMAIN_CONFIG.appUrl}/finance-setup`;
 export function FinanceOnboardingStatusScreen() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
+  const router = useRouter();
+
+  return (
+    <View style={{ flex: 1, backgroundColor: colors.surfaceSecondary }}>
+      <View style={[styles.header, { paddingTop: insets.top + 8, backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
+        <TouchableOpacity style={styles.backButton} onPress={() => router.back()} testID="back-button">
+          <Ionicons name="arrow-back" size={24} color={colors.text} />
+        </TouchableOpacity>
+        <View style={styles.headerContent}>
+          <Text style={[styles.headerTitle, { color: colors.text }]}>Community Finance</Text>
+          <Text style={[styles.headerSubtitle, { color: colors.textSecondary }]}>Set up giving</Text>
+        </View>
+      </View>
+
+      <FinanceOnboardingStatusContent />
+    </View>
+  );
+}
+
+/** The checklist and its two actions, with no screen chrome of its own. */
+export function FinanceOnboardingStatusContent() {
   const router = useRouter();
   const { community } = useAuth();
 
@@ -93,34 +121,22 @@ export function FinanceOnboardingStatusScreen() {
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.surfaceSecondary }}>
-      <View style={[styles.header, { paddingTop: insets.top + 8, backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
-        <TouchableOpacity style={styles.backButton} onPress={() => router.back()} testID="back-button">
-          <Ionicons name="arrow-back" size={24} color={colors.text} />
-        </TouchableOpacity>
-        <View style={styles.headerContent}>
-          <Text style={[styles.headerTitle, { color: colors.text }]}>Community Finance</Text>
-          <Text style={[styles.headerSubtitle, { color: colors.textSecondary }]}>Set up giving</Text>
-        </View>
-      </View>
-
-      <FinanceOnboardingStatusView
-        isLoading={status === undefined}
-        formSubmitted={!!status?.formSubmitted}
-        providersReady={!!status?.providersReady}
-        paymentsVerified={!!status?.paymentsVerified}
-        bankAccountsReady={!!status?.bankAccountsReady}
-        onboardingStatus={status?.onboardingStatus ?? "collecting"}
-        blockedReason={status?.blockedReason}
-        provisioningError={status?.provisioningError}
-        linkError={linkError}
-        isLoadingLink={isLoadingLink}
-        isRetrying={isRetrying}
-        onStartForm={() => router.push("/finance-setup/intake")}
-        onContinueIdentityVerification={handleContinueIdentityVerification}
-        onRetryProvisioning={handleRetryProvisioning}
-      />
-    </View>
+    <FinanceOnboardingStatusView
+      isLoading={status === undefined}
+      formSubmitted={!!status?.formSubmitted}
+      providersReady={!!status?.providersReady}
+      paymentsVerified={!!status?.paymentsVerified}
+      bankAccountsReady={!!status?.bankAccountsReady}
+      onboardingStatus={status?.onboardingStatus ?? "collecting"}
+      blockedReason={status?.blockedReason}
+      provisioningError={status?.provisioningError}
+      linkError={linkError}
+      isLoadingLink={isLoadingLink}
+      isRetrying={isRetrying}
+      onStartForm={() => router.push("/finance-setup/intake")}
+      onContinueIdentityVerification={handleContinueIdentityVerification}
+      onRetryProvisioning={handleRetryProvisioning}
+    />
   );
 }
 

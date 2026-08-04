@@ -172,7 +172,15 @@ export function CardDetailScreen() {
             style={[styles.headerSubtitle, { color: colors.textSecondary }]}
             numberOfLines={1}
           >
-            {card ? `Virtual card ··${card.last4}` : "Loading…"}
+            {/* A card that never got issued has no last4, and the template
+                used to interpolate the null straight into the header:
+                "Virtual card ··null". The digits are a detail of a card that
+                exists; when there aren't any, say less. */}
+            {!card
+              ? "Loading…"
+              : card.last4
+                ? `Virtual card ··${card.last4}`
+                : "Virtual card"}
           </Text>
         </View>
       </View>
@@ -195,10 +203,10 @@ export function CardDetailScreen() {
 function toCardDetail(raw: any): CardDetail {
   return {
     id: String(raw.id),
-    name: raw.name,
+    name: raw.name ?? null,
     holderUserId: String(raw.holderUserId),
     holderName: raw.holderName,
-    last4: raw.last4,
+    last4: raw.last4 ?? null,
     status: raw.status,
     spendLimitCents: raw.spendLimitCents ?? null,
     limitPeriod: raw.limitPeriod ?? null,
@@ -228,6 +236,9 @@ function toCardDetail(raw: any): CardDetail {
     viewerCanFreeze: !!raw.viewerCanFreeze,
     viewerCanUnfreeze: !!raw.viewerCanUnfreeze,
     viewerCanCancel: !!raw.viewerCanCancel,
+    // Null for every viewer the server decided may not read it — the screen
+    // never has to make that judgement itself.
+    failureMessage: raw.failureMessage ?? null,
   };
 }
 

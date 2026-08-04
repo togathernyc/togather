@@ -84,10 +84,12 @@ export type CardLimitPeriod = "week" | "month" | "charge";
 
 export interface FundCard {
   id: string;
-  name: string;
+  /** Null on a card that failed to issue — never interpolate it unguarded. */
+  name: string | null;
   holderUserId: string;
   holderName: string;
-  last4: string;
+  /** Null until the provider issues the card (and forever, if it never does). */
+  last4: string | null;
   status: CardStatus;
   spendLimitCents: number | null;
   limitPeriod: CardLimitPeriod | null;
@@ -151,6 +153,54 @@ export interface CardDetail extends FundCard {
   viewerCanFreeze: boolean;
   viewerCanUnfreeze: boolean;
   viewerCanCancel: boolean;
+  /**
+   * Why a `failed` card was never issued, in the PROVIDER's own words — or
+   * null, which is what every viewer without the community's financial
+   * controls gets. Untrusted vendor text: render it as text, never as markup,
+   * and never let it displace the generic line for people who can't act on it.
+   */
+  failureMessage: string | null;
+}
+
+/** The line a viewer sees when there's no stored reason they may read. */
+export const CARD_FAILED_GENERIC_MESSAGE =
+  "Something went wrong issuing this card. Contact support.";
+
+/**
+ * Card statuses that mean the card is dead and doesn't occupy a fund's slot —
+ * the client-side mirror of `DEAD_CARD_STATUSES` in
+ * `apps/convex/functions/finance/cards.ts`.
+ *
+ * It must contain everything the server's does. Missing an entry doesn't fail
+ * safe: the client would refuse a card the server would happily issue, which
+ * is a fund stuck with no way to replace a dead card. `closed`/`CLOSED` are
+ * the pre-normalization spellings an older build could have written; `failed`
+ * is the one that matters most in practice, because a refused provisioning is
+ * exactly the case where the admin needs to try again.
+ */
+const DEAD_CARD_STATUSES: ReadonlySet<string> = new Set([
+  "canceled",
+  "closed",
+  "CLOSED",
+  "failed",
+]);
+
+/** How many of a fund's cards still occupy its slot. `pending` counts — a row
+ * waiting on the provider is a card about to exist. */
+export function countLiveCards(cards: Array<{ status: string }>): number {
+  return cards.filter((card) => !DEAD_CARD_STATUSES.has(card.status)).length;
+}
+
+/**
+ * Whether the provider's per-fund cap is already used up, so "Create card"
+ * would only error. `null` means the provider declares no cap.
+ */
+export function isCardSlotFull(
+  cards: Array<{ status: string }>,
+  maxCardsPerFund: number | null,
+): boolean {
+  if (maxCardsPerFund === null) return false;
+  return countLiveCards(cards) >= maxCardsPerFund;
 }
 
 /** `listFundCards`' return shape — a fund's card roster plus whether the
@@ -288,6 +338,131 @@ export interface CommunityFinanceRoleRow {
  */
 export const FINANCIAL_CONTROLS_NOTE =
   "The community's primary admin always has financial controls and is the only person who can give or take them. Anyone they give them to must already be a community admin.";
+
+// ============================================================================
+// Community Finance home (the parent of every surface above)
+// ============================================================================
+
+/** Every issuer a community can be on, as an admin should hear it named. */
+export const CARD_PROVIDER_DISPLAY_NAMES: Record<
+  "increase" | "privacy" | "bill" | "none",
+  string
+> = {
+  increase: "Togather-issued cards",
+  privacy: BYO_PROVIDER_LABELS.privacy.name,
+  bill: BYO_PROVIDER_LABELS.bill.name,
+  none: "Not set up",
+};
+
+/** One fund's line on the Finance home. Mirrors `getCommunityFinanceOverview`. */
+export interface CommunityFundRow {
+  fundId: string;
+  /** Null for the community's general fund, which belongs to no group. */
+  groupId: string | null;
+  groupName: string | null;
+  fundName: string;
+  type: "group" | "general";
+  status: "active" | "frozen" | "closed";
+  balanceCents: number;
+  monthDonatedCents: number;
+  monthSpentCents: number;
+  /** LIVE cards only — a canceled or failed one isn't a card the fund has. */
+  cardCount: number;
+}
+
+/** A group giving could be turned on for. */
+export interface CommunityGroupWithoutFund {
+  groupId: string;
+  groupName: string;
+}
+
+export interface CommunityFinanceOverview {
+  onboardingStatus: OnboardingStatus | null;
+  /** `enableGroupGiving`'s first precondition: the community's giving is live. */
+  canEnableGiving: boolean;
+  provider: {
+    name: "increase" | "privacy" | "bill" | "none";
+    connected: boolean;
+    /** Provider-supplied text — untrusted, rendered as text only. */
+    accountLabel: string | null;
+    status: CardProviderConnectionStatus | null;
+  };
+  totals: {
+    balanceCents: number;
+    monthDonatedCents: number;
+    monthSpentCents: number;
+    cardCount: number;
+    fundCount: number;
+  };
+  funds: CommunityFundRow[];
+  groupsWithoutFunds: CommunityGroupWithoutFund[];
+  /** Active grants. The primary admin holds the controls with no row at all. */
+  financeGrantCount: number;
+}
+
+/**
+ * The label on every "turn giving on for this group" control, wherever it
+ * appears — the Finance home's per-group row and the group Giving hub's empty
+ * state both call `enableGroupGiving`, so they have to say the same thing.
+ */
+export const ENABLE_GIVING_LABEL = "Enable giving";
+export const ENABLE_GIVING_PENDING_LABEL = "Enabling…";
+
+/**
+ * Why "Enable giving" can't be pressed yet, in the admin's words — or `null`
+ * when it can.
+ *
+ * These are `enableGroupGiving`'s OWN preconditions, restated before the tap
+ * rather than after it: the mutation's refusals are accurate but they arrive
+ * as a toast on a screen that can't act on them, and the fix always lives back
+ * on the Finance home.
+ *
+ * The wording has to be true on BOTH callers — the Finance home's per-group
+ * row and the group Giving hub's empty state — so it names the community
+ * Finance screen rather than saying "this screen". In practice the hub is the
+ * only place a blocked reason is ever SEEN: the home hands the whole screen
+ * to the onboarding checklist while the status isn't `"live"`, so "this
+ * screen" would have been wrong every time it rendered.
+ */
+export function enableGivingBlockedReason(
+  onboardingStatus: OnboardingStatus | null,
+): string | null {
+  switch (onboardingStatus) {
+    case "live":
+      return null;
+    case null:
+    case undefined:
+      return "Set up giving for your community first — that's the Setup section on your community's Finance screen.";
+    case "stripe_blocked":
+    case "increase_blocked":
+      return "Your community's giving setup needs attention before groups can be enabled.";
+    default:
+      return "Your community's giving setup isn't finished yet — finish verification first, then enable groups.";
+  }
+}
+
+/** The words for a refusal the onboarding status alone doesn't explain. */
+export const ENABLE_GIVING_UNAVAILABLE_REASON =
+  "Giving can't be enabled for groups in this community right now.";
+
+/**
+ * The one function both surfaces ask. The SERVER decides whether
+ * `enableGroupGiving` would accept (`canEnableGiving`, computed next to the
+ * mutation's own gate); the status only supplies the words. Deriving the
+ * answer from `onboardingStatus` alone would drift the moment the mutation
+ * refuses for a reason the status can't see — an archived community being the
+ * live example — leaving a button that always errors.
+ */
+export function enableGivingBlockedReasonFor(access: {
+  canEnableGiving: boolean;
+  onboardingStatus: OnboardingStatus | null;
+}): string | null {
+  if (access.canEnableGiving) return null;
+  return (
+    enableGivingBlockedReason(access.onboardingStatus) ??
+    ENABLE_GIVING_UNAVAILABLE_REASON
+  );
+}
 
 /**
  * Giving hub balance header + month-to-date stat tiles. Mirrors the fields

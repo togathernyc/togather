@@ -1,6 +1,6 @@
 /**
  * FinanceOnboardingStatusView — the community admin's onboarding checklist
- * (ADR-032 §2 step 4: Church details / Identity verification / Bank
+ * (ADR-032 §2 step 4: Organization details / Identity verification / Bank
  * accounts). Plain props only, no Convex — see
  * FinanceOnboardingStatusScreen.tsx for the data wrapper, which relies on
  * Convex reactivity to auto-refresh this as webhooks land.
@@ -103,7 +103,7 @@ export function FinanceOnboardingStatusView({
   const items: ChecklistItem[] = [
     {
       key: "details",
-      title: "Church details",
+      title: "Organization details",
       description: "Legal name, EIN, and address",
       state: formSubmitted ? "done" : "in_progress",
     },
@@ -176,11 +176,11 @@ export function FinanceOnboardingStatusView({
               the intake screen prefills nothing but startOnboarding upserts,
               so resubmitting corrected details is the recovery path. */}
           <Button variant="secondary" onPress={onStartForm} style={styles.editButton}>
-            Edit church details
+            Edit organization details
           </Button>
           <Text style={[styles.helperText, { color: colors.textSecondary }]}>
             Something went wrong creating your accounts. Retrying is safe — no
-            duplicates will be created. If the error points at your church
+            duplicates will be created. If the error points at your organization
             details, edit and resubmit them instead.
           </Text>
           {linkError ? (

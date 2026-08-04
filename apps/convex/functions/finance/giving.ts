@@ -59,6 +59,12 @@ import { computeCoverFeesCents, COVER_FEE_TOLERANCE_CENTS } from "../../lib/fina
 // Pure helper, no cycle: webhooks.ts reaches giving.ts through the generated
 // `internal` API, never by importing this module.
 import { splitDonationAmounts } from "./webhooks";
+// Same story for these three: plain functions, and none of those modules
+// imports this one back.
+import { requireCommunityFinanceAccess } from "../../lib/finance/communityFinanceAccess";
+import { loadConnectionRow } from "./cardProviderConnections";
+import { isLiveCardStatus } from "./cards";
+import { resolveCardProviderName } from "../../lib/finance/cardProviders";
 import { getResendClient } from "../../lib/resend";
 import { now, getDisplayName } from "../../lib/utils";
 import {
@@ -386,6 +392,173 @@ export const getFundOverview = query({
       yearToDate: summarizePeriod(yearEntries),
       activity,
       viewerCanSeeDonorNames,
+    };
+  },
+});
+
+// ============================================================================
+// getCommunityFinanceOverview — the Finance home
+// ============================================================================
+
+/**
+ * Everything the community-level Finance home renders in one round trip: each
+ * fund's balance and month, the groups that have no fund yet, the card-provider
+ * connection, and how many people hold financial controls.
+ *
+ * WHY ONE QUERY. The screen is a list of rows whose SUBTITLES are the data —
+ * "«group» — $balance · $spent this month · N cards". Fetching those per row
+ * would mean one subscription per group, each with its own auth round trip,
+ * for a screen whose whole job is the overview.
+ *
+ * COST. Convex has no `["communityId", "createdAt"]` index on `ledgerEntries`
+ * (only `by_community` on the id alone), so a single community-wide month
+ * window is not expressible as one range scan. Rather than add an index for
+ * one screen, this fans out over the community's funds and uses the SAME
+ * `by_fund` range `getFundOverview` uses — an indexed read bounded by the
+ * month, not by the fund's history. That is 2 indexed reads per fund (ledger
+ * window + card list), and a fund only exists where an admin turned giving on.
+ *
+ * The rest is six indexed reads that don't scale with the ledger: the finance
+ * row, the provider connection, the provider name, the fund list, the group
+ * list, and the finance-role grants. Two of those (`groups`, `funds`) are
+ * whole-community collects, so the query is O(groups + funds) — the same
+ * order the screen it feeds is, since it draws a row for each. If a community
+ * ever has enough of either for that to hurt, the fix is the compound index
+ * and a single scan, plus paginating the LIST — not paginating a summary.
+ *
+ * The balance is `funds.balanceCents` — the ledger-maintained cache every
+ * other surface reads, so this screen can't disagree with the fund screen.
+ */
+export const getCommunityFinanceOverview = query({
+  args: { token: v.string(), communityId: v.id("communities") },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    await requireCommunityFinanceAccess(ctx, userId, args.communityId);
+    await requireGroupGivingEnabled(ctx);
+
+    const finance = await ctx.db
+      .query("communityFinance")
+      .withIndex("by_community", (q) => q.eq("communityId", args.communityId))
+      .first();
+    const onboardingStatus = finance?.onboardingStatus ?? null;
+    // The one precondition `enableGroupGiving` checks that this screen can
+    // answer without attempting the mutation. Sent as a flag AND a reason so
+    // the row can explain itself rather than just being disabled.
+    const canEnableGiving = onboardingStatus === "live";
+
+    const connection = await loadConnectionRow(ctx, args.communityId);
+    const providerName = await resolveCardProviderName(ctx, args.communityId);
+
+    const funds = await ctx.db
+      .query("funds")
+      .withIndex("by_community", (q) => q.eq("communityId", args.communityId))
+      .collect();
+
+    const groups = await ctx.db
+      .query("groups")
+      .withIndex("by_community", (q) => q.eq("communityId", args.communityId))
+      .collect();
+    const groupById = new Map(groups.map((group) => [group._id, group]));
+
+    const monthStart = startOfMonthUTC(now());
+
+    const fundRows = await Promise.all(
+      funds.map(async (fund) => {
+        const monthEntries = await ctx.db
+          .query("ledgerEntries")
+          .withIndex("by_fund", (q) =>
+            q.eq("fundId", fund._id).gte("createdAt", monthStart),
+          )
+          .collect();
+        const month = summarizePeriod(monthEntries);
+
+        // Live cards only: a canceled or failed card is not a card this fund
+        // has, and counting one would tell an admin their fund is covered
+        // when it isn't. Same denylist `createFundCard` enforces the
+        // one-card-per-fund rule with.
+        const cards = await ctx.db
+          .query("cards")
+          .withIndex("by_fund", (q) => q.eq("fundId", fund._id))
+          .collect();
+        const cardCount = cards.filter((card) =>
+          isLiveCardStatus(card.status),
+        ).length;
+
+        const group = fund.groupId ? (groupById.get(fund.groupId) ?? null) : null;
+
+        return {
+          fundId: fund._id,
+          groupId: fund.groupId ?? null,
+          // Null for the community's general fund, which belongs to no group.
+          groupName: group?.name ?? null,
+          fundName: fund.name,
+          type: fund.type,
+          status: fund.status,
+          balanceCents: fund.balanceCents,
+          monthDonatedCents: month.donationsCents,
+          monthSpentCents: month.spentCents,
+          cardCount,
+        };
+      }),
+    );
+
+    // General fund first (it's the community's own money), then group funds
+    // by the name the admin will scan for.
+    fundRows.sort((a, b) => {
+      if (a.type !== b.type) return a.type === "general" ? -1 : 1;
+      return (a.groupName ?? a.fundName).localeCompare(b.groupName ?? b.fundName);
+    });
+
+    const fundedGroupIds = new Set(
+      funds.map((fund) => fund.groupId).filter(Boolean),
+    );
+    const groupsWithoutFunds = groups
+      // Archived groups are excluded rather than shown disabled: enabling
+      // giving on one would create a fund the archive job immediately freezes.
+      .filter((group) => !group.isArchived && !fundedGroupIds.has(group._id))
+      .map((group) => ({ groupId: group._id, groupName: group.name }))
+      .sort((a, b) => a.groupName.localeCompare(b.groupName));
+
+    // Active grants only. The primary admin holds financial controls with no
+    // row at all (see `canManageCommunityFinance`), so this is deliberately
+    // "how many people it was GIVEN to" — the same population the Financial
+    // controls screen lists, and the count has to agree with that screen.
+    const financeRoles = await ctx.db
+      .query("communityFinanceRoles")
+      .withIndex("by_community", (q) => q.eq("communityId", args.communityId))
+      .collect();
+    const financeGrantCount = financeRoles.filter(
+      (role) => role.revokedAt === undefined,
+    ).length;
+
+    return {
+      onboardingStatus,
+      canEnableGiving,
+      provider: {
+        /** The community's effective issuer: "increase" | "privacy" | "bill" | "none". */
+        name: providerName,
+        connected: connection?.status === "active",
+        // Provider-supplied display text — untrusted, escape at render.
+        accountLabel: connection?.accountLabel ?? null,
+        status: (connection?.status ?? null) as
+          | "active"
+          | "error"
+          | "revoked"
+          | null,
+      },
+      totals: {
+        balanceCents: fundRows.reduce((sum, f) => sum + f.balanceCents, 0),
+        monthDonatedCents: fundRows.reduce(
+          (sum, f) => sum + f.monthDonatedCents,
+          0,
+        ),
+        monthSpentCents: fundRows.reduce((sum, f) => sum + f.monthSpentCents, 0),
+        cardCount: fundRows.reduce((sum, f) => sum + f.cardCount, 0),
+        fundCount: fundRows.length,
+      },
+      funds: fundRows,
+      groupsWithoutFunds,
+      financeGrantCount,
     };
   },
 });

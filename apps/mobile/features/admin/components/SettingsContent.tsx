@@ -318,6 +318,32 @@ export function SettingsContent() {
     }
   };
 
+  /**
+   * `SettingsContent` renders in BOTH shells, and in the WhatsApp one it sits
+   * inside `/(user)/you/admin/community` — i.e. inside the `(user)` route
+   * group, which `app/_layout.tsx` declares `presentation: "modal"`. A native
+   * modal sits above EVERY navigator screen, so pushing a ROOT-stack route
+   * (`/finance-setup/...`) from here lands the destination *behind* the still-
+   * open settings modal on iOS: the admin taps "Card provider" and nothing
+   * appears to happen. Dismiss the modal stack first, then push.
+   *
+   * Same pattern (and same comment) as `CommunityPageScreen`'s
+   * `pushOutOfModal`, `useStartDirectMessage`, `NotificationFeedScreen` and
+   * `NativeRunSheetView`.
+   *
+   * In the legacy shell this component renders in `/(tabs)/admin`, where there
+   * is no modal to dismiss — `canDismiss()` is false there and this degrades
+   * to a plain push, which is why one call site works for both shells.
+   *
+   * Destinations that stay INSIDE `(user)` (`/(user)/admin/*`,
+   * `/leader-tools/*`) must NOT go through this — they belong to the modal's
+   * own stack.
+   */
+  const pushOutOfModal = (path: string) => {
+    if (router.canDismiss?.()) router.dismissAll();
+    router.push(path as never);
+  };
+
   const toggleExploreGroupType = (groupTypeId: string) => {
     setExploreGroupTypes((prev) =>
       prev.includes(groupTypeId)
@@ -427,67 +453,36 @@ export function SettingsContent() {
               EIN, address, Stripe identity verification) lives outside any
               one group, so it's a top-level leader-tools route rather than
               nested under a specific group's giving screens. */}
+          {/* ONE row, not three. Card provider and Financial controls used to
+              sit here beside this one; they are now sections of the Finance
+              home, which is their PARENT rather than their sibling — and which
+              also answers the question none of the three flat rows did ("how
+              much money does this community have, and which groups can receive
+              it?"). Their own routes are unchanged, so existing deep links
+              still land.
+
+              Shown to any community admin, not only to people who hold
+              financial controls: "primary admin OR an active grant" has no
+              cheap client-side signal, and the destination opens on an
+              explicit "you need financial-controls access — ask your primary
+              admin" state, which is a better answer than a row that silently
+              isn't there. */}
           {groupGivingEnabled ? (
-          <>
           <TouchableOpacity
             style={[styles.quickLinkItem, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
-            onPress={() => router.push("/finance-setup")}
+            onPress={() => pushOutOfModal("/finance-setup")}
           >
             <View style={[styles.quickLinkIcon, { backgroundColor: colors.surface }]}>
               <Ionicons name="wallet-outline" size={20} color={themePrimaryColor} />
             </View>
             <View style={styles.quickLinkInfo}>
-              <Text style={[styles.quickLinkName, { color: colors.text }]}>Community Finance</Text>
+              <Text style={[styles.quickLinkName, { color: colors.text }]}>Finance</Text>
               <Text style={[styles.quickLinkDescription, { color: colors.textSecondary }]}>
-                Set up giving, spending, and reimbursements
+                Balances, group funds, cards, and who can spend
               </Text>
             </View>
             <Ionicons name="chevron-forward" size={20} color={colors.textTertiary} />
           </TouchableOpacity>
-          {/* ADR-033 Phase 3: the two community-level finance surfaces sit
-              beside the onboarding one rather than in the You tab's Admin
-              group, so every entry point into community finance is in one
-              place — and so they work in BOTH shells (this component renders
-              inside the legacy AdminScreen as well as /(user)/you/admin/community,
-              and a `you/admin` route redirects flag-off admins away).
-
-              Both rows are shown to any community admin, not only to people
-              who hold financial controls: "primary admin OR an active grant"
-              has no cheap client-side signal, and each destination opens on an
-              explicit "you need financial-controls access — ask your primary
-              admin" state, which is a better answer than a row that silently
-              isn't there. */}
-          <TouchableOpacity
-            style={[styles.quickLinkItem, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
-            onPress={() => router.push("/finance-setup/card-provider")}
-          >
-            <View style={[styles.quickLinkIcon, { backgroundColor: colors.surface }]}>
-              <Ionicons name="card-outline" size={20} color={themePrimaryColor} />
-            </View>
-            <View style={styles.quickLinkInfo}>
-              <Text style={[styles.quickLinkName, { color: colors.text }]}>Card provider</Text>
-              <Text style={[styles.quickLinkDescription, { color: colors.textSecondary }]}>
-                Issue group-fund cards on your own card account
-              </Text>
-            </View>
-            <Ionicons name="chevron-forward" size={20} color={colors.textTertiary} />
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.quickLinkItem, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
-            onPress={() => router.push("/finance-setup/financial-controls")}
-          >
-            <View style={[styles.quickLinkIcon, { backgroundColor: colors.surface }]}>
-              <Ionicons name="key-outline" size={20} color={themePrimaryColor} />
-            </View>
-            <View style={styles.quickLinkInfo}>
-              <Text style={[styles.quickLinkName, { color: colors.text }]}>Financial controls</Text>
-              <Text style={[styles.quickLinkDescription, { color: colors.textSecondary }]}>
-                Who can connect providers and issue cards
-              </Text>
-            </View>
-            <Ionicons name="chevron-forward" size={20} color={colors.textTertiary} />
-          </TouchableOpacity>
-          </>
           ) : null}
           {settings?.churchFeatures?.prayerEnabled ? (
             <TouchableOpacity

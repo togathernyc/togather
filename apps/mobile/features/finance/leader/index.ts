@@ -18,7 +18,10 @@ export { FinanceOnboardingFormScreen } from "./FinanceOnboardingFormScreen";
 export { FinanceOnboardingFormView } from "./FinanceOnboardingFormView";
 export type { FinanceOnboardingFormViewProps, FinanceOnboardingFormValues } from "./FinanceOnboardingFormView";
 
-export { FinanceOnboardingStatusScreen } from "./FinanceOnboardingStatusScreen";
+export {
+  FinanceOnboardingStatusScreen,
+  FinanceOnboardingStatusContent,
+} from "./FinanceOnboardingStatusScreen";
 export { FinanceOnboardingStatusView } from "./FinanceOnboardingStatusView";
 export type { FinanceOnboardingStatusViewProps, ChecklistItemState } from "./FinanceOnboardingStatusView";
 
@@ -32,5 +35,12 @@ export type {
   FinancialControlsViewProps,
   FinancialControlsState,
 } from "./FinancialControlsView";
+
+export { CommunityFinanceHomeScreen } from "./CommunityFinanceHomeScreen";
+export { CommunityFinanceHomeView } from "./CommunityFinanceHomeView";
+export type {
+  CommunityFinanceHomeViewProps,
+  CommunityFinanceHomeState,
+} from "./CommunityFinanceHomeView";
 
 export * from "./types";

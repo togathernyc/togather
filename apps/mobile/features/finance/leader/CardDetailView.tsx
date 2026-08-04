@@ -22,7 +22,12 @@ import { Badge, Skeleton, ConfirmModal, ImagePicker } from "@components/ui";
 // rather than the "@components/ui" barrel.
 import { CustomModal as Modal } from "@components/ui/Modal";
 import { formatCents } from "../format";
-import { formatCardLimit, CARD_CHARGE_SETTLEMENT_NOTE, type CardDetail } from "./types";
+import {
+  formatCardLimit,
+  CARD_CHARGE_SETTLEMENT_NOTE,
+  CARD_FAILED_GENERIC_MESSAGE,
+  type CardDetail,
+} from "./types";
 
 export interface CardDetailViewProps {
   /** `undefined` while loading, `null` if the card couldn't be found/loaded. */
@@ -104,7 +109,11 @@ export function CardDetailView({
             <Text style={styles.cardArtBrand}>TOGATHER</Text>
             <View style={styles.cardArtChip} />
           </View>
-          <Text style={styles.cardArtNumber}>•••• •••• •••• {card.last4}</Text>
+          {/* A card that never issued has no last4; four more dots is the
+              honest placeholder, and it keeps the art from ending mid-air. */}
+          <Text style={styles.cardArtNumber}>
+            •••• •••• •••• {card.last4 ?? "••••"}
+          </Text>
           <View style={styles.cardArtMetaRow}>
             <CardArtMetaItem label="Cardholder" value={card.holderName} />
             <CardArtMetaItem label="Expires" value="••/••" />
@@ -128,11 +137,26 @@ export function CardDetailView({
             </Text>
           </View>
         )}
+        {/* The failure, in the provider's own words when the viewer is
+            entitled to them. `getCardDetail` decides that — `failureMessage`
+            is null for anyone without the community's financial controls, and
+            they keep the generic line. The message is UNTRUSTED provider text:
+            it goes through <Text> (never markup) and is capped at four lines,
+            because a 300-character apology pushes the rest of the screen off
+            the bottom. */}
         {isFailed && (
-          <View style={[styles.frozenStrip, { backgroundColor: colors.surface }]}>
+          <View
+            style={[styles.frozenStrip, { backgroundColor: colors.surface }]}
+            testID="card-failed-strip"
+          >
             <Ionicons name="alert-circle-outline" size={16} color={colors.error} />
-            <Text style={[styles.frozenStripText, { color: colors.error }]}>
-              Something went wrong issuing this card. Contact support.
+            <Text
+              style={[styles.frozenStripText, { color: colors.error }]}
+              numberOfLines={4}
+            >
+              {card.failureMessage
+                ? `This card couldn't be issued: ${card.failureMessage}`
+                : CARD_FAILED_GENERIC_MESSAGE}
             </Text>
           </View>
         )}

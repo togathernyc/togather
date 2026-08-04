@@ -91,7 +91,7 @@ export function FinanceOnboardingFormView({
         showsVerticalScrollIndicator={false}
       >
       <View style={[styles.section, { backgroundColor: colors.surface }]}>
-        <Text style={[styles.sectionTitle, { color: colors.text }]}>Church details</Text>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>Organization details</Text>
         <Text style={[styles.sectionDescription, { color: colors.textSecondary }]}>
           One form, collected once — we submit this to both our payments and banking
           partners on your behalf.
@@ -103,7 +103,7 @@ export function FinanceOnboardingFormView({
           label="Legal name"
           required
           error={errors.legalName}
-          placeholder="First Community Church"
+          placeholder="First Community Inc."
           testID="onboarding-legal-name"
         />
 

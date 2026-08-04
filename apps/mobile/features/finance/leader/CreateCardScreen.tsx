@@ -26,12 +26,13 @@ import {
 } from "./CreateCardView";
 import { financeDisplayName } from "./utils";
 import type { CardholderCandidate, CardLimitPeriod } from "./types";
+import { isCardSlotFull } from "./types";
 
 const CARDHOLDER_ROLES = new Set(["cardholder", "manager", "finance_admin"]);
 
-/** Card statuses that mean the card is dead and doesn't occupy a fund's slot —
- * the client-side mirror of `DEAD_CARD_STATUSES` in cards.ts. */
-const DEAD_CARD_STATUSES = new Set(["canceled", "failed"]);
+// The "does this fund have room for another card?" rule lives in types.ts
+// (`isCardSlotFull`), so the one client-side copy of the server's dead-status
+// denylist is testable on its own and can't drift per screen.
 
 export function CreateCardScreen() {
   const router = useRouter();
@@ -100,15 +101,12 @@ export function CreateCardScreen() {
   const managedLimit = !!cardsRaw?.capabilities?.managedFundLimit;
   const maxCardsPerFund = cardsRaw?.capabilities?.maxCardsPerFund ?? null;
 
-  const liveCardCount = useMemo(
-    () =>
-      (cardsRaw?.cards ?? []).filter(
-        (card: any) => !DEAD_CARD_STATUSES.has(card.status),
-      ).length,
-    [cardsRaw],
+  // A `failed` card doesn't hold the slot — on a one-card-per-fund provider
+  // that is exactly what makes a retry possible after a refused provisioning.
+  const cardSlotFull = useMemo(
+    () => isCardSlotFull(cardsRaw?.cards ?? [], maxCardsPerFund),
+    [cardsRaw, maxCardsPerFund],
   );
-  const cardSlotFull =
-    maxCardsPerFund !== null && liveCardCount >= maxCardsPerFund;
 
   const state: CreateCardState =
     myFundRole === undefined || cardsRaw === undefined

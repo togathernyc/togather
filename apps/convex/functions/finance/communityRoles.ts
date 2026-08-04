@@ -73,6 +73,67 @@ async function requirePrimaryAdminForFinance(
 }
 
 // ============================================================================
+// getMyCommunityFinanceAccess
+// ============================================================================
+
+/**
+ * Does the CALLER hold this community's financial controls — answered without
+ * throwing.
+ *
+ * Every other community-level finance query is gated and raises for anyone
+ * else, which is right for the surfaces that show finance DATA but useless for
+ * a surface that merely needs to decide whether to offer a finance ACTION. The
+ * group Giving hub is exactly that: with no fund yet there is no `fundId`, so
+ * `getMyFundRole` can't run, and the hub was falling back to "ask a community
+ * admin" for the admins themselves — a dead end pointing at a screen the
+ * viewer was already entitled to use.
+ *
+ * Answering it non-throwingly leaks nothing: the caller learns one bit about
+ * their OWN standing, which they can already establish by opening any of the
+ * gated screens.
+ *
+ * `onboardingStatus` rides along because the same rows have to explain WHY
+ * "Enable giving" is unavailable when the community's own giving isn't live —
+ * `enableGroupGiving`'s first precondition. Non-holders get `null` for it:
+ * they have no action to explain, and it is finance information.
+ *
+ * ONE PREDICATE, TWO WRAPPERS. `canManage` is `canManageCommunityFinance`
+ * itself — the same function `requireCommunityFinanceAccess` throws on — so
+ * the two can never disagree about who holds the controls. The throwing
+ * wrapper adds one thing this one can't (it refuses an ARCHIVED community),
+ * and `canEnableGiving` carries that clause too: otherwise an archived
+ * community's finance holder would be offered an "Enable giving" button that
+ * `enableGroupGiving` — which goes through the throwing wrapper — always
+ * refuses.
+ */
+export const getMyCommunityFinanceAccess = query({
+  args: { token: v.string(), communityId: v.id("communities") },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    const canManage = await canManageCommunityFinance(
+      ctx,
+      userId,
+      args.communityId,
+    );
+    if (!canManage) {
+      return { canManage: false, onboardingStatus: null, canEnableGiving: false };
+    }
+
+    const finance = await ctx.db
+      .query("communityFinance")
+      .withIndex("by_community", (q) => q.eq("communityId", args.communityId))
+      .first();
+    const onboardingStatus = finance?.onboardingStatus ?? null;
+    const community = await ctx.db.get(args.communityId);
+    return {
+      canManage: true,
+      onboardingStatus,
+      canEnableGiving: onboardingStatus === "live" && !community?.isArchived,
+    };
+  },
+});
+
+// ============================================================================
 // listCommunityFinanceRoles
 // ============================================================================
 
