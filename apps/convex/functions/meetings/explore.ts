@@ -14,7 +14,7 @@ import { isLeaderRole } from "../../lib/helpers";
 import { isMeetingHost } from "../../lib/meetingPermissions";
 import {
   isMeetingVisibleTo,
-  resolveViewerTeamIds,
+  resolveInvitedMeetingIds,
 } from "../../lib/meetingAudience";
 
 /**
@@ -214,12 +214,12 @@ export const communityEvents = query({
     }
 
     // Filter by visibility
-    const userTeamIds = await resolveViewerTeamIds(ctx, meetings, userId);
+    const userInvitedIds = await resolveInvitedMeetingIds(ctx, meetings, userId);
     meetings = meetings.filter((m) => {
       return isMeetingVisibleTo(m, {
         userId,
         groupIds: userGroupIds,
-        teamIds: userTeamIds,
+        invitedMeetingIds: userInvitedIds,
         isCommunityMember: userCommunityIds.has(args.communityId),
       });
     });
@@ -592,7 +592,7 @@ export const searchEvents = query({
 
     // Filter by date range and visibility
     const currentTime = now();
-    const userTeamIds = await resolveViewerTeamIds(
+    const userInvitedIds = await resolveInvitedMeetingIds(
       ctx,
       searchResults,
       userId
@@ -610,7 +610,7 @@ export const searchEvents = query({
       return isMeetingVisibleTo(meeting, {
         userId,
         groupIds: userGroupIds,
-        teamIds: userTeamIds,
+        invitedMeetingIds: userInvitedIds,
         isCommunityMember,
       });
     });

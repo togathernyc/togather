@@ -8,10 +8,10 @@
  * - `"community"` — any member of the hosting group's community.
  * - `"group"`     — active members of the hosting group (the default).
  * - `"groups"`    — the hosting group, plus every group in `visibleGroupIds`.
- * - `"team"`      — the serving teams in `visibleTeamIds`, i.e. the people on
- *                   those rosters. Narrower than a group: a team is a roster
- *                   *inside* a group, so a "Prayer Team night" stays with the
- *                   Prayer Team instead of going out to the whole group.
+ * - `"private"`   — UNLISTED. Never appears in anyone's browse, search, or
+ *                   feed on group membership alone. You get in by holding the
+ *                   link, or by being invited. For a gathering someone wants
+ *                   to keep small, distribution is the control.
  *
  * This rule used to live in six hand-copied branches (`meetings/events.ts`,
  * `meetings/explore.ts` twice, `meetings/queries.ts`, `meetingRsvps.ts`, and
@@ -33,22 +33,29 @@ import type { Doc, Id } from "../_generated/dataModel";
 
 /** The audience-bearing fields of a meeting. */
 export type MeetingAudience = {
+  _id?: Id<"meetings">;
   groupId: Id<"groups">;
   visibility?: string;
   visibleGroupIds?: Id<"groups">[];
-  visibleTeamIds?: Id<"teams">[];
+  /** Who owns the event. Hosts always see their own private events. */
+  hostUserIds?: Id<"users">[];
+  createdById?: Id<"users">;
 };
 
 /**
  * A viewer's standing, resolved once and reused across many meetings.
  *
- * `groupIds` / `teamIds` hold ids the viewer is an ACTIVE member of. Callers
- * build them; see {@link resolveViewerTeamIds} for the team side.
+ * `groupIds` holds the groups the viewer is an ACTIVE member of. Callers build
+ * it; see {@link resolveInvitedMeetingIds} for the invite side.
  */
 export type ViewerStanding = {
   userId: Id<"users"> | null;
   groupIds: Set<string>;
-  teamIds: Set<string>;
+  /**
+   * Meetings this viewer was explicitly invited to (`eventInvites` rows).
+   * Only consulted for private events; see {@link resolveInvitedMeetingIds}.
+   */
+  invitedMeetingIds: Set<string>;
   isCommunityMember: boolean;
 };
 
@@ -61,9 +68,9 @@ export function meetingVisibility(meeting: MeetingAudience): string {
  * Whether `meeting` is visible to a viewer with the given standing.
  *
  * Pure and synchronous — safe to call in a `.filter()` over a page of
- * meetings. For team-scoped events the caller must have populated
- * `teamIds` (see {@link resolveViewerTeamIds}); an empty set simply hides
- * team-scoped events, which is the safe direction to fail.
+ * meetings. For private events the caller must have populated
+ * `invitedMeetingIds` (see {@link resolveInvitedMeetingIds}); an empty set
+ * simply hides them, which is the safe direction to fail.
  */
 export function isMeetingVisibleTo(
   meeting: MeetingAudience,
@@ -82,72 +89,64 @@ export function isMeetingVisibleTo(
     return (meeting.visibleGroupIds ?? []).some((id) => viewer.groupIds.has(id));
   }
 
-  if (visibility === "team") {
-    // Team-scoped events do NOT fall back to hosting-group membership: the
-    // whole point is to stay narrower than the group. Only people on one of
-    // the named rosters get in.
-    return (meeting.visibleTeamIds ?? []).some((id) => viewer.teamIds.has(id));
+  if (visibility === "private") {
+    // Unlisted: group membership grants nothing. It surfaces in a list only
+    // for the people who own it or were invited to it. Everyone else reaches
+    // it through the link, which is a different path entirely (see
+    // canAccessMeeting).
+    if (isMeetingOwner(meeting, viewer.userId)) return true;
+    return meeting._id ? viewer.invitedMeetingIds.has(meeting._id) : false;
   }
 
   return viewer.groupIds.has(meeting.groupId);
 }
 
+/** Hosts (and the creator, when no hosts are seated) own the event. */
+export function isMeetingOwner(
+  meeting: MeetingAudience,
+  userId: Id<"users"> | null
+): boolean {
+  if (!userId) return false;
+  const hosts = meeting.hostUserIds ?? [];
+  if (hosts.length > 0) return hosts.some((id) => id === userId);
+  return meeting.createdById === userId;
+}
+
 /**
- * Which of the teams referenced by `meetings` the viewer actually belongs to.
+ * Which of the given private meetings the viewer was explicitly invited to.
  *
- * A serving team's roster IS its linked chat channel's membership (see
- * `teams.channelId` and `chatChannels.isServingTeam` in schema.ts), so this
- * resolves team → channel → membership.
- *
- * Scoped to the teams the meetings in hand actually name, so a page with no
- * team-scoped events costs nothing and a page with a few costs a few reads —
- * rather than enumerating every team the viewer is on.
+ * Scoped to the private meetings actually in hand, so a page with none costs
+ * nothing — rather than loading every invite the viewer has ever received.
  */
-export async function resolveViewerTeamIds(
+export async function resolveInvitedMeetingIds(
   ctx: QueryCtx | MutationCtx,
   meetings: MeetingAudience[],
   userId: Id<"users"> | null
 ): Promise<Set<string>> {
   if (!userId) return new Set();
 
-  const referenced = new Set<string>();
+  const invited = new Set<string>();
   for (const m of meetings) {
-    if (meetingVisibility(m) !== "team") continue;
-    for (const id of m.visibleTeamIds ?? []) referenced.add(id);
+    if (meetingVisibility(m) !== "private" || !m._id) continue;
+    if (invited.has(m._id)) continue;
+    if (await isInvitedToMeeting(ctx, m._id, userId)) invited.add(m._id);
   }
-  if (referenced.size === 0) return new Set();
-
-  const memberOf = new Set<string>();
-  for (const teamId of referenced) {
-    if (await isOnTeamRoster(ctx, teamId as Id<"teams">, userId)) {
-      memberOf.add(teamId);
-    }
-  }
-  return memberOf;
+  return invited;
 }
 
-/**
- * Whether `userId` is on `teamId`'s roster — an active member of the team's
- * linked channel. A team with no channel has no roster to check, so nobody
- * passes; `meetings/index.ts` rejects such teams at create/update time so an
- * event can't be addressed to an audience that can never see it.
- */
-export async function isOnTeamRoster(
+/** Whether `userId` has an `eventInvites` row for `meetingId`. */
+export async function isInvitedToMeeting(
   ctx: QueryCtx | MutationCtx,
-  teamId: Id<"teams">,
+  meetingId: Id<"meetings">,
   userId: Id<"users">
 ): Promise<boolean> {
-  const team = await ctx.db.get(teamId);
-  if (!team || team.isArchived || !team.channelId) return false;
-
-  const membership = await ctx.db
-    .query("chatChannelMembers")
-    .withIndex("by_channel_user", (q) =>
-      q.eq("channelId", team.channelId!).eq("userId", userId)
+  const invite = await ctx.db
+    .query("eventInvites")
+    .withIndex("by_meeting_recipient", (q) =>
+      q.eq("meetingId", meetingId).eq("recipientUserId", userId)
     )
-    .filter((q) => q.eq(q.field("leftAt"), undefined))
     .first();
-  return !!membership;
+  return !!invite;
 }
 
 /**
@@ -204,11 +203,15 @@ export async function canAccessMeeting(
     return !!membership;
   }
 
-  if (visibility === "team") {
-    for (const teamId of meeting.visibleTeamIds ?? []) {
-      if (await isOnTeamRoster(ctx, teamId, userId)) return true;
-    }
-    return false;
+  if (visibility === "private") {
+    // Reaching this check at all means the caller already holds the event's
+    // id — which is only obtainable from the link or an invite, since private
+    // events appear in no listing. Possession of the link IS the grant, the
+    // same bargain as an unlisted video. Privacy here is "not discoverable",
+    // not "sealed": anyone the link is forwarded to can open and RSVP. That is
+    // what makes it usable for a host who wants to pass it around a small
+    // circle, and it is worth saying out loud rather than implying more.
+    return true;
   }
 
   if (await isActiveGroupMember(ctx, meeting.groupId, userId)) return true;
@@ -237,8 +240,8 @@ export function audienceDenialMessage(
   if (visibility === "community") {
     return `You must be a community member to ${action} this event`;
   }
-  if (visibility === "team") {
-    return `This event is limited to its team — you must be on the team to ${action} it`;
+  if (visibility === "private") {
+    return `This event is private — you need an invite or the link to ${action} it`;
   }
   return `You must be a group member to ${action} this event`;
 }
@@ -249,6 +252,8 @@ export function audienceOf(meeting: Doc<"meetings">): MeetingAudience {
     groupId: meeting.groupId,
     visibility: meeting.visibility,
     visibleGroupIds: meeting.visibleGroupIds,
-    visibleTeamIds: meeting.visibleTeamIds,
+    _id: meeting._id,
+    hostUserIds: meeting.hostUserIds,
+    createdById: meeting.createdById,
   };
 }

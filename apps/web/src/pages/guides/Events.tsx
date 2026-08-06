@@ -112,16 +112,28 @@ export function Events() {
             this event. Only people who've RSVP'd can read or post in it.
           </Step>
           <Step n={5}>
-            <strong>Visibility.</strong> Choose <Term>Group Only</Term>,{" "}
-            <Term>Specific Groups</Term>, <Term>Community</Term>, or{" "}
-            <Term>Public</Term>. <Term>Specific Groups</Term> lets you pick a
-            handful of groups whose members can see and RSVP alongside the
-            hosting group — handy for an event aimed at a few teams (say, a
-            leaders' dinner across several locations) without opening it to the
-            whole community. Public means anyone with the link can view the
-            event; RSVPing still requires login.
+            <strong>Visibility.</strong> Choose <Term>Private</Term>,{" "}
+            <Term>Group Only</Term>, <Term>Specific Groups</Term>,{" "}
+            <Term>Community</Term>, or <Term>Public</Term>.{" "}
+            <Term>Specific Groups</Term> lets you pick a handful of groups whose
+            members can see and RSVP alongside the hosting group — handy for an
+            event aimed at a few teams (say, a leaders' dinner across several
+            locations) without opening it to the whole community. Public means
+            anyone with the link can view the event; RSVPing still requires
+            login.
           </Step>
           <Step n={6}>
+            <strong>Keeping something small.</strong> <Term>Private</Term> is
+            for a gathering you don't want to grow — a team's prayer night, a
+            dinner for a handful of people. A private event is hidden
+            everywhere: it never shows up in Explore, in search, or in anyone's
+            upcoming events just because they're in the group. People get in one
+            of two ways — you send them the event link, or you invite them from
+            the event's <Term>Invite</Term> screen, which puts it in their list.
+            Anyone who has the link can open it and RSVP, so share it with the
+            people you want there.
+          </Step>
+          <Step n={7}>
             <strong>Check-in at the door.</strong> On the day, open the event
             and tap <Term>Check in</Term> to run down the <Term>Going</Term>{" "}
             list, tapping each person — and each guest they brought — as they

@@ -777,15 +777,14 @@ export default defineSchema({
 
     // Visibility. See `lib/meetingAudience.ts` — every read of these fields
     // goes through it so "who can see this" and "who can RSVP" can't drift.
-    visibility: v.optional(v.string()), // 'group' | 'community' | 'public' | 'groups' | 'team'
+    // 'group' | 'community' | 'public' | 'groups' | 'private'
+    // 'private' is UNLISTED: it appears in no browse, search, or feed on group
+    // membership alone. You reach it by holding the link or being invited
+    // (`eventInvites`), so it needs no audience list of its own.
+    visibility: v.optional(v.string()),
     // When visibility is 'groups', members of these groups can also see and
     // RSVP, in addition to the hosting group. Ignored for other visibilities.
     visibleGroupIds: v.optional(v.array(v.id("groups"))),
-    // When visibility is 'team', ONLY the people on these serving teams'
-    // rosters can see and RSVP — not the hosting group at large. Lets a team
-    // keep its own night to itself without spinning up a whole separate group.
-    // Ignored for other visibilities.
-    visibleTeamIds: v.optional(v.array(v.id("teams"))),
 
     // Public sharing
     publicSlug: v.optional(v.string()),

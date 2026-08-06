@@ -5,7 +5,12 @@ import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useTheme } from "@hooks/useTheme";
 
-export type VisibilityLevel = "group" | "groups" | "community" | "public";
+export type VisibilityLevel =
+  | "group"
+  | "groups"
+  | "private"
+  | "community"
+  | "public";
 
 interface VisibilitySelectorProps {
   value: VisibilityLevel;
@@ -16,6 +21,11 @@ interface VisibilitySelectorProps {
    * audience can't be carried through to each child meeting.
    */
   allowSpecificGroups?: boolean;
+  /**
+   * When false, the "Private" option is hidden. Community-wide events fan out
+   * across a group type, and an unlisted event can't meaningfully fan out.
+   */
+  allowPrivate?: boolean;
 }
 
 interface VisibilityOption {
@@ -26,6 +36,12 @@ interface VisibilityOption {
 }
 
 const VISIBILITY_OPTIONS: VisibilityOption[] = [
+  {
+    value: "private",
+    label: "Private",
+    icon: "lock-closed",
+    description: "Hidden from everyone — share the link or invite people",
+  },
   {
     value: "group",
     label: "Group Only",
@@ -56,13 +72,16 @@ export function VisibilitySelector({
   value,
   onChange,
   allowSpecificGroups = true,
+  allowPrivate = true,
 }: VisibilitySelectorProps) {
   const { colors } = useTheme();
   const { primaryColor } = useCommunityTheme();
 
-  const options = allowSpecificGroups
-    ? VISIBILITY_OPTIONS
-    : VISIBILITY_OPTIONS.filter((o) => o.value !== "groups");
+  const options = VISIBILITY_OPTIONS.filter((o) => {
+    if (o.value === "groups" && !allowSpecificGroups) return false;
+    if (o.value === "private" && !allowPrivate) return false;
+    return true;
+  });
 
   return (
     <View style={styles.container}>
