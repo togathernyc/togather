@@ -21,6 +21,10 @@ import { Id, Doc } from "../../_generated/dataModel";
 import { getMediaUrl } from "../../lib/utils";
 import { getOptionalAuth } from "../../lib/auth";
 import { PAST_EVENT_BUFFER_MS } from "../../lib/meetingConfig";
+import {
+  isMeetingVisibleTo,
+  resolveViewerTeamIds,
+} from "../../lib/meetingAudience";
 import { getHostUserIds, isMeetingHost } from "../../lib/meetingPermissions";
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
@@ -145,8 +149,13 @@ export const listForEventsTab = query({
     );
     const inWindowMeetings = perGroupFetches.flat();
 
+    const windowTeamIds = await resolveViewerTeamIds(
+      ctx,
+      inWindowMeetings,
+      userId
+    );
     const visibleInWindow = inWindowMeetings.filter((m) =>
-      isVisible(m, userId, userGroupIds, isCommunityMember)
+      isVisible(m, userId, userGroupIds, isCommunityMember, windowTeamIds)
     );
 
     // nextUp: upcoming within 48h. Both types; CWE-collapsed. Past floor is
@@ -181,8 +190,13 @@ export const listForEventsTab = query({
       userLeaderGroupIds,
       userRsvpMeetingIds
     );
+    const myEventsTeamIds = await resolveViewerTeamIds(
+      ctx,
+      myEventsMeetings,
+      userId
+    );
     const myEventsVisible = myEventsMeetings.filter((m) =>
-      isVisible(m, userId, userGroupIds, isCommunityMember)
+      isVisible(m, userId, userGroupIds, isCommunityMember, myEventsTeamIds)
     );
     // myEvents shows the exact meeting the user is going to — don't
     // collapse into CWE cards here. If they RSVP'd to "Manhattan Service",
@@ -262,8 +276,9 @@ export const getCommunityWideEventChildren = query({
       })
       .filter(Boolean) as MeetingWithGroup[];
 
+    const viewerTeamIds = await resolveViewerTeamIds(ctx, withGroup, userId);
     const visible = withGroup.filter((m) =>
-      isVisible(m, userId, userGroupIds, isCommunityMember)
+      isVisible(m, userId, userGroupIds, isCommunityMember, viewerTeamIds)
     );
     visible.sort((a, b) => a.scheduledAt - b.scheduledAt);
 
@@ -331,8 +346,9 @@ export const listLaterEvents = query({
       })
       .filter((m): m is MeetingWithGroup => m !== null);
 
+    const viewerTeamIds = await resolveViewerTeamIds(ctx, withGroup, userId);
     const visible = withGroup.filter((m) =>
-      isVisible(m, userId, userGroupIds, isCommunityMember)
+      isVisible(m, userId, userGroupIds, isCommunityMember, viewerTeamIds)
     );
 
     const enrichment = await buildEnrichment(ctx, visible, {
@@ -540,22 +556,27 @@ async function loadMyEventsMeetings(
   return withGroup;
 }
 
+/**
+ * Thin adapter over the shared audience rule in `lib/meetingAudience.ts`.
+ *
+ * `userTeamIds` carries the serving teams the viewer is on, and is only
+ * consulted for `visibility: "team"` events. Callers that never surface
+ * team-scoped events may pass an empty set — team events then stay hidden,
+ * which is the safe direction to fail.
+ */
 export function isVisible(
   m: MeetingWithGroup,
   userId: Id<"users"> | null,
   userGroupIds: Set<string>,
-  isCommunityMember: boolean
+  isCommunityMember: boolean,
+  userTeamIds: Set<string> = new Set()
 ): boolean {
-  const visibility = m.visibility || "group";
-  if (visibility === "public") return true;
-  if (visibility === "community") return userId !== null && isCommunityMember;
-  if (visibility === "groups") {
-    // Visible to members of the hosting group OR any of the explicitly
-    // shared-with groups.
-    if (userGroupIds.has(m.groupId)) return true;
-    return (m.visibleGroupIds ?? []).some((id) => userGroupIds.has(id));
-  }
-  return userGroupIds.has(m.groupId);
+  return isMeetingVisibleTo(m, {
+    userId,
+    groupIds: userGroupIds,
+    teamIds: userTeamIds,
+    isCommunityMember,
+  });
 }
 
 type Enrichment = {

@@ -14,6 +14,10 @@ import { getSeriesNumber } from "../eventSeries";
 import { isLeaderRole } from "../../lib/helpers";
 import { getHostUserIds, isMeetingHost } from "../../lib/meetingPermissions";
 import {
+  audienceOf,
+  canAccessMeeting,
+} from "../../lib/meetingAudience";
+import {
   GOING_RSVP_OPTION_ID,
   MAYBE_RSVP_OPTION_ID,
   CANT_GO_RSVP_OPTION_ID,
@@ -86,46 +90,10 @@ export const getByShortId = query({
       userRole = groupMembership.role || "member";
     }
 
-    // Check visibility-based access
-    const visibility = meeting.visibility || "group";
-    if (visibility === "public") {
-      hasAccess = true;
-    } else if (visibility === "community" && userId) {
-      // Check if user is in the community
-      const communityMembership = await ctx.db
-        .query("userCommunities")
-        .withIndex("by_user_community", (q) =>
-          q.eq("userId", userId).eq("communityId", group.communityId)
-        )
-        .first();
-      hasAccess = !!communityMembership;
-    } else if (groupMembership) {
-      hasAccess = true;
-    } else if (visibility === "groups" && userId) {
-      // Shared with specific groups: grant access to active members of any of
-      // the shared-with groups (the hosting group is already covered above).
-      for (const sharedGroupId of meeting.visibleGroupIds ?? []) {
-        const sharedMembership = await ctx.db
-          .query("groupMembers")
-          .withIndex("by_group_user", (q) =>
-            q.eq("groupId", sharedGroupId).eq("userId", userId)
-          )
-          .filter((q) =>
-            q.and(
-              q.eq(q.field("leftAt"), undefined),
-              q.or(
-                q.eq(q.field("requestStatus"), undefined),
-                q.eq(q.field("requestStatus"), "accepted")
-              )
-            )
-          )
-          .first();
-        if (sharedMembership) {
-          hasAccess = true;
-          break;
-        }
-      }
-    }
+    // Audience gate — one shared rule, see lib/meetingAudience.ts. Note this
+    // deliberately does NOT grant hosting-group members access to a
+    // team-scoped event; staying narrower than the group is the point.
+    hasAccess = await canAccessMeeting(ctx, audienceOf(meeting), userId);
 
     // Get group type name
     const groupType = await ctx.db.get(group.groupTypeId);
