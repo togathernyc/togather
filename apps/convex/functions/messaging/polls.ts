@@ -363,7 +363,10 @@ export const voteOnPoll = mutation({
         channel.channelType === "announcements"
       ) {
         const enabled = channelIsLeaderEnabled(channel);
-        if (!enabled && !(await isParticipatingGroupLeader(ctx, channel, userId))) {
+        if (
+          !enabled &&
+          !(await isParticipatingGroupLeader(ctx, channel, userId))
+        ) {
           throw new ConvexError("This channel is disabled");
         }
       }
