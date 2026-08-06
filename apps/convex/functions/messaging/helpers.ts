@@ -8,6 +8,7 @@ import { ConvexError } from "convex/values";
 import type { MutationCtx, QueryCtx } from "../../_generated/server";
 import type { Doc, Id } from "../../_generated/dataModel";
 import { isCommunityAdmin } from "../../lib/permissions";
+import { isLeaderRole } from "../../lib/helpers";
 
 /**
  * Whether `userId` may view this group's channels purely on community-admin
@@ -45,6 +46,71 @@ export async function isCommunityAdminForChannel(
 ): Promise<boolean> {
   if (!channel.groupId) return false;
   return isCommunityAdminForGroup(ctx, channel.groupId, userId);
+}
+
+/**
+ * Whether `userId` is a leader of a group participating in `channel`: the
+ * owning group always, plus — on shared ANNOUNCEMENTS channels only — any
+ * group with an ACCEPTED share entry.
+ *
+ * This is the one definition of "leader of this channel". Two rules ride on
+ * it, and they must agree, since a leader who can post in a channel is also a
+ * moderator of it:
+ * - Posting: announcements channels are leader-broadcast (every active member
+ *   is a channel member so unread counts work, but only leaders post).
+ *   `sendMessage`, polls, and availability requests all gate on this.
+ * - Moderation: editing / closing / deleting a poll, and seeing voter
+ *   identities on an anonymous poll.
+ *
+ * Leadership is read from `groupMembers` rather than the mirrored
+ * `chatChannelMembers.role` because that mirror is written asynchronously and
+ * may lag the source-of-truth.
+ *
+ * The announcements-only restriction on secondary leaders is deliberate and
+ * matches `channelIsSharedAnnouncements` in `functions/sync/memberships.ts`:
+ * that sync mirrors leaders of accepted secondaries to channel role "admin"
+ * for shared ANNOUNCEMENTS channels and nothing else. Other shared channel
+ * types use manual membership (`addChannelMembers`) and never confer that
+ * standing, so treating a secondary leader as a moderator there would let
+ * someone who isn't even a channel member delete a poll — while the plain
+ * `deleteMessage` path, which reads the mirrored channel role, would reject
+ * that same user.
+ *
+ * Pending (not yet accepted) invitees get nothing — they have no channel
+ * membership either. Returns false for ad-hoc DM channels, which have no
+ * owning group and are author-moderated.
+ */
+export async function isParticipatingGroupLeader(
+  ctx: QueryCtx,
+  channel: Doc<"chatChannels"> | null,
+  userId: Id<"users">
+): Promise<boolean> {
+  if (!channel?.groupId) return false;
+
+  const ownerMembership = await ctx.db
+    .query("groupMembers")
+    .withIndex("by_group_user", (q) =>
+      q.eq("groupId", channel.groupId!).eq("userId", userId)
+    )
+    .filter((q) => q.eq(q.field("leftAt"), undefined))
+    .first();
+  if (isLeaderRole(ownerMembership?.role)) return true;
+
+  if (channel.channelType !== "announcements") return false;
+
+  for (const sharedGroup of channel.sharedGroups ?? []) {
+    if (sharedGroup.status !== "accepted") continue;
+    const secondaryMembership = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group_user", (q) =>
+        q.eq("groupId", sharedGroup.groupId).eq("userId", userId)
+      )
+      .filter((q) => q.eq(q.field("leftAt"), undefined))
+      .first();
+    if (isLeaderRole(secondaryMembership?.role)) return true;
+  }
+
+  return false;
 }
 
 /**
