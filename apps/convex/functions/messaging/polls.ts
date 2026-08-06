@@ -14,7 +14,7 @@
 
 import { v, ConvexError } from "convex/values";
 import { mutation, query } from "../../_generated/server";
-import type { MutationCtx, QueryCtx } from "../../_generated/server";
+import type { MutationCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
@@ -23,13 +23,12 @@ import {
   channelEffectiveEnabledForGroup,
   channelIsLeaderEnabled,
   isCustomChannel,
-  isLeaderRole,
 } from "../../lib/helpers";
 import { getDisplayName, getMediaUrl } from "../../lib/utils";
 import { canAccessEventChannel } from "./eventChat";
 import {
-  canPostInAnnouncementsChannel,
   isCommunityAdminForChannel,
+  isParticipatingGroupLeader,
 } from "./helpers";
 import { generateMessagePreview } from "./messages";
 import { checkRateLimit } from "../../lib/rateLimit";
@@ -124,7 +123,7 @@ export async function assertCanPostInChannel(
     if (!channel.groupId) {
       throw new ConvexError("Invalid announcements channel");
     }
-    if (!(await canPostInAnnouncementsChannel(ctx, channel, userId))) {
+    if (!(await isParticipatingGroupLeader(ctx, channel, userId))) {
       throw new ConvexError({
         code: "FORBIDDEN",
         message: "Only group leaders can post in Announcements",
@@ -179,26 +178,6 @@ export async function assertCanPostInChannel(
       );
     }
   }
-}
-
-/**
- * Whether `userId` is a leader of the group that owns `channel`.
- * Returns false for ad-hoc channels (no group) — author-only moderation.
- */
-async function isChannelGroupLeader(
-  ctx: QueryCtx | MutationCtx,
-  channel: Doc<"chatChannels"> | null,
-  userId: Id<"users">,
-): Promise<boolean> {
-  if (!channel?.groupId) return false;
-  const m = await ctx.db
-    .query("groupMembers")
-    .withIndex("by_group_user", (q) =>
-      q.eq("groupId", channel.groupId!).eq("userId", userId),
-    )
-    .filter((q) => q.eq(q.field("leftAt"), undefined))
-    .first();
-  return isLeaderRole(m?.role);
 }
 
 /**
@@ -384,7 +363,7 @@ export const voteOnPoll = mutation({
         channel.channelType === "announcements"
       ) {
         const enabled = channelIsLeaderEnabled(channel);
-        if (!enabled && !(await isChannelGroupLeader(ctx, channel, userId))) {
+        if (!enabled && !(await isParticipatingGroupLeader(ctx, channel, userId))) {
           throw new ConvexError("This channel is disabled");
         }
       }
@@ -501,7 +480,7 @@ export const editPoll = mutation({
 
     const channel = await ctx.db.get(poll.channelId);
     const isAuthor = poll.authorId === userId;
-    const isLeader = await isChannelGroupLeader(ctx, channel, userId);
+    const isLeader = await isParticipatingGroupLeader(ctx, channel, userId);
     if (!isAuthor && !isLeader) {
       throw new ConvexError({
         code: "FORBIDDEN",
@@ -651,7 +630,7 @@ export const closePoll = mutation({
 
     const channel = await ctx.db.get(poll.channelId);
     const isAuthor = poll.authorId === userId;
-    const isLeader = await isChannelGroupLeader(ctx, channel, userId);
+    const isLeader = await isParticipatingGroupLeader(ctx, channel, userId);
     if (!isAuthor && !isLeader) {
       throw new ConvexError({
         code: "FORBIDDEN",
@@ -683,7 +662,7 @@ export const deletePoll = mutation({
 
     const channel = await ctx.db.get(poll.channelId);
     const isAuthor = poll.authorId === userId;
-    const isLeader = await isChannelGroupLeader(ctx, channel, userId);
+    const isLeader = await isParticipatingGroupLeader(ctx, channel, userId);
     if (!isAuthor && !isLeader) {
       throw new ConvexError({
         code: "FORBIDDEN",
@@ -814,7 +793,7 @@ export const getPoll = query({
       .collect();
 
     const isAuthor = poll.authorId === userId;
-    const isLeader = await isChannelGroupLeader(ctx, channel, userId);
+    const isLeader = await isParticipatingGroupLeader(ctx, channel, userId);
     const canVote = poll.status === "active";
     const canModerate = isAuthor || isLeader;
     const canSeeIdentities = !poll.isAnonymous || isAuthor || isLeader;
@@ -965,7 +944,7 @@ export const getPollVoters = query({
     }
 
     const isAuthor = poll.authorId === userId;
-    const isLeader = await isChannelGroupLeader(ctx, channel, userId);
+    const isLeader = await isParticipatingGroupLeader(ctx, channel, userId);
     const canSeeIdentities =
       !poll.isAnonymous || isAuthor || isLeader;
 

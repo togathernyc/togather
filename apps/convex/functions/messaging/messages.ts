@@ -27,8 +27,8 @@ import { checkRateLimit } from "../../lib/rateLimit";
 import { DOMAIN_CONFIG } from "@togather/shared/config";
 import { canAccessEventChannel } from "./eventChat";
 import {
-  canPostInAnnouncementsChannel,
   isCommunityAdminForChannel,
+  isParticipatingGroupLeader,
 } from "./helpers";
 import { resolveChannelCommunityId } from "../../lib/messaging/communityScope";
 import { getUsersWithNotificationsDisabled } from "../../lib/notifications/enabledStatus";
@@ -1369,7 +1369,7 @@ export const sendMessage = mutation({
       }
 
       // Announcements channels are leader-broadcast — see
-      // `canPostInAnnouncementsChannel` for who counts as a leader (including
+      // `isParticipatingGroupLeader` for who counts as a leader (including
       // leaders of accepted secondary groups on a shared channel).
       if (channel.channelType === "announcements") {
         if (!channelIsLeaderEnabled(channel) || channel.isArchived) {
@@ -1378,7 +1378,7 @@ export const sendMessage = mutation({
         if (!channel.groupId) {
           throw new Error("Invalid announcements channel");
         }
-        if (!(await canPostInAnnouncementsChannel(ctx, channel, userId))) {
+        if (!(await isParticipatingGroupLeader(ctx, channel, userId))) {
           throw new ConvexError({
             code: "FORBIDDEN",
             message: "Only group leaders can post in Announcements",

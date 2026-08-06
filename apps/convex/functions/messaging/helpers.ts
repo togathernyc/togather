@@ -49,29 +49,34 @@ export async function isCommunityAdminForChannel(
 }
 
 /**
- * Whether `userId` may post in an announcements channel.
+ * Whether `userId` is a leader of ANY group participating in `channel` — the
+ * owning group, or any group with an ACCEPTED share entry.
  *
- * Announcements channels are leader-broadcast: every active group member is a
- * channel member (so unread counts work) but only group leaders can post.
- * Leadership is read from `groupMembers` rather than the channel-member role
- * because the latter is denormalized at sync time and may lag the
+ * This is the one definition of "leader of this channel", and it's the same
+ * standing the membership sync denormalizes onto `chatChannelMembers.role`
+ * (`isLeaderOfAny` → channel role "admin", see `functions/sync/memberships.ts`).
+ * Leadership is read from `groupMembers` rather than that mirrored channel
+ * role because the mirror is written asynchronously and may lag the
  * source-of-truth.
  *
- * For SHARED announcements channels, leaders of any ACCEPTED secondary group
- * can post too — they're leaders of a group that receives the channel. Pending
- * invitees get nothing (they have no channel membership either).
+ * Two rules ride on it, and they must agree — a leader who can post in a
+ * shared channel is also a moderator of it:
+ * - Posting: announcements channels are leader-broadcast (every active member
+ *   is a channel member so unread counts work, but only leaders post).
+ *   `sendMessage`, polls, and availability requests all gate on this.
+ * - Moderation: editing / closing / deleting a poll, and seeing voter
+ *   identities on an anonymous poll.
  *
- * Every post path into an announcements channel must go through this helper:
- * plain messages (`sendMessage`), polls, and availability requests
- * (`assertCanPostInChannel`). Keeping it in one place is what stopped polls
- * from silently applying a stricter rule than text messages.
+ * Pending (not yet accepted) invitees get nothing — they have no channel
+ * membership either. Returns false for ad-hoc DM channels, which have no
+ * owning group and are author-moderated.
  */
-export async function canPostInAnnouncementsChannel(
+export async function isParticipatingGroupLeader(
   ctx: QueryCtx,
-  channel: Doc<"chatChannels">,
+  channel: Doc<"chatChannels"> | null,
   userId: Id<"users">
 ): Promise<boolean> {
-  if (!channel.groupId) return false;
+  if (!channel?.groupId) return false;
 
   const ownerMembership = await ctx.db
     .query("groupMembers")

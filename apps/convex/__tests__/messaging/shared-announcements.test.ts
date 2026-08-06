@@ -674,6 +674,98 @@ describe("posting rights on a shared announcements channel", () => {
 });
 
 // ============================================================================
+// Moderation rights
+// ============================================================================
+
+describe("poll moderation on a shared announcements channel", () => {
+  /** Owner-group leader posts a poll; returns its pollId. */
+  async function ownerPoll(
+    t: ReturnType<typeof convexTest>,
+    data: SeedData
+  ): Promise<Id<"polls">> {
+    const { pollId } = await t.mutation(
+      api.functions.messaging.polls.createPoll,
+      {
+        token: data.ownerLeaderToken,
+        channelId: data.ownerAnnouncementsChannelId,
+        question: "Owner leader poll",
+        options: ["Yes", "No"],
+        allowMultiple: false,
+      }
+    );
+    return pollId;
+  }
+
+  // A leader of an accepted secondary group is mirrored to channel role
+  // "admin" by the membership sync, which already lets them delete plain
+  // messages in the shared channel. Poll moderation must match — otherwise
+  // the same person can delete a text announcement but not the poll next to
+  // it.
+  test("leader of an accepted secondary group can close another leader's poll", async () => {
+    const t = convexTest(schema, modules);
+    const data = await seedData(t);
+
+    await inviteSecondary(t, data);
+    await acceptShare(t, data);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const pollId = await ownerPoll(t, data);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    await t.mutation(api.functions.messaging.polls.closePoll, {
+      token: data.secondaryLeaderToken,
+      pollId,
+    });
+
+    const poll = await t.run((ctx) => ctx.db.get(pollId));
+    expect(poll?.status).toBe("closed");
+
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+  });
+
+  test("leader of an accepted secondary group can delete another leader's poll", async () => {
+    const t = convexTest(schema, modules);
+    const data = await seedData(t);
+
+    await inviteSecondary(t, data);
+    await acceptShare(t, data);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const pollId = await ownerPoll(t, data);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    await t.mutation(api.functions.messaging.polls.deletePoll, {
+      token: data.secondaryLeaderToken,
+      pollId,
+    });
+
+    const poll = await t.run((ctx) => ctx.db.get(pollId));
+    expect(poll).toBeNull();
+
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+  });
+
+  test("non-leader member of an accepted secondary group cannot close a poll", async () => {
+    const t = convexTest(schema, modules);
+    const data = await seedData(t);
+
+    await inviteSecondary(t, data);
+    await acceptShare(t, data);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const pollId = await ownerPoll(t, data);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    await expect(
+      t.mutation(api.functions.messaging.polls.closePoll, {
+        token: data.secondaryMemberToken,
+        pollId,
+      })
+    ).rejects.toThrow(/Only the poll author or a leader can close this poll/);
+  });
+});
+
+// ============================================================================
 // Leaving / removal restores the group's own channel
 // ============================================================================
 
