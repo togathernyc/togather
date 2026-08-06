@@ -26,7 +26,10 @@ import {
 import { checkRateLimit } from "../../lib/rateLimit";
 import { DOMAIN_CONFIG } from "@togather/shared/config";
 import { canAccessEventChannel } from "./eventChat";
-import { isCommunityAdminForChannel } from "./helpers";
+import {
+  canPostInAnnouncementsChannel,
+  isCommunityAdminForChannel,
+} from "./helpers";
 import { resolveChannelCommunityId } from "../../lib/messaging/communityScope";
 import { getUsersWithNotificationsDisabled } from "../../lib/notifications/enabledStatus";
 import { truncateChars } from "../../lib/textPreview";
@@ -1365,13 +1368,9 @@ export const sendMessage = mutation({
         }
       }
 
-      // Announcements channels are leader-broadcast: every active group
-      // member is a channel member (so unread counts work) but only group
-      // leaders can post. Block sends from non-leaders here regardless of
-      // channel-member role, since channel role is denormalized at sync time
-      // and may lag the source-of-truth on `groupMembers`. For shared
-      // announcements channels, leaders of any ACCEPTED secondary group can
-      // post too; pending invitees get nothing.
+      // Announcements channels are leader-broadcast — see
+      // `canPostInAnnouncementsChannel` for who counts as a leader (including
+      // leaders of accepted secondary groups on a shared channel).
       if (channel.channelType === "announcements") {
         if (!channelIsLeaderEnabled(channel) || channel.isArchived) {
           throw new Error("This channel is disabled");
@@ -1379,31 +1378,7 @@ export const sendMessage = mutation({
         if (!channel.groupId) {
           throw new Error("Invalid announcements channel");
         }
-        const groupMembership = await ctx.db
-          .query("groupMembers")
-          .withIndex("by_group_user", (q) =>
-            q.eq("groupId", channel.groupId!).eq("userId", userId)
-          )
-          .filter((q) => q.eq(q.field("leftAt"), undefined))
-          .first();
-        let canPost = isLeaderRole(groupMembership?.role);
-        if (!canPost) {
-          for (const sg of channel.sharedGroups ?? []) {
-            if (sg.status !== "accepted") continue;
-            const secondaryMembership = await ctx.db
-              .query("groupMembers")
-              .withIndex("by_group_user", (q) =>
-                q.eq("groupId", sg.groupId).eq("userId", userId)
-              )
-              .filter((q) => q.eq(q.field("leftAt"), undefined))
-              .first();
-            if (isLeaderRole(secondaryMembership?.role)) {
-              canPost = true;
-              break;
-            }
-          }
-        }
-        if (!canPost) {
+        if (!(await canPostInAnnouncementsChannel(ctx, channel, userId))) {
           throw new ConvexError({
             code: "FORBIDDEN",
             message: "Only group leaders can post in Announcements",

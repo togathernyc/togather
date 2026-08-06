@@ -599,6 +599,78 @@ describe("posting rights on a shared announcements channel", () => {
 
     await t.finishAllScheduledFunctions(vi.runAllTimers);
   });
+
+  // Polls and availability requests post through `assertCanPostInChannel`
+  // rather than `sendMessage`. Both must honour the same shared-share rule —
+  // a secondary group's leader who can send a text announcement must also be
+  // able to post a poll in that channel.
+  test("leader of an accepted secondary group can create a poll", async () => {
+    const t = convexTest(schema, modules);
+    const data = await seedData(t);
+
+    await inviteSecondary(t, data);
+    await acceptShare(t, data);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const { messageId, pollId } = await t.mutation(
+      api.functions.messaging.polls.createPoll,
+      {
+        token: data.secondaryLeaderToken,
+        channelId: data.ownerAnnouncementsChannelId,
+        question: "Prayer Night this Friday",
+        options: ["Sign me up!", "Bringing a friend"],
+        allowMultiple: false,
+      }
+    );
+    const message = await t.run((ctx) => ctx.db.get(messageId));
+    expect(message?.channelId).toBe(data.ownerAnnouncementsChannelId);
+    expect(message?.contentType).toBe("poll");
+    expect(message?.pollId).toBe(pollId);
+
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+  });
+
+  test("non-leader member of an accepted secondary group cannot create a poll", async () => {
+    const t = convexTest(schema, modules);
+    const data = await seedData(t);
+
+    await inviteSecondary(t, data);
+    await acceptShare(t, data);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    await expect(
+      t.mutation(api.functions.messaging.polls.createPoll, {
+        token: data.secondaryMemberToken,
+        channelId: data.ownerAnnouncementsChannelId,
+        question: "I should not be able to post",
+        options: ["A", "B"],
+        allowMultiple: false,
+      })
+    ).rejects.toThrow(/Only group leaders can post in Announcements/);
+  });
+
+  test("owning group leader can still create a poll", async () => {
+    const t = convexTest(schema, modules);
+    const data = await seedData(t);
+
+    await inviteSecondary(t, data);
+    await acceptShare(t, data);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const { messageId } = await t.mutation(
+      api.functions.messaging.polls.createPoll,
+      {
+        token: data.ownerLeaderToken,
+        channelId: data.ownerAnnouncementsChannelId,
+        question: "Owner leader poll",
+        options: ["Yes", "No"],
+        allowMultiple: false,
+      }
+    );
+    expect(messageId).toBeDefined();
+
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+  });
 });
 
 // ============================================================================

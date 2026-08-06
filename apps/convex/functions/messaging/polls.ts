@@ -27,7 +27,10 @@ import {
 } from "../../lib/helpers";
 import { getDisplayName, getMediaUrl } from "../../lib/utils";
 import { canAccessEventChannel } from "./eventChat";
-import { isCommunityAdminForChannel } from "./helpers";
+import {
+  canPostInAnnouncementsChannel,
+  isCommunityAdminForChannel,
+} from "./helpers";
 import { generateMessagePreview } from "./messages";
 import { checkRateLimit } from "../../lib/rateLimit";
 
@@ -121,14 +124,7 @@ export async function assertCanPostInChannel(
     if (!channel.groupId) {
       throw new ConvexError("Invalid announcements channel");
     }
-    const groupMembership = await ctx.db
-      .query("groupMembers")
-      .withIndex("by_group_user", (q) =>
-        q.eq("groupId", channel.groupId!).eq("userId", userId),
-      )
-      .filter((q) => q.eq(q.field("leftAt"), undefined))
-      .first();
-    if (!isLeaderRole(groupMembership?.role)) {
+    if (!(await canPostInAnnouncementsChannel(ctx, channel, userId))) {
       throw new ConvexError({
         code: "FORBIDDEN",
         message: "Only group leaders can post in Announcements",

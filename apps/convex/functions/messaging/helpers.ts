@@ -8,6 +8,7 @@ import { ConvexError } from "convex/values";
 import type { MutationCtx, QueryCtx } from "../../_generated/server";
 import type { Doc, Id } from "../../_generated/dataModel";
 import { isCommunityAdmin } from "../../lib/permissions";
+import { isLeaderRole } from "../../lib/helpers";
 
 /**
  * Whether `userId` may view this group's channels purely on community-admin
@@ -45,6 +46,55 @@ export async function isCommunityAdminForChannel(
 ): Promise<boolean> {
   if (!channel.groupId) return false;
   return isCommunityAdminForGroup(ctx, channel.groupId, userId);
+}
+
+/**
+ * Whether `userId` may post in an announcements channel.
+ *
+ * Announcements channels are leader-broadcast: every active group member is a
+ * channel member (so unread counts work) but only group leaders can post.
+ * Leadership is read from `groupMembers` rather than the channel-member role
+ * because the latter is denormalized at sync time and may lag the
+ * source-of-truth.
+ *
+ * For SHARED announcements channels, leaders of any ACCEPTED secondary group
+ * can post too — they're leaders of a group that receives the channel. Pending
+ * invitees get nothing (they have no channel membership either).
+ *
+ * Every post path into an announcements channel must go through this helper:
+ * plain messages (`sendMessage`), polls, and availability requests
+ * (`assertCanPostInChannel`). Keeping it in one place is what stopped polls
+ * from silently applying a stricter rule than text messages.
+ */
+export async function canPostInAnnouncementsChannel(
+  ctx: QueryCtx,
+  channel: Doc<"chatChannels">,
+  userId: Id<"users">
+): Promise<boolean> {
+  if (!channel.groupId) return false;
+
+  const ownerMembership = await ctx.db
+    .query("groupMembers")
+    .withIndex("by_group_user", (q) =>
+      q.eq("groupId", channel.groupId!).eq("userId", userId)
+    )
+    .filter((q) => q.eq(q.field("leftAt"), undefined))
+    .first();
+  if (isLeaderRole(ownerMembership?.role)) return true;
+
+  for (const sharedGroup of channel.sharedGroups ?? []) {
+    if (sharedGroup.status !== "accepted") continue;
+    const secondaryMembership = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group_user", (q) =>
+        q.eq("groupId", sharedGroup.groupId).eq("userId", userId)
+      )
+      .filter((q) => q.eq(q.field("leftAt"), undefined))
+      .first();
+    if (isLeaderRole(secondaryMembership?.role)) return true;
+  }
+
+  return false;
 }
 
 /**
