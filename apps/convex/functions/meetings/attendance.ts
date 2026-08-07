@@ -11,6 +11,11 @@ import { Id, Doc } from "../../_generated/dataModel";
 import { now } from "../../lib/utils";
 import { requireAuth, getOptionalAuth } from "../../lib/auth";
 import { canEditMeeting } from "../../lib/meetingPermissions";
+import {
+  audienceOf,
+  audienceDenialMessage,
+  canAccessMeeting,
+} from "../../lib/meetingAudience";
 
 // ============================================================================
 // Attendance Management
@@ -447,58 +452,10 @@ export const selfReportAttendance = mutation({
       throw new Error("Meeting not found");
     }
 
-    // Check visibility-based membership
-    const visibility = meeting.visibility || "group";
-
-    if (visibility === "group" || visibility === "groups") {
-      // For group-scoped events, user must be an active member of the hosting
-      // group — or, for "groups" visibility, of one of the shared-with groups.
-      const isActiveMember = async (groupId: typeof meeting.groupId) => {
-        const membership = await ctx.db
-          .query("groupMembers")
-          .withIndex("by_group_user", (q) =>
-            q.eq("groupId", groupId).eq("userId", userId)
-          )
-          .first();
-        return (
-          !!membership &&
-          !membership.leftAt &&
-          (!membership.requestStatus ||
-            membership.requestStatus === "accepted")
-        );
-      };
-
-      let allowed = await isActiveMember(meeting.groupId);
-      if (!allowed && visibility === "groups") {
-        for (const sharedGroupId of meeting.visibleGroupIds ?? []) {
-          if (await isActiveMember(sharedGroupId)) {
-            allowed = true;
-            break;
-          }
-        }
-      }
-      if (!allowed) {
-        throw new Error("You must be a group member to attend this event");
-      }
-    } else if (visibility === "community") {
-      // For community-wide events, user must be a member of the community
-      const group = await ctx.db.get(meeting.groupId);
-      if (!group) {
-        throw new Error("Group not found");
-      }
-
-      const communityMembership = await ctx.db
-        .query("userCommunities")
-        .withIndex("by_user_community", (q) =>
-          q.eq("userId", userId).eq("communityId", group.communityId)
-        )
-        .first();
-
-      if (!communityMembership) {
-        throw new Error("You must be a community member to attend this event");
-      }
+    // Audience gate — identical rule to what the event lists render.
+    if (!(await canAccessMeeting(ctx, audienceOf(meeting), userId))) {
+      throw new Error(audienceDenialMessage(meeting, "attend"));
     }
-    // For public events, any authenticated user can report (no additional check needed)
 
     // Check for existing attendance record
     const existing = await ctx.db

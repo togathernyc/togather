@@ -775,8 +775,13 @@ export default defineSchema({
     // Leaders/host still see the count with a "Visible to leaders only" badge.
     hideRsvpCount: v.optional(v.boolean()),
 
-    // Visibility
-    visibility: v.optional(v.string()), // 'group' | 'community' | 'public' | 'groups'
+    // Visibility. See `lib/meetingAudience.ts` — every read of these fields
+    // goes through it so "who can see this" and "who can RSVP" can't drift.
+    // 'group' | 'community' | 'public' | 'groups' | 'private'
+    // 'private' is UNLISTED: it appears in no browse, search, or feed on group
+    // membership alone. You reach it by holding the link or being invited
+    // (`eventInvites`), so it needs no audience list of its own.
+    visibility: v.optional(v.string()),
     // When visibility is 'groups', members of these groups can also see and
     // RSVP, in addition to the hosting group. Ignored for other visibilities.
     visibleGroupIds: v.optional(v.array(v.id("groups"))),

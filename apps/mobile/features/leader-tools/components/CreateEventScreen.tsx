@@ -312,11 +312,16 @@ export function CreateEventScreen() {
   const isCommunityWideContext =
     isCommunityWideEnabled || (isEditMode && !!meeting?.communityWideEventId);
 
-  // Guard against a stale "groups" selection once we're in a community-wide
-  // context (e.g. host enables the toggle, or a CWE child loads). Falls back to
-  // "community" so we never persist a "groups" event with a dropped audience.
+  // Guard against a stale narrow-audience selection once we're in a
+  // community-wide context (e.g. host enables the toggle, or a CWE child
+  // loads). Falls back to "community" so we never persist a "groups" event
+  // with a dropped audience, or a "private" event that a community-wide fan-out
+  // would contradict by definition.
   useEffect(() => {
-    if (isCommunityWideContext && visibility === "groups") {
+    if (
+      isCommunityWideContext &&
+      (visibility === "groups" || visibility === "private")
+    ) {
       setVisibility("community");
     }
   }, [isCommunityWideContext, visibility]);
@@ -1816,6 +1821,7 @@ export function CreateEventScreen() {
               value={visibility}
               onChange={setVisibility}
               allowSpecificGroups={!isCommunityWideContext}
+              allowPrivate={!isCommunityWideContext}
             />
             {visibility === "groups" && !isCommunityWideContext && community?.id && (
               <VisibleGroupsSelector
