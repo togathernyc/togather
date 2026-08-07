@@ -101,6 +101,38 @@ export function isMeetingVisibleTo(
   return viewer.groupIds.has(meeting.groupId);
 }
 
+/**
+ * Strip private events the viewer neither owns nor was invited to.
+ *
+ * For list queries that were never audience-filtered at all — `listByGroup`
+ * and `listUpcomingForUser` scope by group membership and return everything
+ * else. That was survivable while every visibility level was at least as wide
+ * as the hosting group, but "private" is narrower, so membership alone must
+ * stop being enough.
+ *
+ * This deliberately filters ONLY private events rather than applying the full
+ * audience rule. Those queries have never enforced group/community/public
+ * scoping, and quietly tightening them here would change behavior well beyond
+ * this feature — `listByGroup` doesn't even take a token, so a full gate would
+ * empty the group page for every caller that doesn't pass one. Closing the
+ * hole this feature opens is in scope; retrofitting the rest is not.
+ */
+export async function withoutHiddenPrivateEvents<T extends MeetingAudience>(
+  ctx: QueryCtx | MutationCtx,
+  meetings: T[],
+  userId: Id<"users"> | null
+): Promise<T[]> {
+  const hasPrivate = meetings.some((m) => meetingVisibility(m) === "private");
+  if (!hasPrivate) return meetings;
+
+  const invited = await resolveInvitedMeetingIds(ctx, meetings, userId);
+  return meetings.filter((m) => {
+    if (meetingVisibility(m) !== "private") return true;
+    if (isMeetingOwner(m, userId)) return true;
+    return m._id ? invited.has(m._id) : false;
+  });
+}
+
 /** Hosts (and the creator, when no hosts are seated) own the event. */
 export function isMeetingOwner(
   meeting: MeetingAudience,

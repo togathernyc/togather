@@ -327,3 +327,106 @@ describe("creating a private event", () => {
     );
   });
 });
+
+// ============================================================================
+// Regression: the two list queries that never had an audience filter at all.
+// Both scope by group membership and return everything else, which is exactly
+// what "private" must not honour. Caught by review on #766.
+// ============================================================================
+
+describe("private events stay out of the group page and upcoming lists", () => {
+  test("listByGroup hides it from an uninvited group member", async () => {
+    const t = convexTest(schema, modules);
+    const data = await seed(t);
+    const meetingId = await insertPrivateEvent(t, data);
+
+    const rows = await t.query(api.functions.meetings.index.listByGroup, {
+      token: data.groupOnlyToken,
+      groupId: data.groupId,
+    });
+    expect(rows.map((m: any) => m._id)).not.toContain(meetingId);
+  });
+
+  test("listByGroup hides it from an unauthenticated caller", async () => {
+    const t = convexTest(schema, modules);
+    const data = await seed(t);
+    const meetingId = await insertPrivateEvent(t, data);
+
+    const rows = await t.query(api.functions.meetings.index.listByGroup, {
+      groupId: data.groupId,
+    });
+    expect(rows.map((m: any) => m._id)).not.toContain(meetingId);
+  });
+
+  test("listByGroup still shows it to the host", async () => {
+    const t = convexTest(schema, modules);
+    const data = await seed(t);
+    const meetingId = await insertPrivateEvent(t, data);
+
+    const rows = await t.query(api.functions.meetings.index.listByGroup, {
+      token: data.hostToken,
+      groupId: data.groupId,
+    });
+    expect(rows.map((m: any) => m._id)).toContain(meetingId);
+  });
+
+  test("listByGroup still shows it to an invitee", async () => {
+    const t = convexTest(schema, modules);
+    const data = await seed(t);
+    const meetingId = await insertPrivateEvent(t, data);
+    await invite(t, data, meetingId, data.invitedId);
+
+    const rows = await t.query(api.functions.meetings.index.listByGroup, {
+      token: data.invitedToken,
+      groupId: data.groupId,
+    });
+    expect(rows.map((m: any) => m._id)).toContain(meetingId);
+  });
+
+  test("listByGroup still returns ordinary group events to everyone", async () => {
+    const t = convexTest(schema, modules);
+    const data = await seed(t);
+    const groupMeetingId = await t.run(async (ctx) =>
+      ctx.db.insert("meetings", {
+        groupId: data.groupId,
+        title: "Regular Group Night",
+        scheduledAt: Date.now() + 7 * 24 * 60 * 60 * 1000,
+        meetingType: 1,
+        status: "scheduled",
+        visibility: "group",
+        createdById: data.hostId,
+        createdAt: Date.now(),
+      })
+    );
+
+    const rows = await t.query(api.functions.meetings.index.listByGroup, {
+      groupId: data.groupId,
+    });
+    expect(rows.map((m: any) => m._id)).toContain(groupMeetingId);
+  });
+
+  test("listUpcomingForUser hides it from an uninvited group member", async () => {
+    const t = convexTest(schema, modules);
+    const data = await seed(t);
+    const meetingId = await insertPrivateEvent(t, data);
+
+    const rows = await t.query(
+      api.functions.meetings.index.listUpcomingForUser,
+      { token: data.groupOnlyToken }
+    );
+    expect(rows.map((m: any) => m._id)).not.toContain(meetingId);
+  });
+
+  test("listUpcomingForUser still shows it to an invitee", async () => {
+    const t = convexTest(schema, modules);
+    const data = await seed(t);
+    const meetingId = await insertPrivateEvent(t, data);
+    await invite(t, data, meetingId, data.invitedId);
+
+    const rows = await t.query(
+      api.functions.meetings.index.listUpcomingForUser,
+      { token: data.invitedToken }
+    );
+    expect(rows.map((m: any) => m._id)).toContain(meetingId);
+  });
+});

@@ -16,6 +16,7 @@ import { getHostUserIds, isMeetingHost } from "../../lib/meetingPermissions";
 import {
   audienceOf,
   canAccessMeeting,
+  withoutHiddenPrivateEvents,
 } from "../../lib/meetingAudience";
 import {
   GOING_RSVP_OPTION_ID,
@@ -336,6 +337,10 @@ export const isCommunityWideEvent = query({
  */
 export const listByGroup = query({
   args: {
+    // Optional so existing unauthenticated callers keep working. When absent
+    // we simply can't recognize a host or invitee, so every private event is
+    // withheld — the safe direction to fail.
+    token: v.optional(v.string()),
     groupId: v.id("groups"),
     status: v.optional(meetingStatusValidator),
     startAfter: v.optional(v.number()),
@@ -357,7 +362,10 @@ export const listByGroup = query({
     // Filter by time range and status
     const meetings = await meetingsQuery.take(limit * 3); // Fetch extra for filtering
 
-    const filtered = meetings
+    const viewerId = await getOptionalAuth(ctx, args.token);
+    const visible = await withoutHiddenPrivateEvents(ctx, meetings, viewerId);
+
+    const filtered = visible
       .filter((m) => {
         if (args.status && m.status !== args.status) return false;
         if (args.startAfter && m.scheduledAt < args.startAfter) return false;
@@ -483,12 +491,16 @@ export const listUpcomingForUser = query({
       })
     );
 
-    // Flatten and sort by scheduledAt
-    const meetings = allMeetings
-      .flat()
+    // Flatten and sort by scheduledAt. Private events reach this list purely
+    // through group membership, which is exactly what must not grant access.
+    const meetings = await withoutHiddenPrivateEvents(
+      ctx,
+      allMeetings.flat(),
+      userId
+    );
+
+    return meetings
       .sort((a, b) => a.scheduledAt - b.scheduledAt)
       .slice(0, limit);
-
-    return meetings;
   },
 });
