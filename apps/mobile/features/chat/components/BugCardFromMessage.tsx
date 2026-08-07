@@ -2,7 +2,7 @@
  * BugCardFromMessage
  *
  * Inline chat card for a dev-assistant bug (contentType === "bug_card").
- * Mirrors TaskCardFromMessage/ReachOutTaskCard: queries the bug by id (staff
+ * Mirrors TaskCardFromMessage/TaskCard: queries the bug by id (staff
  * only — getBugForReview enforces it), renders a status badge, and offers
  * "Open review" + "View PR". Uses StyleSheet + TouchableOpacity for press
  * feedback (no NativeWind in this repo).

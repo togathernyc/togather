@@ -240,7 +240,6 @@ describe("ChannelsSection (redesigned)", () => {
 
       expect(queryByTestId("channel-toggle-general")).toBeNull();
       expect(queryByTestId("channel-toggle-leaders")).toBeNull();
-      expect(queryByTestId("channel-toggle-reach-out")).toBeNull();
     });
 
     it("does not render leave (exit) icons on custom channel rows", () => {

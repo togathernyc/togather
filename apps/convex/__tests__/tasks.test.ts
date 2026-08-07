@@ -16,7 +16,6 @@ interface SeedData {
   memberId: Id<"users">;
   memberGroupMembershipId: Id<"groupMembers">;
   leadersChannelId: Id<"chatChannels">;
-  reachOutChannelId: Id<"chatChannels">;
   leaderToken: string;
   secondLeaderToken: string;
   memberToken: string;
@@ -145,18 +144,6 @@ async function seedData(t: ReturnType<typeof convexTest>): Promise<SeedData> {
       memberCount: 1,
     });
 
-    const reachOutChannelId = await ctx.db.insert("chatChannels", {
-      groupId,
-      slug: "reach-out",
-      channelType: "reach_out",
-      name: "Reach Out",
-      createdById: leaderId,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-      isArchived: false,
-      memberCount: 2,
-    });
-
     return {
       communityId,
       groupId,
@@ -165,7 +152,6 @@ async function seedData(t: ReturnType<typeof convexTest>): Promise<SeedData> {
       memberId,
       memberGroupMembershipId,
       leadersChannelId,
-      reachOutChannelId,
     };
   });
 
@@ -280,65 +266,6 @@ describe("tasks functions", () => {
         title: "Should fail",
       }),
     ).rejects.toThrow("Leader access required");
-  });
-
-  test("reach-out internal sync mirrors task lifecycle", async () => {
-    const t = convexTest(schema, modules);
-    const {
-      groupId,
-      leaderId,
-      memberId,
-      memberGroupMembershipId,
-      leadersChannelId,
-      reachOutChannelId,
-    } = await seedData(t);
-
-    const timestamp = Date.now();
-    const requestId = await t.run(async (ctx) => {
-      return await ctx.db.insert("reachOutRequests", {
-        groupId,
-        channelId: reachOutChannelId,
-        leadersChannelId,
-        submittedById: memberId,
-        groupMemberId: memberGroupMembershipId,
-        content: "Need prayer this week",
-        status: "pending",
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      });
-    });
-
-    const taskId = await t.mutation(
-      internal.functions.tasks.index.createFromReachOutRequest,
-      {
-        groupId,
-        submittedById: memberId,
-        requestId,
-        content: "Need prayer this week",
-      },
-    );
-
-    await t.mutation(internal.functions.tasks.index.syncReachOutTask, {
-      requestId,
-      status: "assigned",
-      performedById: leaderId,
-      assignedToId: leaderId,
-    });
-
-    let task = await t.run(async (ctx) => ctx.db.get(taskId));
-    expect(task?.status).toBe("open");
-    expect(task?.assignedToId).toBe(leaderId);
-    expect(task?.responsibilityType).toBe("person");
-
-    await t.mutation(internal.functions.tasks.index.syncReachOutTask, {
-      requestId,
-      status: "resolved",
-      performedById: leaderId,
-    });
-
-    task = await t.run(async (ctx) => ctx.db.get(taskId));
-    expect(task?.status).toBe("done");
-    expect(task?.completedAt).toBeDefined();
   });
 
   test("bot reminder task creation is idempotent by sourceKey", async () => {
@@ -967,156 +894,6 @@ describe("tasks functions", () => {
     const task = await t.run(async (ctx) => ctx.db.get(taskId));
     expect([leaderId, secondLeaderId]).toContain(task?.assignedToId);
     expect(task?.assignedToId).toBe(leaderId);
-  });
-
-  test("reach-out migration keeps request record with linked taskId", async () => {
-    const t = convexTest(schema, modules);
-    const {
-      groupId,
-      memberId,
-      memberGroupMembershipId,
-      reachOutChannelId,
-      leadersChannelId,
-    } = await seedData(t);
-
-    const timestamp = Date.now();
-    const requestId = await t.run(async (ctx) => {
-      return await ctx.db.insert("reachOutRequests", {
-        groupId,
-        channelId: reachOutChannelId,
-        leadersChannelId,
-        submittedById: memberId,
-        groupMemberId: memberGroupMembershipId,
-        content: "Please pray for my job interview",
-        status: "pending",
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      });
-    });
-
-    const taskId = await t.mutation(
-      internal.functions.tasks.index.createFromReachOutRequest,
-      {
-        groupId,
-        submittedById: memberId,
-        requestId,
-        content: "Please pray for my job interview",
-      },
-    );
-
-    await t.run(async (ctx) => {
-      await ctx.db.patch(requestId, { taskId });
-      await ctx.db.insert("chatMessages", {
-        channelId: leadersChannelId,
-        senderId: memberId,
-        senderName: "Member One",
-        content: "Reach out request",
-        contentType: "reach_out_request",
-        reachOutRequestId: requestId,
-        createdAt: Date.now(),
-        isDeleted: false,
-      });
-    });
-
-    const request = await t.run(async (ctx) => ctx.db.get(requestId));
-    expect(request?.taskId).toBe(taskId);
-
-    const linkedTask = await t.run(async (ctx) => ctx.db.get(taskId));
-    expect(linkedTask?.sourceType).toBe("reach_out");
-    expect(linkedTask?.sourceRef).toBe(requestId.toString());
-
-    const leadersMessages = await t.run(async (ctx) => {
-      return await ctx.db
-        .query("chatMessages")
-        .withIndex("by_channel", (q) => q.eq("channelId", leadersChannelId))
-        .collect();
-    });
-    const cardMessage = leadersMessages.find(
-      (message) => message.reachOutRequestId === requestId,
-    );
-    expect(cardMessage?.contentType).toBe("reach_out_request");
-  });
-
-  test("task-native reach-out requester status tracks canonical task state", async () => {
-    const t = convexTest(schema, modules);
-    const {
-      groupId,
-      leadersChannelId,
-      reachOutChannelId,
-      leaderToken,
-      memberToken,
-    } = await seedData(t);
-
-    const reachOutTaskId = await t.mutation(
-      api.functions.messaging.reachOut.submitTaskRequest,
-      {
-        token: memberToken,
-        groupId,
-        channelId: reachOutChannelId,
-        content: "Can someone follow up with me this week?",
-      },
-    );
-    // submitTaskRequest posts the reach-out card via sendMessage, which
-    // schedules onMessageSent via runAfter(0, ...). Left running, the
-    // still-open transaction trips convex-test's guard on the next
-    // convexTest() call — possibly in an unrelated later test file, since
-    // global.Convex outlives this one.
-    await t.finishInProgressScheduledFunctions();
-
-    const linkedTask = await t.run(async (ctx) => ctx.db.get(reachOutTaskId));
-    expect(linkedTask?.sourceType).toBe("reach_out");
-    expect(linkedTask?.status).toBe("open");
-
-    const reachOutRows = await t.run(async (ctx) => {
-      return await ctx.db
-        .query("reachOutRequests")
-        .withIndex("by_group", (q) => q.eq("groupId", groupId))
-        .collect();
-    });
-    expect(reachOutRows.length).toBe(0);
-
-    const leadersMessages = await t.run(async (ctx) =>
-      ctx.db
-        .query("chatMessages")
-        .withIndex("by_channel", (q) => q.eq("channelId", leadersChannelId))
-        .collect(),
-    );
-    const leadersCard = leadersMessages.find(
-      (message) => message.taskId === reachOutTaskId,
-    );
-    expect(leadersCard?.contentType).toBe("task_card");
-    expect(leadersCard?.reachOutRequestId).toBeUndefined();
-
-    await t.mutation(api.functions.tasks.index.claim, {
-      token: leaderToken,
-      taskId: reachOutTaskId,
-    });
-
-    const afterClaim = await t.query(
-      api.functions.messaging.reachOut.getMyTaskRequests,
-      {
-        token: memberToken,
-        groupId,
-      },
-    );
-    expect(afterClaim[0]?.status).toBe("assigned");
-
-    await t.mutation(api.functions.tasks.index.markDone, {
-      token: leaderToken,
-      taskId: reachOutTaskId,
-    });
-
-    const memberView = await t.query(
-      api.functions.messaging.reachOut.getMyTaskRequests,
-      {
-        token: memberToken,
-        groupId,
-      },
-    );
-    const requestForMember = memberView.find(
-      (request) => request._id === reachOutTaskId,
-    );
-    expect(requestForMember?.status).toBe("resolved");
   });
 
   test("task queries remain correct with 120 assigned tasks", async () => {

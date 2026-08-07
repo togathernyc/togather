@@ -40,7 +40,6 @@ import { VideoPlayer } from './VideoPlayer';
 import { ImageAttachmentsGrid } from './ImageAttachmentsGrid';
 import { ThreadReplies } from './ThreadReplies';
 import { ReactionDetailsModal } from './ReactionDetailsModal';
-import { ReachOutRequestCardFromMessage } from './ReachOutRequestCardFromMessage';
 import { TaskCardFromMessage } from './TaskCardFromMessage';
 import { BugCardFromMessage } from './BugCardFromMessage';
 import { PollCardFromMessage } from './PollCardFromMessage';
@@ -125,7 +124,6 @@ interface MessageItemProps {
     mentionedUserIds?: Id<"users">[];
     threadReplyCount?: number;
     hideLinkPreview?: boolean;
-    reachOutRequestId?: Id<"reachOutRequests">;
     taskId?: Id<"tasks">;
     bugId?: Id<"devBugs">;
     pollId?: Id<"polls">;
@@ -343,7 +341,6 @@ function MessageItemInner({
   // below) — which also means it can't carry the flag-on in-bubble sender
   // name, so these keep the above-content name line under the shell.
   const isSpecialCardMessage =
-    message.contentType === 'reach_out_request' ||
     message.contentType === 'task_card' ||
     message.contentType === 'bug_card' ||
     message.contentType === 'poll' ||
@@ -1152,21 +1149,6 @@ function MessageItemInner({
     }
   }, [router, groupId, message._id, message.channelId, channelName]);
 
-  // Render reach-out request card (embedded in normal message layout)
-  const renderReachOutCard = () => {
-    if (message.contentType !== "reach_out_request" || !message.reachOutRequestId) {
-      return null;
-    }
-    return (
-      <View style={styles.eventCardsContainer}>
-        <ReachOutRequestCardFromMessage
-          requestId={message.reachOutRequestId}
-          groupId={groupId}
-        />
-      </View>
-    );
-  };
-
   // Render the thread affordance under the bubble.
   //
   // Flag-on this is the ONE "more in the conversation" pill, and it appears
@@ -1611,9 +1593,6 @@ function MessageItemInner({
               )}
             </View>
           )}
-
-          {/* Reach-out request card */}
-          {renderReachOutCard()}
 
           {/* Task card */}
           {renderTaskCard()}

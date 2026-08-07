@@ -149,7 +149,7 @@ function getServingChannelLabel(teamName: string, channel: ChannelData): string 
       // Cross-team channels always carry a distinct 1-50 char name; prefer it.
       return name || humanize(teamName);
     default:
-      // Custom / pco_services / reach_out channels carry their own distinct
+      // Custom / pco_services channels carry their own distinct
       // name from the backend — prefer it since it's already meaningful.
       return name || humanize(teamName);
   }

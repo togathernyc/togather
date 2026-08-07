@@ -15,9 +15,9 @@ import { TaskTextWithLinks } from "../../tasks/components/TaskTextWithLinks";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useTheme } from "@hooks/useTheme";
 
-type ReachOutTaskStatus = "pending" | "assigned" | "resolved" | "revoked";
+type TaskCardStatus = "pending" | "assigned" | "resolved" | "revoked";
 
-type ReachOutTaskCardData = {
+type TaskCardData = {
   _id: Id<"tasks">;
   groupId?: Id<"groups">;
   title?: string;
@@ -29,10 +29,9 @@ type ReachOutTaskCardData = {
   assignee?: { _id: Id<"users">; name: string } | null;
   createdAt: number;
   viewerCanManage?: boolean;
-  viewerCanWithdraw?: boolean;
 };
 
-function mapStatus(task: ReachOutTaskCardData): ReachOutTaskStatus {
+function mapStatus(task: TaskCardData): TaskCardStatus {
   if (task.status === "resolved" || task.status === "done") return "resolved";
   if (task.status === "revoked" || task.status === "canceled") return "revoked";
   if (task.status === "assigned") return "assigned";
@@ -43,12 +42,12 @@ function mapStatus(task: ReachOutTaskCardData): ReachOutTaskStatus {
   return "pending";
 }
 
-function statusBadge(status: ReachOutTaskStatus) {
+function statusBadge(status: TaskCardStatus) {
   if (status === "resolved") {
     return { label: "Resolved", color: "#34C759", icon: "checkmark-circle-outline" as const };
   }
   if (status === "revoked") {
-    return { label: "Withdrawn", color: "#999999", icon: "close-circle-outline" as const };
+    return { label: "Canceled", color: "#999999", icon: "close-circle-outline" as const };
   }
   if (status === "assigned") {
     return { label: "Seen", color: "#007AFF", icon: "eye-outline" as const };
@@ -70,28 +69,26 @@ function formatTime(timestamp: number) {
   return date.toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
-interface ReachOutTaskCardProps {
-  task: ReachOutTaskCardData;
+interface TaskCardProps {
+  task: TaskCardData;
   variant: "member" | "leader";
 }
 
-export function ReachOutTaskCard({ task, variant }: ReachOutTaskCardProps) {
-  const { colors, isDark } = useTheme();
+export function TaskCard({ task, variant }: TaskCardProps) {
+  const { colors } = useTheme();
   const { primaryColor } = useCommunityTheme();
   const router = useRouter();
   const pathname = usePathname();
-  const [busyAction, setBusyAction] = useState<null | "claim" | "done" | "unassign" | "withdraw">(null);
+  const [busyAction, setBusyAction] = useState<null | "claim" | "done" | "unassign">(null);
 
   const claimTask = useAuthenticatedMutation(api.functions.tasks.index.claim);
   const markDone = useAuthenticatedMutation(api.functions.tasks.index.markDone);
   const assignTask = useAuthenticatedMutation(api.functions.tasks.index.assign);
-  const withdrawReachOut = useAuthenticatedMutation(api.functions.tasks.index.withdrawReachOut);
 
   const status = useMemo(() => mapStatus(task), [task]);
   const badge = statusBadge(status);
   const assigneeName = task.assignee?.name || task.assignedToName;
-  const content = task.content || task.title || task.description || "Reach-out request";
-  const isOpen = status === "pending" || status === "assigned";
+  const content = task.content || task.title || task.description || "Task";
 
   const onClaim = async () => {
     setBusyAction("claim");
@@ -126,30 +123,6 @@ export function ReachOutTaskCard({ task, variant }: ReachOutTaskCardProps) {
     }
   };
 
-  const onWithdraw = () => {
-    Alert.alert(
-      "Withdraw Request",
-      "Are you sure you want to withdraw this request?",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Withdraw",
-          style: "destructive",
-          onPress: async () => {
-            setBusyAction("withdraw");
-            try {
-              await withdrawReachOut({ taskId: task._id });
-            } catch (error: any) {
-              Alert.alert("Error", error?.message || "Failed to withdraw request");
-            } finally {
-              setBusyAction(null);
-            }
-          },
-        },
-      ],
-    );
-  };
-
   const openTasks = () => {
     const encodedReturnTo = encodeURIComponent(pathname);
     if (task.groupId) {
@@ -175,20 +148,6 @@ export function ReachOutTaskCard({ task, variant }: ReachOutTaskCardProps) {
         linkStyle={{ color: primaryColor, textDecorationLine: "underline" }}
       />
       {assigneeName ? <Text style={[styles.meta, { color: colors.textSecondary }]}>Assigned to {assigneeName}</Text> : null}
-
-      {variant === "member" ? (
-        <View style={styles.actionsRow}>
-          {isOpen && (task.viewerCanWithdraw ?? true) ? (
-            <Pressable style={styles.textAction} onPress={onWithdraw} disabled={busyAction === "withdraw"}>
-              {busyAction === "withdraw" ? (
-                <ActivityIndicator size="small" color={colors.textTertiary} />
-              ) : (
-                <Text style={[styles.textActionLabel, { color: colors.textTertiary }]}>Withdraw</Text>
-              )}
-            </Pressable>
-          ) : null}
-        </View>
-      ) : null}
 
       {variant === "leader" && (task.viewerCanManage ?? true) ? (
         <View style={styles.actionsRow}>
@@ -282,11 +241,5 @@ const styles = StyleSheet.create({
   buttonText: {
     fontSize: 13,
     fontWeight: "600",
-  },
-  textAction: {
-    paddingVertical: 4,
-  },
-  textActionLabel: {
-    fontSize: 13,
   },
 });

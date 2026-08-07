@@ -163,11 +163,11 @@ describe("TasksTabScreen", () => {
             _id: "task-unassigned-1",
             title: "Unassigned Task",
             status: "open",
-            sourceType: "reach_out",
+            sourceType: "manual",
             groupId: "group-2",
             groupName: "Group B",
             targetType: "none",
-            tags: ["reach_out"],
+            tags: ["manual"],
           },
         ];
       }
@@ -178,11 +178,11 @@ describe("TasksTabScreen", () => {
             _id: "task-unassigned-1",
             title: "Unassigned Task",
             status: "open",
-            sourceType: "reach_out",
+            sourceType: "manual",
             groupId: "group-2",
             groupName: "Group B",
             targetType: "none",
-            tags: ["reach_out"],
+            tags: ["manual"],
           },
         ];
       }

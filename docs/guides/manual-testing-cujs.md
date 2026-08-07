@@ -2,7 +2,7 @@
 
 This guide documents Critical User Journeys (CUJs) for manual testing of the Togather app. Use these flows to verify features are working correctly after deployments or changes.
 
-For the dedicated Tasks rollout matrix (task bot, reach out source flow, assignment lifecycle, permissions, realtime, migration), use `docs/testing/TASKS-CUJ-CHECKLIST.md`.
+For the dedicated Tasks rollout matrix (task bot, assignment lifecycle, permissions, realtime, migration), use `docs/testing/TASKS-CUJ-CHECKLIST.md`.
 
 ## Test Credentials
 

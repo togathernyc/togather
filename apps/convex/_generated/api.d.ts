@@ -115,7 +115,6 @@ import type * as functions_messaging_helpers from "../functions/messaging/helper
 import type * as functions_messaging_index from "../functions/messaging/index.js";
 import type * as functions_messaging_messages from "../functions/messaging/messages.js";
 import type * as functions_messaging_polls from "../functions/messaging/polls.js";
-import type * as functions_messaging_reachOut from "../functions/messaging/reachOut.js";
 import type * as functions_messaging_reactions from "../functions/messaging/reactions.js";
 import type * as functions_messaging_readState from "../functions/messaging/readState.js";
 import type * as functions_messaging_search from "../functions/messaging/search.js";
@@ -388,7 +387,6 @@ declare const fullApi: ApiFromModules<{
   "functions/messaging/index": typeof functions_messaging_index;
   "functions/messaging/messages": typeof functions_messaging_messages;
   "functions/messaging/polls": typeof functions_messaging_polls;
-  "functions/messaging/reachOut": typeof functions_messaging_reachOut;
   "functions/messaging/reactions": typeof functions_messaging_reactions;
   "functions/messaging/readState": typeof functions_messaging_readState;
   "functions/messaging/search": typeof functions_messaging_search;

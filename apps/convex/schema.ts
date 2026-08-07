@@ -558,7 +558,8 @@ export default defineSchema({
       }),
     ),
 
-    // Reach Out channel configuration
+    // RETIRED (Reach Out channel). No code reads or writes this. Declared only
+    // so existing documents still pass schema validation — see reachOutRequests.
     reachOutConfig: v.optional(
       v.object({
         enabled: v.boolean(),
@@ -1223,7 +1224,8 @@ export default defineSchema({
     type: v.string(), // 'note', 'call', 'text', 'snooze', 'followed_up', 'reach_out'
     content: v.optional(v.string()),
     snoozeUntil: v.optional(v.number()), // Unix timestamp ms
-    reachOutRequestId: v.optional(v.id("reachOutRequests")), // Link to reach-out request
+    // RETIRED (Reach Out channel) — declared only so existing rows validate.
+    reachOutRequestId: v.optional(v.id("reachOutRequests")),
     createdAt: v.number(), // Unix timestamp ms
   })
     .index("by_legacyId", ["legacyId"])
@@ -1944,7 +1946,7 @@ export default defineSchema({
     lastActivityAt: v.optional(v.number()),
     // Link preview control
     hideLinkPreview: v.optional(v.boolean()),
-    // Reach Out request reference (for request cards in leaders channel)
+    // RETIRED (Reach Out channel) — declared only so existing rows validate.
     reachOutRequestId: v.optional(v.id("reachOutRequests")),
     // Canonical task reference for task-aware chat cards
     taskId: v.optional(v.id("tasks")),
@@ -2448,10 +2450,15 @@ export default defineSchema({
   }).index("by_key", ["key"]),
 
   // =============================================================================
-  // REACH OUT REQUESTS
+  // REACH OUT REQUESTS (RETIRED)
   // =============================================================================
-  // Tracks member requests submitted via the "Reach Out" channel.
-  // Leaders see these as interactive cards in their leaders channel.
+  // The Reach Out channel feature was removed. Nothing reads or writes this
+  // table any more — it stays declared purely so historical rows keep passing
+  // schema validation on deploy. Convex rejects a push when a live document
+  // carries a field the schema doesn't declare, so dropping this (and the two
+  // `reachOutRequestId` references above, and `groups.reachOutConfig`) requires
+  // a data migration first. Do that whenever the rows are worth reclaiming;
+  // until then this block is inert.
 
   reachOutRequests: defineTable({
     groupId: v.id("groups"),

@@ -361,11 +361,10 @@ describe("Members", () => {
     });
   });
 
-  it("filters DM and reach_out channels from chips", async () => {
+  it("filters DM channels from chips", async () => {
     channelListResponse = [
       ...mockChannels,
       { _id: "dm-1", slug: "dm-user", channelType: "dm", name: "DM", memberCount: 2 },
-      { _id: "ro-1", slug: "reach-out", channelType: "reach_out", name: "Reach Out", memberCount: 5 },
     ];
 
     renderComponent();
@@ -373,7 +372,6 @@ describe("Members", () => {
     await waitFor(() => {
       expect(screen.getByText("General")).toBeTruthy();
       expect(screen.queryByText("DM")).toBeNull();
-      expect(screen.queryByText("Reach Out")).toBeNull();
     });
   });
 

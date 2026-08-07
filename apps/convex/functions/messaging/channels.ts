@@ -92,10 +92,6 @@ function sortChannelsByPinOrder<T extends {
     if (a.channelType === "leaders" && b.channelType !== "leaders") return -1;
     if (a.channelType !== "leaders" && b.channelType === "leaders") return 1;
 
-    // Reach out channel fourth
-    if (a.channelType === "reach_out" && b.channelType !== "reach_out") return -1;
-    if (a.channelType !== "reach_out" && b.channelType === "reach_out") return 1;
-
     // Check if channels are pinned
     const aIsPinned = pinnedSlugSet.has(a.slug);
     const bIsPinned = pinnedSlugSet.has(b.slug);
@@ -135,10 +131,7 @@ function sortChannelsByPinOrder<T extends {
  *   4. `leaders`
  *   5. `null` if none active
  *
- * `dm` / `group_dm` / `event` are excluded entirely. `reach_out` is also
- * excluded: it renders with `ReachOutScreen` (leader 1:1 outreach), not the
- * normal message list, so a posted message/event-share would be invisible
- * there and it's not a sensible chat-landing target.
+ * `dm` / `group_dm` / `event` are excluded entirely.
  */
 function pickDefaultChannelByPriority(
   channels: Doc<"chatChannels">[],
@@ -157,7 +150,6 @@ function pickDefaultChannelByPriority(
   if (announcements) return announcements;
 
   // 3. custom / pco_services / cross_team, most recently active first.
-  //    (reach_out is intentionally NOT here — see doc comment above.)
   const memberFacing = active
     .filter(
       (c) =>
@@ -522,8 +514,8 @@ export const getChannelBySlug = query({
     /**
      * Include channels that are leader-disabled or archived. The channel info
      * screen (`/info` route) sets this so a leader can land on a disabled
-     * Leaders / Reach Out channel and re-enable it from the Active state row.
-     * For Leaders / Reach Out / main, `isArchived` is the legacy-disable flag
+     * Leaders channel and re-enable it from the Active state row.
+     * For Leaders / main, `isArchived` is the legacy-disable flag
      * (NOT a tombstone) — without this flag the row is silently filtered out
      * and the screen shows "no longer available." Defaults to false.
      */
@@ -840,9 +832,11 @@ export const getChannelsByGroup = query({
       if (channel.channelType === "leaders") {
         return isLeader;
       }
-      // Reach out channel is visible to all group members
+      // The Reach Out feature is gone, but its channels may still exist on
+      // deployments that had it enabled. Hide them: there is no longer a screen
+      // that renders one, so surfacing it would show an empty chat tab.
       if (channel.channelType === "reach_out") {
-        return true;
+        return false;
       }
       // Custom and pco_services channels require membership (or leader/admin access)
       if (isCustomChannel(channel.channelType) || channel.channelType === "pco_services") {
@@ -1359,6 +1353,11 @@ export const listGroupChannels = query({
       if (ch.channelType === "leaders" && !userIsLeaderOrAdmin) {
         return false;
       }
+      // Retired Reach Out channels (see getChannelsByGroup) never surface —
+      // checked before the leader passthrough below, which would else show them.
+      if (ch.channelType === "reach_out") {
+        return false;
+      }
       // Leaders/community admins see every channel on this list (including disabled, for toggles)
       if (userIsLeaderOrAdmin) {
         return true;
@@ -1366,10 +1365,6 @@ export const listGroupChannels = query({
       // Members: never show leader-disabled / linked-hidden channels on the group page
       if (!channelEffectiveEnabledForGroup(ch, args.groupId)) {
         return false;
-      }
-      // Reach out is visible to all group members when enabled
-      if (ch.channelType === "reach_out") {
-        return true;
       }
       // Regular members can only see custom/PCO/cross-team channels they're
       // members of. Cross-team membership is auto-synced from serving-role
@@ -4320,156 +4315,6 @@ export const toggleLeadersChannel = mutation({
 });
 
 /**
- * Toggle the Reach Out channel for a group.
- *
- * When enabled:
- * - Requires leaders channel to be enabled
- * - Creates or unarchives reach_out channel with slug "reach-out"
- * - Adds ALL active group members
- *
- * When disabled:
- * - Archives the channel
- * - Soft-deletes all memberships
- * - Clears reachOutConfig on the group
- */
-export const toggleReachOutChannel = mutation({
-  args: {
-    token: v.string(),
-    groupId: v.id("groups"),
-    enabled: v.boolean(),
-  },
-  handler: async (ctx, args) => {
-    const userId = await requireAuth(ctx, args.token);
-    const now = Date.now();
-
-    // Verify caller is a group leader
-    const groupMembership = await ctx.db
-      .query("groupMembers")
-      .withIndex("by_group_user", (q) =>
-        q.eq("groupId", args.groupId).eq("userId", userId)
-      )
-      .filter((q) => q.eq(q.field("leftAt"), undefined))
-      .first();
-
-    if (!groupMembership) {
-      throw new Error("Not a member of this group");
-    }
-
-    if (groupMembership.role !== "leader" && groupMembership.role !== "admin") {
-      throw new Error("Only group leaders can toggle the reach out channel");
-    }
-
-    if (args.enabled) {
-      // Verify leaders channel is enabled
-      const leadersChannel = await ctx.db
-        .query("chatChannels")
-        .withIndex("by_group_type", (q) =>
-          q.eq("groupId", args.groupId).eq("channelType", "leaders")
-        )
-        .first();
-
-      if (!leadersChannel || leadersChannel.isArchived) {
-        throw new Error("Leaders channel must be enabled before enabling Reach Out");
-      }
-    }
-
-    // Find existing reach_out channel
-    const existingChannel = await ctx.db
-      .query("chatChannels")
-      .withIndex("by_group_type", (q) =>
-        q.eq("groupId", args.groupId).eq("channelType", "reach_out")
-      )
-      .first();
-
-    if (args.enabled) {
-      let channelId: Id<"chatChannels">;
-
-      if (existingChannel && !existingChannel.isArchived) {
-        // Already enabled
-        return { channelId: existingChannel._id, status: "already_enabled" };
-      }
-
-      if (existingChannel) {
-        // Unarchive existing channel
-        await ctx.db.patch(existingChannel._id, {
-          isArchived: false,
-          archivedAt: undefined,
-          updatedAt: now,
-        });
-        channelId = existingChannel._id;
-      } else {
-        // Create new reach_out channel
-        channelId = await ctx.db.insert("chatChannels", {
-          groupId: args.groupId,
-          slug: "reach-out",
-          channelType: "reach_out",
-          name: "Reach Out",
-          createdById: userId,
-          createdAt: now,
-          updatedAt: now,
-          isArchived: false,
-          memberCount: 0,
-        });
-      }
-
-      // Add the enabling leader synchronously so they can post immediately,
-      // before the async batch backfills everyone else (see
-      // ensureChannelMembership).
-      await ensureChannelMembership(ctx, channelId, userId, "member", now);
-
-      // Add all active group members in scheduled batches — whole-community
-      // groups exceed the per-call read limit if iterated inline.
-      await ctx.scheduler.runAfter(
-        0,
-        internal.functions.messaging.channels.populateChannelMembersBatch,
-        {
-          groupId: args.groupId,
-          channelId,
-          mirrorGroupRole: false,
-          cursor: null,
-          processed: 0,
-        }
-      );
-
-      // Update group config
-      await ctx.db.patch(args.groupId, {
-        reachOutConfig: { enabled: true },
-      });
-
-      return { channelId, status: "enabled" };
-    } else {
-      // DISABLE
-      if (!existingChannel || existingChannel.isArchived) {
-        return { channelId: existingChannel?._id, status: "already_disabled" };
-      }
-
-      // Archive the channel
-      await ctx.db.patch(existingChannel._id, {
-        isArchived: true,
-        archivedAt: now,
-        updatedAt: now,
-      });
-
-      // Soft-delete all members in scheduled batches (whole-community groups
-      // exceed the per-call read limit if cleared inline).
-      await ctx.db.patch(existingChannel._id, { memberCount: 0 });
-      await ctx.scheduler.runAfter(
-        0,
-        internal.functions.messaging.channels.clearChannelMembersBatch,
-        { channelId: existingChannel._id, cursor: null }
-      );
-
-      // Update group config
-      await ctx.db.patch(args.groupId, {
-        reachOutConfig: { enabled: false },
-      });
-
-      return { channelId: existingChannel._id, status: "disabled" };
-    }
-  },
-});
-
-/**
  * Batch size for whole-community channel membership fan-out. Each scheduled
  * call gets its own 4096-document read budget; at ~2 reads per member plus the
  * page itself, 500 stays comfortably under the limit.
@@ -4662,7 +4507,7 @@ export const clearChannelMembersBatch = internalMutation({
     // stale clear job could run after the re-enable's populate batch and
     // soft-delete members of an active channel, leaving sendMessage to reject
     // them as "Not a member of this channel". Disable always archives the
-    // channel (main/reach_out), so an un-archived channel means re-enabled.
+    // channel (main/leaders), so an un-archived channel means re-enabled.
     const channel = await ctx.db.get(args.channelId);
     if (!channel || channel.isArchived !== true) {
       return;
@@ -5078,8 +4923,6 @@ export const syncUserChannelMemberships = internalMutation({
         shouldBeInChannel = isActiveGroupMember;
       } else if (channel.channelType === "leaders") {
         shouldBeInChannel = isActiveGroupMember && isLeaderOrAdmin;
-      } else if (channel.channelType === "reach_out") {
-        shouldBeInChannel = isActiveGroupMember;
       }
 
       // Get current channel membership
