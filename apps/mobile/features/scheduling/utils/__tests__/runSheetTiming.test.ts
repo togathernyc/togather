@@ -197,11 +197,33 @@ describe("pickActiveServiceIndex", () => {
     expect(pickActiveServiceIndex([], at(9), 0, DURING, 0)).toBe(0);
   });
 
-  it("falls back to the soonest service when durations are all zero", () => {
-    // A plan with no durations entered yet has no window at all — it must
-    // still land somewhere sane rather than always on the last service.
-    expect(pickActiveServiceIndex(times, at(8), 0, 0, 0)).toBe(0);
-    expect(pickActiveServiceIndex(times, at(10), 0, 0, 0)).toBe(1);
-    expect(pickActiveServiceIndex(times, at(13), 0, 0, 0)).toBe(1);
+  it("an untimed service still holds the sheet until the next one starts", () => {
+    // No `during` durations entered yet. A zero-length core would make "is a
+    // service in progress?" unanswerable and silently disable the in-progress
+    // rule — so an untimed service runs until the next service starts.
+    expect(pickActiveServiceIndex(times, at(8), 0, 0, 0)).toBe(0); // ahead of both
+    expect(pickActiveServiceIndex(times, at(10), 0, 0, 0)).toBe(0); // in the 9:00
+    expect(pickActiveServiceIndex(times, at(11, 30), 0, 0, 0)).toBe(1); // in the 11:00
+    expect(pickActiveServiceIndex(times, at(13), 0, 0, 0)).toBe(1); // all over
+  });
+
+  it("an untimed service is not stolen by a long pre-roll either", () => {
+    // The reported bug's twin: a plan that has its 2h30m before block filled in
+    // but hasn't timed the service body. Without the untimed-core rule the
+    // in-progress check can never fire and the noon pre-roll takes the sheet
+    // from 9:30 AM — the original bug, unchanged.
+    const sunday = [{ startsAt: at(10) }, { startsAt: at(12) }];
+    const BEFORE = 150 * 60;
+    expect(pickActiveServiceIndex(sunday, at(9, 30), BEFORE, 0, 0)).toBe(0);
+    expect(pickActiveServiceIndex(sunday, at(10, 15), BEFORE, 0, 0)).toBe(0);
+    expect(pickActiveServiceIndex(sunday, at(11, 30), BEFORE, 0, 0)).toBe(0);
+    expect(pickActiveServiceIndex(sunday, at(12, 30), BEFORE, 0, 0)).toBe(1);
+  });
+
+  it("a single untimed service still resolves to itself", () => {
+    const one = [{ startsAt: at(10) }];
+    for (const t of [at(6), at(9, 30), at(10, 30), at(23)]) {
+      expect(pickActiveServiceIndex(one, t, 30 * 60, 0, 0)).toBe(0);
+    }
   });
 });
