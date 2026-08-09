@@ -55,7 +55,6 @@ type LeaderSearchResult = {
 const sourceLabels: Record<TaskSourceType, string> = {
   manual: "MANUAL",
   bot_task_reminder: "BOT",
-  reach_out: "REACH OUT",
   followup: "PEOPLE",
   workflow_template: "WORKFLOW",
 };
@@ -1594,7 +1593,6 @@ export function TasksTabScreen() {
                   [
                     "all",
                     "manual",
-                    "reach_out",
                     "bot_task_reminder",
                     "followup",
                     "workflow_template",

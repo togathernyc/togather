@@ -1341,7 +1341,7 @@ export const sendMessage = mutation({
         throw new Error("Not a member of this channel");
       }
 
-      // Auto group channels (General / Reach Out) are archived the instant a
+      // Auto group channels (General / Leaders) are archived the instant a
       // leader disables them, but their member rows are soft-deleted
       // asynchronously by `clearChannelMembersBatch`. Without this guard a
       // client holding the channelId could keep posting to an archived channel

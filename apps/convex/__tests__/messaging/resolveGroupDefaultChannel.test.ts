@@ -10,7 +10,6 @@
  * Priority:
  *   1. main  2. announcements  3. custom/pco_services/cross_team
  *   (by lastMessageAt desc, then name)  4. leaders  5. null
- *   (reach_out is excluded — it renders ReachOutScreen, not a message list.)
  */
 
 import { convexTest } from "convex-test";
@@ -167,20 +166,6 @@ describe("resolveGroupDefaultChannel", () => {
     expect(resolved?._id).toBe(annId);
   });
 
-  test("reach_out is skipped (special UI, not a message list) -> leaders", async () => {
-    const t = convexTest(schema, modules);
-    const { groupId } = await seed(t);
-    await addChannel(t, groupId, "main", { slug: "general", name: "General", isArchived: true });
-    await addChannel(t, groupId, "announcements", { name: "Announcements", isEnabled: false });
-    // reach_out is active but renders ReachOutScreen, not a message list, so a
-    // posted message would be invisible there — it must NOT be chosen.
-    await addChannel(t, groupId, "reach_out", { name: "Reach Out" });
-    const leadersId = await addChannel(t, groupId, "leaders", { name: "Leaders" });
-
-    const resolved = await t.run((ctx) => resolveGroupDefaultChannel(ctx, groupId));
-    expect(resolved?._id).toBe(leadersId);
-  });
-
   test("custom channels chosen by lastMessageAt desc, tie-break by name", async () => {
     const t = convexTest(schema, modules);
     const { groupId } = await seed(t);
@@ -196,7 +181,6 @@ describe("resolveGroupDefaultChannel", () => {
     const { groupId } = await seed(t);
     await addChannel(t, groupId, "main", { slug: "general", name: "General", isArchived: true });
     await addChannel(t, groupId, "announcements", { name: "Announcements", isArchived: true });
-    await addChannel(t, groupId, "reach_out", { name: "Reach Out", isEnabled: false });
     const leadersId = await addChannel(t, groupId, "leaders", { name: "Leaders" });
 
     const resolved = await t.run((ctx) => resolveGroupDefaultChannel(ctx, groupId));

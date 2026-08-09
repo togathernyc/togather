@@ -7,7 +7,6 @@
  * option — NOT a single-tap toggle. Wires to whichever toggle mutation
  * exists per channel type:
  *   - "leaders":       toggleLeadersChannel
- *   - "reach_out":     toggleReachOutChannel
  *   - "announcements": toggleAnnouncementsChannel
  *   - "custom":        setCustomChannelLeaderEnabled
  *   - "pco_services":  togglePcoChannel
@@ -15,10 +14,6 @@
  *                      page CHANNELS card always navigates to chat, so
  *                      this path isn't currently reachable from the UI,
  *                      but is wired for completeness)
- *
- * Reach Out: when the Leaders channel is disabled at the group level,
- * the "Active" option is itself disabled and we surface a hint at the
- * top so the user knows what to fix first.
  */
 import React, { useCallback, useMemo, useState } from "react";
 import {
@@ -60,7 +55,7 @@ export default function ChannelActiveStateRoute() {
     api.functions.messaging.channels.getChannelBySlug,
     // includeArchived: this picker is the place a leader re-enables a
     // disabled channel — must work even when `isArchived` is true (the
-    // legacy-disable state for Leaders/Reach Out/main).
+    // legacy-disable state for Leaders/main).
     token && groupId && channelSlug
       ? {
           token,
@@ -71,18 +66,8 @@ export default function ChannelActiveStateRoute() {
       : "skip",
   );
 
-  const groupChannels = useQuery(
-    api.functions.messaging.channels.listGroupChannels,
-    token && groupId
-      ? { token, groupId: groupId as Id<"groups">, includeArchived: true }
-      : "skip",
-  );
-
   const toggleLeadersChannelMutation = useAuthenticatedMutation(
     api.functions.messaging.channels.toggleLeadersChannel,
-  );
-  const toggleReachOutChannelMutation = useAuthenticatedMutation(
-    api.functions.messaging.channels.toggleReachOutChannel,
   );
   const toggleAnnouncementsChannelMutation = useAuthenticatedMutation(
     api.functions.messaging.channels.toggleAnnouncementsChannel,
@@ -105,14 +90,6 @@ export default function ChannelActiveStateRoute() {
     return !channel.isArchived && (channel as any).isEnabled !== false;
   }, [channel]);
 
-  const leadersChannel = groupChannels?.find(
-    (c: any) => c.channelType === "leaders",
-  );
-  const leadersEnabled =
-    !!leadersChannel && !leadersChannel.isArchived && leadersChannel.isEnabled !== false;
-
-  const isReachOutAndLeadersOff = channelType === "reach_out" && !leadersEnabled;
-
   const handleBack = useCallback(() => {
     if (router.canGoBack()) {
       router.back();
@@ -132,11 +109,6 @@ export default function ChannelActiveStateRoute() {
       try {
         if (channelType === "leaders") {
           await toggleLeadersChannelMutation({
-            groupId: groupId as Id<"groups">,
-            enabled: next,
-          });
-        } else if (channelType === "reach_out") {
-          await toggleReachOutChannelMutation({
             groupId: groupId as Id<"groups">,
             enabled: next,
           });
@@ -182,7 +154,6 @@ export default function ChannelActiveStateRoute() {
       groupId,
       currentEnabled,
       toggleLeadersChannelMutation,
-      toggleReachOutChannelMutation,
       toggleAnnouncementsChannelMutation,
       toggleMainChannelMutation,
       togglePcoChannelMutation,
@@ -234,25 +205,11 @@ export default function ChannelActiveStateRoute() {
     >
       <Header onBack={handleBack} colors={colors} />
       <ScrollView contentContainerStyle={styles.scrollContent}>
-        {isReachOutAndLeadersOff && (
-          <View
-            style={[
-              styles.hintCard,
-              { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
-            ]}
-          >
-            <Ionicons name="information-circle" size={18} color={colors.textSecondary} />
-            <Text style={[styles.hintText, { color: colors.textSecondary }]}>
-              Requires Leaders channel to be active
-            </Text>
-          </View>
-        )}
-
         <Option
           colors={colors}
           primaryColor={primaryColor}
           selected={currentEnabled}
-          disabled={submitting || isReachOutAndLeadersOff}
+          disabled={submitting}
           label="Active"
           consequence={consequenceFor(channelType ?? "", true)}
           onPress={() => setActive(true)}
@@ -281,12 +238,7 @@ function consequenceFor(channelType: string, active: boolean): string {
   if (channelType === "leaders") {
     return active
       ? "Leaders channel is visible to leaders and admins of this group."
-      : "Leaders channel is hidden. Reach Out also requires this to be active.";
-  }
-  if (channelType === "reach_out") {
-    return active
-      ? "Reach Out is available to leaders for one-on-one outreach."
-      : "Reach Out is hidden. Leaders won't see it in their tabs.";
+      : "Leaders channel is hidden.";
   }
   if (channelType === "announcements") {
     return active
@@ -417,16 +369,6 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
   headerSpacer: { width: 36 },
-  hintCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 10,
-    borderWidth: StyleSheet.hairlineWidth,
-  },
-  hintText: { fontSize: 13, flex: 1 },
   optionCard: {
     borderRadius: 12,
     padding: 16,

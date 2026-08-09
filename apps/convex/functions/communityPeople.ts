@@ -2422,7 +2422,6 @@ const CONVERTIBLE_FOLLOWUP_TYPES = new Set([
   "call",
   "text",
   "followed_up",
-  "reach_out",
 ]);
 
 /**

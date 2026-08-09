@@ -8,7 +8,7 @@
  * `/inbox/[groupId]/[channelSlug]/info`.
  *
  * Order:
- *   1. CHANNELS card (general → leaders → reach_out → pco → custom)
+ *   1. CHANNELS card (general → leaders → pco → custom)
  *   2. Solid "Create Channel" affordance (leaders only)
  *   3. SHARED CHANNEL INVITATIONS card (leaders only, when present)
  *
@@ -125,7 +125,6 @@ export function ChannelsSection({ groupId, userRole, onChannelPress }: ChannelsS
 
   const mainChannel = channels?.find((c: Channel) => c.channelType === "main");
   const leadersChannel = channels?.find((c: Channel) => c.channelType === "leaders");
-  const reachOutChannel = channels?.find((c: Channel) => c.channelType === "reach_out");
   // An announcements channel shared INTO this group (owned by another group,
   // sharedFromGroupName set) IS the group's announcements surface while the
   // share is active — the group's own channel stays intentionally disabled.
@@ -149,8 +148,6 @@ export function ChannelsSection({ groupId, userRole, onChannelPress }: ChannelsS
     !!leadersChannel && !leadersChannel.isArchived && leadersChannel.isEnabled !== false;
   const mainEnabled =
     !!mainChannel && !mainChannel.isArchived && mainChannel.isEnabled !== false;
-  const reachOutEnabled =
-    !!reachOutChannel && !reachOutChannel.isArchived && reachOutChannel.isEnabled !== false;
   const announcementsEnabled =
     !!announcementsChannel &&
     !announcementsChannel.isArchived &&
@@ -243,7 +240,7 @@ export function ChannelsSection({ groupId, userRole, onChannelPress }: ChannelsS
     name: string;
     subtitle: string;
     enabled: boolean;
-    /** Omit for placeholder rows (e.g. Leaders/Reach Out shown to a leader
+    /** Omit for placeholder rows (e.g. Leaders shown to a leader
      *  before the channel record exists). When set, the row is tappable —
      *  even if `enabled === false`, since "tap a disabled channel to
      *  re-enable" is the primary recovery path. */
@@ -365,31 +362,6 @@ export function ChannelsSection({ groupId, userRole, onChannelPress }: ChannelsS
       // Keep the "Tap to enable" CTA (no record) in the main list; fold only
       // an existing-but-disabled Announcements channel.
       archived: !!announcementsChannel && !announcementsEnabled,
-    });
-  }
-
-  if (isLeader) {
-    rows.push({
-      key: reachOutChannel?._id ?? "reach-out-placeholder",
-      icon: "hand-left",
-      iconColor: "#8E44AD",
-      iconBg: "#8E44AD15",
-      name: "Reach Out",
-      subtitle: !leadersEnabled
-        ? "Requires Leaders channel"
-        : reachOutChannel && reachOutEnabled
-          ? `${reachOutChannel.memberCount} member${reachOutChannel.memberCount !== 1 ? "s" : ""}`
-          : "Disabled",
-      enabled: !!reachOutChannel && reachOutEnabled && leadersEnabled,
-      onPress: reachOutChannel
-        ? () => navigateToChannelInfo(reachOutChannel.slug)
-        : undefined,
-      unreadCount: reachOutChannel?.unreadCount,
-      pinned: reachOutChannel?.isPinned,
-      // Fold a real, disabled Reach Out channel. The "Requires Leaders
-      // channel" / create-placeholder states (no record) stay in the main
-      // list as actionable affordances.
-      archived: !!reachOutChannel && !reachOutEnabled,
     });
   }
 

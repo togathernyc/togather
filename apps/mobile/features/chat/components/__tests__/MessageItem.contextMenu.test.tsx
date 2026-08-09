@@ -43,7 +43,6 @@ jest.mock('../VideoPlayer', () => ({ VideoPlayer: () => null }));
 jest.mock('../ImageAttachmentsGrid', () => ({ ImageAttachmentsGrid: () => null }));
 jest.mock('../ThreadReplies', () => ({ ThreadReplies: () => null }));
 jest.mock('../ReactionDetailsModal', () => ({ ReactionDetailsModal: () => null }));
-jest.mock('../ReachOutRequestCardFromMessage', () => ({ ReachOutRequestCardFromMessage: () => null }));
 jest.mock('../TaskCardFromMessage', () => ({ TaskCardFromMessage: () => null }));
 jest.mock('@components/ui', () => ({
   AppImage: () => null,

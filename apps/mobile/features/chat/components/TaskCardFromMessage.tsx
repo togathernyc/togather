@@ -3,7 +3,7 @@ import { ActivityIndicator, StyleSheet, View } from "react-native";
 import type { Id } from "@services/api/convex";
 import { api, useQuery, useStoredAuthToken } from "@services/api/convex";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
-import { ReachOutTaskCard } from "./ReachOutTaskCard";
+import { TaskCard } from "./TaskCard";
 
 interface TaskCardFromMessageProps {
   taskId: Id<"tasks">;
@@ -30,7 +30,7 @@ export function TaskCardFromMessage({ taskId }: TaskCardFromMessageProps) {
   }
 
   return (
-    <ReachOutTaskCard
+    <TaskCard
       task={task}
       variant={task.viewerCanManage ? "leader" : "member"}
     />

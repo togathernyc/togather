@@ -15,11 +15,6 @@ import React from 'react';
 import { render, fireEvent, waitFor } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-// Mock reach-out components to avoid deep import chain
-jest.mock('../ReachOutScreen', () => ({
-  ReachOutScreen: () => null,
-}));
-
 // Import components to test
 import { ChatTabBar, ChatNavigation } from '../ChatNavigation';
 import { ConvexChatRoomScreen } from '../ConvexChatRoomScreen';

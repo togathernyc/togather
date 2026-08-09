@@ -9,14 +9,13 @@
 Leaders currently manage actionable work across multiple disconnected surfaces:
 
 - Task Reminder Bot creates chat/notification reminders, not first-class tasks.
-- Reach Out creates request cards in chat plus separate workflow state.
 - Follow-up tracks member actions, but is optimized for score/history, not unified task management.
 
 This creates duplication in data models, UI patterns, and automation logic. We need one native **Tasks** system that becomes the canonical model for leader action items.
 
 ## 2) Product Goals
 
-1. Create a first-class `Task` object that can represent reminders, outreach requests, and manual leader work.
+1. Create a first-class `Task` object that can represent reminders, follow-ups, and manual leader work.
 2. Keep Tasks **leader-only** for management views and actions.
 3. Support both:
    - **group-level responsibility** (unassigned/shared ownership), and
@@ -28,7 +27,7 @@ This creates duplication in data models, UI patterns, and automation logic. We n
 5. Support hierarchical tasks (parent + sub-tasks) with compact UI.
 6. Support indexable tags (e.g., `prayer_request`, `praise_report`).
 7. Support contextual links to a target member or target group.
-8. Remove redundant systems over time (`task reminder` reminder-as-message flow and `reach out` request workflow).
+8. Remove redundant systems over time (the `task reminder` reminder-as-message flow).
 9. Add a top-level **Tasks** tab (left of Inbox) as the home for task workflows.
 
 ## 3) Non-Goals (V1)
@@ -41,7 +40,6 @@ This creates duplication in data models, UI patterns, and automation logic. We n
 ## 4) Users & Primary Jobs
 
 - **Leader/Admin:** review, claim/assign, complete, snooze, and cancel tasks.
-- **Member (limited input only):** submit outreach/help request that becomes an unassigned leader task.
 
 ## 5) Functional Requirements
 
@@ -49,7 +47,6 @@ This creates duplication in data models, UI patterns, and automation logic. We n
 
 1. **Manual leader-created task** (from Task page).
 2. **Task Reminder Bot generated task** (instead of plain reminder message).
-3. **Reach Out submission generated task** (unassigned, routed to leaders).
 
 ### 5.2 Task Core Fields
 
@@ -61,7 +58,7 @@ Each task must support:
 - `responsibilityType`: `group | person`
 - `assignedToId` (nullable; required when `person`)
 - `createdById`
-- `sourceType`: `manual | bot_task_reminder | reach_out | followup`
+- `sourceType`: `manual | bot_task_reminder | followup`
 - `sourceRef` (idempotency / source linkage)
 - `targetType`: `none | member | group`
 - `targetMemberId` / `targetGroupId` (as applicable)
@@ -124,12 +121,11 @@ Task reminder configuration can optionally post a **rendered task card** message
 - This tab is the canonical “all task-related things” surface for leaders.
 - It must aggregate a leader's tasks across sources:
   - bot-generated tasks,
-  - reach-out-origin tasks,
   - manual tasks,
   - (later) optional follow-up-origin tasks.
 - Default view in this tab: `My Tasks` across all groups.
 - Secondary view in this tab: `Claimable` (unassigned group-level tasks visible to the leader in groups they lead).
-- Must include source badges (e.g., `BOT`, `REACH OUT`, `MANUAL`) and group context labels.
+- Must include source badges (e.g., `BOT`, `MANUAL`) and group context labels.
 
 ## 6) Technical Design (Proposed)
 
@@ -174,7 +170,6 @@ Mutations:
 Internal actions/mutations:
 
 - `scheduledJobs.createTasksFromReminderConfig` (idempotent daily generation)
-- bridge action for reach out submission -> task creation
 
 ### 6.4 Ordering Model
 
@@ -237,12 +232,7 @@ Important existing gap to close during migration:
 - Collapsible parent rows for sub-task stacks.
 - Inline quick actions (done/snooze/cancel/assign).
 
-### 7.5 Reach Out Member Experience
-
-- Member “Reach Out” entry remains as UX entry point in V1, but backend writes a task instead of `reachOutRequests`.
-- Keep a minimal member-visible status lifecycle (`submitted`, `in_progress`, `resolved`) to avoid UX regression.
-
-### 7.6 Mobile-First + Responsive Web Behavior
+### 7.5 Mobile-First + Responsive Web Behavior
 
 - Primary design target is native mobile UX.
 - Web must still be reactive and polished:
@@ -264,33 +254,23 @@ Important existing gap to close during migration:
 - Optional chat card posting references `taskId`.
 - Deprecate reminder-as-plain-message behavior.
 
-### Phase 2 - Reach Out Migration
-
-- Reach Out submission creates unassigned group-level task with source `reach_out`.
-- Leader actions move from `reachOutRequests` status transitions to task mutations.
-- Existing `ReachOutRequestCard` UI replaced by task card rendering where relevant.
-
-### Phase 3 - Follow-up Integration (Not full replacement in V1)
+### Phase 2 - Follow-up Integration (Not full replacement in V1)
 
 - Keep follow-up scoring system intact.
 - Add lightweight bridging: task events can optionally create follow-up log entries for member-targeted tasks.
 - Reassess full follow-up/task convergence after V1 stabilization.
 
-### Phase 4 - Decommission Legacy Paths
+### Phase 3 - Decommission Legacy Paths
 
 After backfill and confidence window:
 
-- Remove `reachOutRequests` table and related API/UI.
-- Remove `chatMessages.reachOutRequestId` usage and `reach_out_request` content rendering.
-- Remove reach-out channel toggle/dependency logic from channel management.
 - Simplify task-reminder bot config model to task templates + delivery options.
 
 ## 9) Data Migration Requirements
 
-1. Backfill open `reachOutRequests` into `tasks` with source linkage.
-2. Preserve auditability by converting historical status transitions into `taskEvents` where feasible.
-3. Keep old IDs in `sourceRef` for rollback/debug.
-4. Run dual-write/dual-read only for limited migration window with explicit cutoff date.
+1. Preserve auditability by converting historical status transitions into `taskEvents` where feasible.
+2. Keep old IDs in `sourceRef` for rollback/debug.
+3. Run dual-write/dual-read only for limited migration window with explicit cutoff date.
 
 ## 10) Notifications & Scheduling
 
@@ -301,15 +281,14 @@ After backfill and confidence window:
 ## 11) Success Metrics
 
 1. % of leader actionable items represented as `tasks` (target: >90% after migration).
-2. Reduction in duplicate leader workflows (reach out + reminder + follow-up overlaps).
-3. Task completion and response latency for reach-out-origin tasks.
-4. Fewer leader clicks from intake to assignment/resolution.
+2. Reduction in duplicate leader workflows (reminder + follow-up overlaps).
+3. Fewer leader clicks from intake to assignment/resolution.
 
 ## 12) Risks
 
 - Migration complexity and temporary dual-path logic.
 - Permission regressions if leader checks are inconsistent.
-- UX churn for leaders used to reach-out cards and follow-up flows.
+- UX churn for leaders used to follow-up flows.
 - Ordering/hierarchy edge cases (especially if strict linked list is required).
 
 ## 13) Decision Log (Locked for V1)
@@ -318,9 +297,8 @@ After backfill and confidence window:
 2. **Group-level completion semantics:** Any leader/admin may claim and complete unassigned group-level tasks; person-level tasks are completed by assignee or admin.
 3. **Tag governance:** Hybrid model in V1: free-form creation with normalized tags + suggested dictionary from usage.
 4. **Ordering strictness:** Numeric `orderKey` ranking in V1; no strict linked-list adjacency guarantees.
-5. **Member visibility:** Keep minimal member-visible status for reach-out-origin tasks (`submitted`, `in_progress`, `resolved`).
-6. **Snooze presets:** V1 presets are `1 day`, `3 days`, and `1 week` (default).
-7. **Target context cardinality:** Exactly one primary target in V1 (`none` or `member` or `group`).
+5. **Snooze presets:** V1 presets are `1 day`, `3 days`, and `1 week` (default).
+6. **Target context cardinality:** Exactly one primary target in V1 (`none` or `member` or `group`).
 
 ## 14) Proposed V1 Scope Lock
 
@@ -328,14 +306,14 @@ Ship V1 with:
 
 - leader-only task page,
 - top-level `Tasks` tab positioned left of `Inbox`,
-- manual + task-reminder + reach-out task creation,
+- manual + task-reminder task creation,
 - assignment/claim,
 - done/snooze/cancel,
 - parent/child tasks,
 - indexed tags,
 - member/group target context,
 - optional chat task card,
-- migration of reminder + reach-out workflows.
+- migration of reminder workflows.
 
 Defer:
 
