@@ -37,3 +37,29 @@ export function effectiveKey(item: SongRehearsalItem): string | undefined {
 export function effectiveBpm(item: SongRehearsalItem): number | undefined {
   return resolveSongBpm(item.songDetails, item.song);
 }
+
+/**
+ * One-line song summary for a run sheet row: "Way Maker · Key G · 68 BPM".
+ *
+ * The linked song's title leads the line so importing a song is visible even
+ * when the row keeps its own segment title (e.g. the default "New item") —
+ * but it's dropped when the row title already says the same thing, to avoid
+ * printing the title twice. Returns null when there's nothing to show.
+ */
+export function songMetaLine(
+  item: SongRehearsalItem & { title?: string },
+): string | null {
+  const parts: string[] = [];
+  const songTitle = item.song?.title?.trim();
+  if (
+    songTitle &&
+    songTitle.toLowerCase() !== (item.title ?? "").trim().toLowerCase()
+  ) {
+    parts.push(songTitle);
+  }
+  const key = effectiveKey(item);
+  if (key) parts.push(`Key ${key}`);
+  const bpm = effectiveBpm(item);
+  if (bpm) parts.push(`${bpm} BPM`);
+  return parts.length > 0 ? parts.join(" · ") : null;
+}
