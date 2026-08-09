@@ -1298,10 +1298,25 @@ describe("confirmAssignment (leader manual confirm)", () => {
     const { t, world } = await setupSchedulingWorld();
     const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
     const planId = await makeEvent(t, world, leaderToken, 7);
-    const assignmentId = await assignMember(t, world, leaderToken, planId);
-    // Drain the reconciles enqueued by assignRole so the counts below are
-    // attributable to confirmAssignment alone.
-    await t.finishInProgressScheduledFunctions();
+    // Seed the assignment directly (bypassing `assignRole`) so the ONLY
+    // reconcile jobs in the queue are the ones the confirm schedules — the
+    // assertion stays deterministic regardless of convex-test's runAfter(0)
+    // timing. Same pattern as deletion.test.ts; a drain is not enough,
+    // because finishInProgressScheduledFunctions skips still-pending jobs.
+    const assignmentId = await t.run(async (ctx) => {
+      const plan = await ctx.db.get(planId);
+      return ctx.db.insert("roleAssignments", {
+        planId,
+        teamId: world.teamId,
+        roleId: world.roleId,
+        userId: world.channelMemberId,
+        eventDate: plan!.eventDate,
+        status: "unconfirmed",
+        assignedById: world.groupLeaderId,
+        assignedAt: Date.now(),
+      });
+    });
+    expect(await pendingJobsNamed(t, "reconcileTeamChannel")).toBe(0);
 
     await t.mutation(api.functions.scheduling.assignments.confirmAssignment, {
       token: leaderToken,
