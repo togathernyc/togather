@@ -110,13 +110,31 @@ describe("pickActiveServiceIndex", () => {
     expect(pickActiveServiceIndex(unordered, at(9, 30), 0, DURING, 0)).toBe(1);
   });
 
-  it("when windows overlap, the later-starting service wins", () => {
+  it("when windows overlap, the earlier-starting service wins", () => {
     // 90-min "during" makes 9:00's window run to 10:30, overlapping 10:00's
-    // window [10:00, 11:30). At 10:15 both contain now → pick the later one.
+    // window [10:00, 11:30). At 10:15 both contain now → stay on the earlier
+    // one until its window closes; the later service's sheet mostly repeats
+    // pre-event items that aren't re-run between services.
     const overlapping = [{ startsAt: at(9) }, { startsAt: at(10) }];
     expect(pickActiveServiceIndex(overlapping, at(10, 15), 0, 90 * 60, 0)).toBe(
-      1,
+      0,
     );
+  });
+
+  it("a long pre-roll on the next service never steals the live one", () => {
+    // Real-world shape: 10:00 and 12:00 services with a 2.5-hr "before"
+    // (call time, setup, checks). 12:00's window opens at 9:30 — while the
+    // 10:00 service is being set up and while it is live, the sheet must
+    // stay anchored to 10:00.
+    const services = [{ startsAt: at(10) }, { startsAt: at(12) }];
+    const BEFORE = 150 * 60; // 2.5 hr
+    const DUR = 75 * 60; // 75 min
+    // During 10:00's own pre-roll (9:45)…
+    expect(pickActiveServiceIndex(services, at(9, 45), BEFORE, DUR, 0)).toBe(0);
+    // …and mid-service (10:57) it stays on the 10:00 service.
+    expect(pickActiveServiceIndex(services, at(10, 57), BEFORE, DUR, 0)).toBe(0);
+    // Once 10:00's window closes (after 11:15), 12:00 takes over.
+    expect(pickActiveServiceIndex(services, at(11, 30), BEFORE, DUR, 0)).toBe(1);
   });
 
   it("after all services with unordered times, picks the max-start index", () => {

@@ -97,7 +97,9 @@ export function computeSegmentedClockTimes(
  *
  * Selection order:
  *   1. a service whose window contains `now` (the one happening now — if two
- *      overlap, the later-starting wins, since that's the one you're rolling into);
+ *      overlap, the EARLIER-starting wins: a later service's long pre-roll
+ *      mostly repeats setup items that aren't re-run between services, so it
+ *      must not steal the sheet while an earlier service is still live);
  *   2. else the soonest service still ahead of `now` (its window hasn't opened);
  *   3. else the last service (everything's already over).
  *
@@ -121,7 +123,7 @@ export function pickActiveServiceIndex(
     const winStart = times[i].startsAt - beforeMs;
     const winEnd = times[i].startsAt + tailMs;
     if (now >= winStart && now < winEnd) {
-      if (containing === -1 || times[i].startsAt > times[containing].startsAt) {
+      if (containing === -1 || times[i].startsAt < times[containing].startsAt) {
         containing = i;
       }
     }
