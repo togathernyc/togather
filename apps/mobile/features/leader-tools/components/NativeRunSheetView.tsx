@@ -343,10 +343,6 @@ export function PlanRunSheet({
     () => totalDurationSec(itemsBySegment.during),
     [itemsBySegment.during],
   );
-  const beforeTotalSec = useMemo(
-    () => totalDurationSec(itemsBySegment.before),
-    [itemsBySegment.before],
-  );
   const afterTotalSec = useMemo(
     () => totalDurationSec(itemsBySegment.after),
     [itemsBySegment.after],
@@ -365,14 +361,8 @@ export function PlanRunSheet({
   const [manualServiceIdx, setManualServiceIdx] = useState<number | null>(null);
   const autoServiceIdx = useMemo(
     () =>
-      pickActiveServiceIndex(
-        times,
-        now,
-        beforeTotalSec,
-        duringTotalSec,
-        afterTotalSec,
-      ),
-    [times, now, beforeTotalSec, duringTotalSec, afterTotalSec],
+      pickActiveServiceIndex(times, now, duringTotalSec, afterTotalSec),
+    [times, now, duringTotalSec, afterTotalSec],
   );
   // Guard the upper bound so a manual pick that outran a shrunk `times` falls
   // back to auto. (A reorder that keeps the length isn't tracked — editing

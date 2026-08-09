@@ -91,16 +91,16 @@ export function computeSegmentedClockTimes(
 /**
  * Pick which service a multi-service plan's run sheet should anchor to for a
  * given wall-clock `now`, so day-of the sheet re-bases to the service you're
- * actually in (and its live highlight tracks the right rows). Each service `i`
- * owns the window `[startsAt_i − before, startsAt_i + during + after]` — its
- * pre-roll leading in through its post-roll.
+ * actually in (and its live highlight tracks the right rows). A service is
+ * "live" from its start until its during + after phases run out.
  *
  * Selection order:
- *   1. a service whose window contains `now` (the one happening now — if two
- *      overlap, the EARLIER-starting wins: a later service's long pre-roll
- *      mostly repeats setup items that aren't re-run between services, so it
- *      must not steal the sheet while an earlier service is still live);
- *   2. else the soonest service still ahead of `now` (its window hasn't opened);
+ *   1. the latest-starting service that is live at `now` — a later service
+ *      takes the sheet the moment it actually starts, but never earlier: its
+ *      pre-roll mostly repeats setup items that aren't re-run between
+ *      services, so pre-roll alone must not steal the sheet from an earlier
+ *      service that's still live;
+ *   2. else the soonest service that hasn't started yet;
  *   3. else the last service (everything's already over).
  *
  * Returns an index into `times` (0 when empty). Durations are in seconds.
@@ -108,35 +108,29 @@ export function computeSegmentedClockTimes(
 export function pickActiveServiceIndex(
   times: Array<{ startsAt: number }>,
   now: number,
-  beforeSec: number,
   duringSec: number,
   afterSec: number,
 ): number {
   if (times.length === 0) return 0;
-  const beforeMs = Math.max(0, beforeSec) * 1000;
   const tailMs = (Math.max(0, duringSec) + Math.max(0, afterSec)) * 1000;
 
-  let containing = -1;
-  let nextUpcoming = -1;
+  let live = -1; // started, phases not yet run out — latest start wins
+  let upcoming = -1; // not started yet — earliest start wins
   let last = 0;
   for (let i = 0; i < times.length; i++) {
-    const winStart = times[i].startsAt - beforeMs;
-    const winEnd = times[i].startsAt + tailMs;
-    if (now >= winStart && now < winEnd) {
-      if (containing === -1 || times[i].startsAt < times[containing].startsAt) {
-        containing = i;
+    const startsAt = times[i].startsAt;
+    if (startsAt <= now) {
+      if (now < startsAt + tailMs && (live === -1 || startsAt > times[live].startsAt)) {
+        live = i;
       }
+    } else if (upcoming === -1 || startsAt < times[upcoming].startsAt) {
+      upcoming = i;
     }
-    if (winStart > now) {
-      if (nextUpcoming === -1 || times[i].startsAt < times[nextUpcoming].startsAt) {
-        nextUpcoming = i;
-      }
-    }
-    if (times[i].startsAt > times[last].startsAt) last = i;
+    if (startsAt > times[last].startsAt) last = i;
   }
 
-  if (containing !== -1) return containing;
-  if (nextUpcoming !== -1) return nextUpcoming;
+  if (live !== -1) return live;
+  if (upcoming !== -1) return upcoming;
   return last;
 }
 
