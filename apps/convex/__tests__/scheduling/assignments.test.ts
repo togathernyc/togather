@@ -1097,3 +1097,113 @@ describe("inviteAndAssign", () => {
     ).rejects.toThrow(ConvexError);
   });
 });
+
+describe("confirmAssignment (leader manual confirm)", () => {
+  /** Assign the plain channel member to the role and return the assignmentId. */
+  async function assignMember(
+    t: ReturnType<typeof import("convex-test").convexTest>,
+    world: SchedulingWorld,
+    leaderToken: string,
+    planId: Id<"eventPlans">,
+  ): Promise<Id<"roleAssignments">> {
+    const { assignmentId } = await t.mutation(
+      api.functions.scheduling.assignments.assignRole,
+      {
+        token: leaderToken,
+        planId,
+        teamId: world.teamId,
+        roleId: world.roleId,
+        userId: world.channelMemberId,
+      },
+    );
+    return assignmentId;
+  }
+
+  it("lets a scheduler confirm someone else's unconfirmed assignment", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const planId = await makeEvent(t, world, leaderToken, 7);
+    const assignmentId = await assignMember(t, world, leaderToken, planId);
+
+    const res = await t.mutation(
+      api.functions.scheduling.assignments.confirmAssignment,
+      { token: leaderToken, assignmentId },
+    );
+    expect(res.status).toBe("confirmed");
+
+    const assignment = await t.run((ctx) => ctx.db.get(assignmentId));
+    expect(assignment?.status).toBe("confirmed");
+    expect(assignment?.respondedAt).toBeTypeOf("number");
+  });
+
+  it("rejects a group member who is not a scheduler with a ConvexError", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const planId = await makeEvent(t, world, leaderToken, 7);
+    const assignmentId = await assignMember(t, world, leaderToken, planId);
+
+    // A plain group member (not a channel admin/moderator, group leader, or
+    // community admin) cannot confirm on someone else's behalf.
+    const memberToken = (await generateTokens(world.staleGroupMemberId))
+      .accessToken;
+    await expect(
+      t.mutation(api.functions.scheduling.assignments.confirmAssignment, {
+        token: memberToken,
+        assignmentId,
+      }),
+    ).rejects.toThrow(ConvexError);
+  });
+
+  it("no-ops on an already-confirmed assignment", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const planId = await makeEvent(t, world, leaderToken, 7);
+    const assignmentId = await assignMember(t, world, leaderToken, planId);
+
+    // The volunteer confirms it themselves first.
+    const memberToken = (await generateTokens(world.channelMemberId))
+      .accessToken;
+    await t.mutation(api.functions.scheduling.assignments.respondToAssignment, {
+      token: memberToken,
+      assignmentId,
+      status: "confirmed",
+    });
+    const before = await t.run((ctx) => ctx.db.get(assignmentId));
+
+    const res = await t.mutation(
+      api.functions.scheduling.assignments.confirmAssignment,
+      { token: leaderToken, assignmentId },
+    );
+    expect(res.status).toBe("confirmed");
+
+    // True no-op: nothing on the row changed, not even respondedAt.
+    const after = await t.run((ctx) => ctx.db.get(assignmentId));
+    expect(after).toEqual(before);
+  });
+
+  it("confirming a declined assignment clears the decline note", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const planId = await makeEvent(t, world, leaderToken, 7);
+    const assignmentId = await assignMember(t, world, leaderToken, planId);
+
+    const memberToken = (await generateTokens(world.channelMemberId))
+      .accessToken;
+    await t.mutation(api.functions.scheduling.assignments.respondToAssignment, {
+      token: memberToken,
+      assignmentId,
+      status: "declined",
+      declineNote: "Out of town",
+    });
+
+    // Leader override — e.g. the volunteer changed their mind in person.
+    await t.mutation(api.functions.scheduling.assignments.confirmAssignment, {
+      token: leaderToken,
+      assignmentId,
+    });
+
+    const assignment = await t.run((ctx) => ctx.db.get(assignmentId));
+    expect(assignment?.status).toBe("confirmed");
+    expect(assignment?.declineNote).toBeUndefined();
+  });
+});
