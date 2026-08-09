@@ -91,17 +91,42 @@ export function computeSegmentedClockTimes(
 /**
  * Pick which service a multi-service plan's run sheet should anchor to for a
  * given wall-clock `now`, so day-of the sheet re-bases to the service you're
- * actually in (and its live highlight tracks the right rows). Each service `i`
- * owns the window `[startsAt_i − before, startsAt_i + during + after]` — its
- * pre-roll leading in through its post-roll.
+ * actually in (and its live highlight tracks the right rows). Returns an index
+ * into `times` (0 when empty). Durations are in seconds.
  *
- * Selection order:
- *   1. a service whose window contains `now` (the one happening now — if two
- *      overlap, the later-starting wins, since that's the one you're rolling into);
- *   2. else the soonest service still ahead of `now` (its window hasn't opened);
- *   3. else the last service (everything's already over).
+ * Each service `i` has three phases on the clock:
+ *   - **pre-roll** `[startsAt − before, startsAt)` — call time, set-up, line
+ *     check, soundcheck, platform briefing;
+ *   - **core**     `[startsAt, startsAt + during)` — the service itself;
+ *   - **post-roll**`[core end, core end + after)` — teardown, debrief.
  *
- * Returns an index into `times` (0 when empty). Durations are in seconds.
+ * Selection order, most specific first:
+ *   1. **In progress** — a service whose CORE contains `now`. If several do (a
+ *      plan whose services are scheduled closer together than they actually
+ *      run), the latest-starting wins: that's the one you most recently rolled
+ *      into.
+ *   2. **Pre-roll open** — else the EARLIEST service whose pre-roll contains
+ *      `now`. Between services, "next up" takes over as soon as its pre-roll
+ *      opens rather than at its start time, because the before block IS the
+ *      work you're doing in that gap — a 10 AM sheet is useless once you're
+ *      resetting the room for noon.
+ *   3. **Wrapping up** — else the latest service whose post-roll contains
+ *      `now`: the service just ended, its teardown is still running, and
+ *      nothing newer has opened yet.
+ *   4. **Upcoming** — else the earliest service still ahead of `now`.
+ *   5. **Last** — else everything is over; the latest-starting service.
+ *
+ * WHY THE ORDER MATTERS (the bug this replaced): the previous rule gave every
+ * service one flat window `[startsAt − before, startsAt + during + after)` and
+ * handed any overlap to the LATER-starting service. A real Sunday before block
+ * runs 2h+, so on a 10 AM / 12 PM plan the noon window opened at ~9:30 AM and
+ * swallowed the entire 10 AM service — the sheet showed 12 PM from 10 AM
+ * onward, re-basing every row's clock time +2h while the team was standing in
+ * the 10 AM. A later service's PRE-ROLL must never outrank a service that is
+ * genuinely in progress; that asymmetry is the whole fix.
+ *
+ * Comparisons are between absolute instants (epoch ms), so this is timezone-
+ * and DST-agnostic by construction — no local-clock arithmetic anywhere.
  */
 export function pickActiveServiceIndex(
   times: Array<{ startsAt: number }>,
@@ -112,29 +137,38 @@ export function pickActiveServiceIndex(
 ): number {
   if (times.length === 0) return 0;
   const beforeMs = Math.max(0, beforeSec) * 1000;
-  const tailMs = (Math.max(0, duringSec) + Math.max(0, afterSec)) * 1000;
+  const duringMs = Math.max(0, duringSec) * 1000;
+  const afterMs = Math.max(0, afterSec) * 1000;
 
-  let containing = -1;
-  let nextUpcoming = -1;
-  let last = 0;
+  let inProgress = -1; // latest core containing now
+  let preRoll = -1; // earliest pre-roll containing now
+  let wrapping = -1; // latest post-roll containing now
+  let upcoming = -1; // earliest start still ahead of now
+  let last = 0; // latest start overall
+
   for (let i = 0; i < times.length; i++) {
-    const winStart = times[i].startsAt - beforeMs;
-    const winEnd = times[i].startsAt + tailMs;
-    if (now >= winStart && now < winEnd) {
-      if (containing === -1 || times[i].startsAt > times[containing].startsAt) {
-        containing = i;
-      }
+    const start = times[i].startsAt;
+    const coreEnd = start + duringMs;
+
+    if (now >= start && now < coreEnd) {
+      if (inProgress === -1 || start > times[inProgress].startsAt) inProgress = i;
     }
-    if (winStart > now) {
-      if (nextUpcoming === -1 || times[i].startsAt < times[nextUpcoming].startsAt) {
-        nextUpcoming = i;
-      }
+    if (now >= start - beforeMs && now < start) {
+      if (preRoll === -1 || start < times[preRoll].startsAt) preRoll = i;
     }
-    if (times[i].startsAt > times[last].startsAt) last = i;
+    if (now >= coreEnd && now < coreEnd + afterMs) {
+      if (wrapping === -1 || start > times[wrapping].startsAt) wrapping = i;
+    }
+    if (start > now) {
+      if (upcoming === -1 || start < times[upcoming].startsAt) upcoming = i;
+    }
+    if (start > times[last].startsAt) last = i;
   }
 
-  if (containing !== -1) return containing;
-  if (nextUpcoming !== -1) return nextUpcoming;
+  if (inProgress !== -1) return inProgress;
+  if (preRoll !== -1) return preRoll;
+  if (wrapping !== -1) return wrapping;
+  if (upcoming !== -1) return upcoming;
   return last;
 }
 

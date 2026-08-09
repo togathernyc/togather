@@ -79,7 +79,7 @@ describe("pickActiveServiceIndex", () => {
   const times = [{ startsAt: at(9) }, { startsAt: at(11) }];
   const DURING = 60 * 60; // 1 hr in seconds
 
-  it("picks the service whose window contains now", () => {
+  it("picks the service that is actually in progress", () => {
     expect(pickActiveServiceIndex(times, at(9, 30), 0, DURING, 0)).toBe(0);
     expect(pickActiveServiceIndex(times, at(11, 30), 0, DURING, 0)).toBe(1);
   });
@@ -97,36 +97,111 @@ describe("pickActiveServiceIndex", () => {
     expect(pickActiveServiceIndex(times, at(13), 0, DURING, 0)).toBe(1);
   });
 
-  it("counts a before pre-roll as part of the service window", () => {
-    // 30-min pre-roll → the 9:00 window opens at 8:30.
+  it("a pre-roll selects its service once it opens", () => {
+    // 30-min pre-roll → the 9:00 service's before block starts at 8:30.
     expect(pickActiveServiceIndex(times, at(8, 45), 30 * 60, DURING, 0)).toBe(0);
     // ...but 8:15 is still ahead of it → soonest upcoming (still index 0).
     expect(pickActiveServiceIndex(times, at(8, 15), 30 * 60, DURING, 0)).toBe(0);
   });
 
+  it("a later service's pre-roll never steals the service in progress", () => {
+    // THE REPORTED BUG. Two services 2h apart with a 2.5h pre-roll (call time,
+    // set-up, line check, soundcheck, platform briefing — a real Sunday before
+    // block). The noon service's pre-roll opens at 9:30 AM, i.e. BEFORE the
+    // 10 AM service even starts, so both "windows" contain every instant of
+    // the 10 AM service. The old rule handed overlaps to the later-starting
+    // service, so from 10 AM onward the sheet showed 12 PM while the team was
+    // standing in the 10 AM — and every row's clock time was re-based +2h.
+    const sunday = [{ startsAt: at(10) }, { startsAt: at(12) }];
+    const BEFORE = 150 * 60; // 2h30m of pre-roll
+    const DURING_75 = 75 * 60; // 10:00–11:15
+
+    // Prior to 10 AM, the 10 AM's own pre-roll is running → the 10 AM.
+    expect(pickActiveServiceIndex(sunday, at(9, 30), BEFORE, DURING_75, 0)).toBe(0);
+    // In the 10 AM service → the 10 AM, despite noon's pre-roll being "open".
+    expect(pickActiveServiceIndex(sunday, at(10, 15), BEFORE, DURING_75, 0)).toBe(0);
+    expect(pickActiveServiceIndex(sunday, at(11), BEFORE, DURING_75, 0)).toBe(0);
+    // Once the 10 AM is over, the floor has moved on to the noon reset.
+    expect(pickActiveServiceIndex(sunday, at(11, 30), BEFORE, DURING_75, 0)).toBe(1);
+    expect(pickActiveServiceIndex(sunday, at(12, 30), BEFORE, DURING_75, 0)).toBe(1);
+  });
+
+  it("overlapping services in progress: the one that started most recently", () => {
+    // 90-min "during" makes the 9:00 service run to 10:30, overlapping the
+    // 10:00 service's [10:00, 11:30). At 10:15 BOTH are genuinely in progress
+    // (a mis-entered plan), so pick the one you most recently rolled into.
+    const overlapping = [{ startsAt: at(9) }, { startsAt: at(10) }];
+    expect(pickActiveServiceIndex(overlapping, at(10, 15), 0, 90 * 60, 0)).toBe(1);
+    // ...but before 10:00 only the 9:00 service is running.
+    expect(pickActiveServiceIndex(overlapping, at(9, 30), 0, 90 * 60, 0)).toBe(0);
+  });
+
+  it("an after block keeps its own service until something newer opens", () => {
+    // 9:00 service runs to 10:00 with a 20-min teardown, next service at 4 PM
+    // with a 30-min pre-roll. At 10:10 we're still striking the 9:00.
+    const spread = [{ startsAt: at(9) }, { startsAt: at(16) }];
+    expect(pickActiveServiceIndex(spread, at(10, 10), 30 * 60, DURING, 20 * 60)).toBe(0);
+    // Teardown done and the 4 PM's pre-roll hasn't opened → next up.
+    expect(pickActiveServiceIndex(spread, at(10, 30), 30 * 60, DURING, 20 * 60)).toBe(1);
+  });
+
+  it("a single-service plan always resolves to that service", () => {
+    const one = [{ startsAt: at(10) }];
+    for (const t of [at(6), at(9, 30), at(10, 30), at(11, 30), at(23)]) {
+      expect(pickActiveServiceIndex(one, t, 30 * 60, DURING, 15 * 60)).toBe(0);
+    }
+  });
+
   it("returns the array index even when times are unordered", () => {
     const unordered = [{ startsAt: at(11) }, { startsAt: at(9) }];
-    // 9:30 is inside the second element's window.
+    // 9:30 is inside the second element's service.
     expect(pickActiveServiceIndex(unordered, at(9, 30), 0, DURING, 0)).toBe(1);
   });
 
-  it("when windows overlap, the later-starting service wins", () => {
-    // 90-min "during" makes 9:00's window run to 10:30, overlapping 10:00's
-    // window [10:00, 11:30). At 10:15 both contain now → pick the later one.
-    const overlapping = [{ startsAt: at(9) }, { startsAt: at(10) }];
-    expect(pickActiveServiceIndex(overlapping, at(10, 15), 0, 90 * 60, 0)).toBe(
-      1,
-    );
-  });
-
   it("after all services with unordered times, picks the max-start index", () => {
-    // Windows end by 12:00; 13:00 is past all → the latest service (11:00),
-    // which is index 0 in this unordered array.
+    // Everything is over by 12:00; 13:00 is past all → the latest service
+    // (11:00), which is index 0 in this unordered array.
     const unordered = [{ startsAt: at(11) }, { startsAt: at(9) }];
     expect(pickActiveServiceIndex(unordered, at(13), 0, DURING, 0)).toBe(0);
   });
 
+  it("spans multiple days without leaking across them", () => {
+    const day = (d: number, h: number) => new Date(2026, 5, d, h).getTime();
+    const conference = [
+      { startsAt: day(7, 10) },
+      { startsAt: day(8, 10) },
+      { startsAt: day(9, 10) },
+    ];
+    expect(pickActiveServiceIndex(conference, day(7, 10.5), 0, DURING, 0)).toBe(0);
+    // Overnight between sessions → the next morning's.
+    expect(pickActiveServiceIndex(conference, day(7, 20), 0, DURING, 0)).toBe(1);
+    expect(pickActiveServiceIndex(conference, day(8, 10.5), 0, DURING, 0)).toBe(1);
+    expect(pickActiveServiceIndex(conference, day(9, 23), 0, DURING, 0)).toBe(2);
+  });
+
+  it("is unaffected by a DST transition", () => {
+    // US spring-forward 2026: 2 AM EST → 3 AM EDT on Mar 8. Selection compares
+    // absolute instants, so the hour that never existed locally can't shift it.
+    const springForward = [
+      { startsAt: new Date("2026-03-08T14:00:00Z").getTime() }, // 10 AM EDT
+      { startsAt: new Date("2026-03-08T16:00:00Z").getTime() }, // 12 PM EDT
+    ];
+    const BEFORE = 150 * 60;
+    const nowIn10am = new Date("2026-03-08T14:30:00Z").getTime();
+    expect(pickActiveServiceIndex(springForward, nowIn10am, BEFORE, 75 * 60, 0)).toBe(0);
+    const nowIn12pm = new Date("2026-03-08T16:30:00Z").getTime();
+    expect(pickActiveServiceIndex(springForward, nowIn12pm, BEFORE, 75 * 60, 0)).toBe(1);
+  });
+
   it("handles empty times", () => {
     expect(pickActiveServiceIndex([], at(9), 0, DURING, 0)).toBe(0);
+  });
+
+  it("falls back to the soonest service when durations are all zero", () => {
+    // A plan with no durations entered yet has no window at all — it must
+    // still land somewhere sane rather than always on the last service.
+    expect(pickActiveServiceIndex(times, at(8), 0, 0, 0)).toBe(0);
+    expect(pickActiveServiceIndex(times, at(10), 0, 0, 0)).toBe(1);
+    expect(pickActiveServiceIndex(times, at(13), 0, 0, 0)).toBe(1);
   });
 });
