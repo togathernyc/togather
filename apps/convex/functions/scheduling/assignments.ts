@@ -875,6 +875,71 @@ export const respondToAssignment = mutation({
 });
 
 /**
+ * Leader/manager manual confirm — mark someone ELSE's assignment `confirmed`.
+ *
+ * Why: volunteers often confirm verbally or in person ("yes, I'll be there
+ * Sunday") without ever tapping the request. This lets the scheduler record
+ * that answer on the roster, including overriding a `declined` row (the
+ * decline note is cleared) when the volunteer changed their mind offline.
+ * Deliberately does NOT notify leaders (`notifyLeadersOfResponse`) — the
+ * leader is the one acting.
+ *
+ * Auth: same gate as `unassign` — `requirePlanTeamScheduler`, scoped to the
+ * assignment's own team.
+ */
+export const confirmAssignment = mutation({
+  args: {
+    token: v.string(),
+    assignmentId: v.id("roleAssignments"),
+  },
+  handler: async (ctx, args) => {
+    const callerId = await requireAuth(ctx, args.token);
+
+    const assignment = await ctx.db.get(args.assignmentId);
+    if (!assignment) {
+      throw new ConvexError("Assignment not found");
+    }
+    // Scoped to the assignment's own team, so a manager can confirm their
+    // team's cells but not another team's.
+    await requirePlanTeamScheduler(
+      ctx,
+      assignment.planId,
+      assignment.teamId,
+      callerId,
+    );
+
+    // Already confirmed — nothing to record.
+    if (assignment.status === "confirmed") {
+      return { assignmentId: args.assignmentId, status: "confirmed" as const };
+    }
+
+    await ctx.db.patch(args.assignmentId, {
+      status: "confirmed",
+      declineNote: undefined,
+      respondedAt: Date.now(),
+    });
+
+    // Same uniform channel-sync trigger as `respondToAssignment`: a confirm
+    // has no membership effect on the team channel itself, but a declined →
+    // confirmed override can re-add the user to derived membership, and
+    // reconciling on every status change keeps the trigger cheap and uniform.
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.scheduling.teamChannelSync.reconcileTeamChannel,
+      { teamId: assignment.teamId },
+    );
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.scheduling.teamChannelSync
+        .reconcileCrossTeamChannelsForSource,
+      { sourceTeamId: assignment.teamId },
+    );
+
+    return { assignmentId: args.assignmentId, status: "confirmed" as const };
+  },
+});
+
+/**
  * Distinct users who have previously *confirmed* the given role, most
  * recent first. Powers the assign-UI "previously filled by" quicklink
  * (ADR-023 — a derived query in place of a qualification table).

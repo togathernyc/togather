@@ -43,6 +43,7 @@ import {
   runSheetItemMatchesViewer,
   segmentHasContentForViewer,
 } from "@features/scheduling/utils/runSheetViewerFilter";
+import { songMetaLine } from "@features/scheduling/utils/songRehearsal";
 import { ServiceTimeSelector } from "@features/scheduling/components/ServiceTimeSelector";
 import { renderTextWithLinks } from "../utils/runSheetLinks";
 import { assigneeLabels } from "../utils/runSheetUtils";
@@ -83,6 +84,12 @@ export type RunSheetItem = {
   durationSec: number;
   notes: Array<{ category: string; content: string }>;
   songDetails: { key?: string; bpm?: number } | null;
+  /**
+   * Joined library song (ADR-027); carries the defaults songDetails overrides.
+   * Optional because run sheets cached offline before this field shipped
+   * rehydrate without it.
+   */
+  song?: { title?: string; defaultKey?: string; bpm?: number } | null;
   assignments: Array<{
     roleId: Id<"teamRoles">;
     roleName: string;
@@ -817,6 +824,7 @@ function ReadOnlyRow({
 }) {
   const isHeader = item.type === "header";
   const duration = formatDuration(item.durationSec);
+  const songMeta = item.type === "song" ? songMetaLine(item) : null;
 
   if (isHeader) {
     // Collapsible section header — tap the chevron/title to fold its rows.
@@ -895,10 +903,9 @@ function ReadOnlyRow({
             />
           ) : null}
         </Pressable>
-        {item.type === "song" && item.songDetails?.key ? (
+        {songMeta ? (
           <Text style={[styles.meta, { color: colors.textSecondary }]}>
-            Key {item.songDetails.key}
-            {item.songDetails.bpm ? ` · ${item.songDetails.bpm} BPM` : ""}
+            {songMeta}
           </Text>
         ) : null}
         {item.assignments.length > 0 ? (

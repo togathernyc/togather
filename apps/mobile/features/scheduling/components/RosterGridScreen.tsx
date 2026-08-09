@@ -411,6 +411,11 @@ export function RosterGridScreen() {
   const unassign = useAuthenticatedMutation(
     api.functions.scheduling.assignments.unassign,
   );
+  // Leader manual confirm — records a verbal/in-person "yes" on the roster
+  // without waiting for the volunteer to tap their request.
+  const confirmAssignment = useAuthenticatedMutation(
+    api.functions.scheduling.assignments.confirmAssignment,
+  );
   // Set how many of a role are needed for a plan (the AssignSheet stepper).
   // `setNeededRoles` REPLACES the plan's whole needed-roles set, so the handler
   // below rebuilds the full array from `roleCells` and changes only one count.
@@ -668,6 +673,17 @@ export function RosterGridScreen() {
       }
     },
     [unassign, surfaceError],
+  );
+
+  const handleConfirm = useCallback(
+    async (assignmentId: Id<"roleAssignments">) => {
+      try {
+        await confirmAssignment({ assignmentId });
+      } catch (e) {
+        surfaceError("Couldn't confirm", e);
+      }
+    },
+    [confirmAssignment, surfaceError],
   );
 
   /** A single time-label when the event has exactly one time, else undefined. */
@@ -2459,6 +2475,7 @@ export function RosterGridScreen() {
             cell={roleCells[`${roleCellModal.role.roleId}:${roleCellModal.event._id}`]}
             colors={colors}
             docked
+            onConfirm={handleConfirm}
             onRemove={handleUnassign}
             onAddSomeone={(cell) => {
               const role = roleCellModal.role;
@@ -2503,6 +2520,7 @@ export function RosterGridScreen() {
             cell={memberCellModal.member.cells[memberCellModal.event._id as string]}
             colors={colors}
             docked
+            onConfirm={handleConfirm}
             onRemove={handleUnassign}
             onAddRole={() => {
               const m = memberCellModal.member;
@@ -2583,6 +2601,7 @@ export function RosterGridScreen() {
           event={roleCellModal.event}
           cell={roleCells[`${roleCellModal.role.roleId}:${roleCellModal.event._id}`]}
           colors={colors}
+          onConfirm={handleConfirm}
           onRemove={handleUnassign}
           onAddSomeone={(cell) => {
             const role = roleCellModal.role;
@@ -2626,6 +2645,7 @@ export function RosterGridScreen() {
           event={memberCellModal.event}
           cell={memberCellModal.member.cells[memberCellModal.event._id as string]}
           colors={colors}
+          onConfirm={handleConfirm}
           onRemove={handleUnassign}
           onAddRole={() => {
             const m = memberCellModal.member;
@@ -3100,6 +3120,7 @@ function RoleCellPopover({
   cell,
   colors,
   docked = false,
+  onConfirm,
   onRemove,
   onAddSomeone,
   onShowHistory,
@@ -3110,6 +3131,7 @@ function RoleCellPopover({
   cell: RoleCell | undefined;
   colors: Colors;
   docked?: boolean;
+  onConfirm: (id: Id<"roleAssignments">) => void;
   onRemove: (id: Id<"roleAssignments">) => void;
   onAddSomeone: (cell: RoleCell) => void;
   onShowHistory: () => void;
@@ -3176,6 +3198,18 @@ function RoleCellPopover({
                   {resending === (o.assignmentId as string)
                     ? "Sending…"
                     : "Send request"}
+                </Text>
+              </TouchableOpacity>
+            ) : null}
+            {o.status !== "confirmed" ? (
+              <TouchableOpacity
+                onPress={() => onConfirm(o.assignmentId)}
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel={`Confirm ${o.userName}`}
+              >
+                <Text style={[styles.removeText, { color: colors.success }]}>
+                  Confirm
                 </Text>
               </TouchableOpacity>
             ) : null}
@@ -3350,6 +3384,7 @@ function MemberCellPopover({
   cell,
   colors,
   docked = false,
+  onConfirm,
   onRemove,
   onAddRole,
   onClose,
@@ -3359,6 +3394,7 @@ function MemberCellPopover({
   cell: MemberCell | undefined;
   colors: Colors;
   docked?: boolean;
+  onConfirm: (id: Id<"roleAssignments">) => void;
   onRemove: (id: Id<"roleAssignments">) => void;
   onAddRole: () => void;
   onClose: () => void;
@@ -3384,6 +3420,18 @@ function MemberCellPopover({
             <Text style={[styles.occupantName, { color: colors.text }]} numberOfLines={1}>
               {a.roleName}
             </Text>
+            {a.status !== "confirmed" ? (
+              <TouchableOpacity
+                onPress={() => onConfirm(a.assignmentId)}
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel={`Confirm ${member.userName} as ${a.roleName}`}
+              >
+                <Text style={[styles.removeText, { color: colors.success }]}>
+                  Confirm
+                </Text>
+              </TouchableOpacity>
+            ) : null}
             <TouchableOpacity onPress={() => onRemove(a.assignmentId)} hitSlop={8}>
               <Text style={[styles.removeText, { color: colors.destructive }]}>Remove</Text>
             </TouchableOpacity>

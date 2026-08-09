@@ -38,6 +38,19 @@ async function setupSchedulingWorld() {
 
 const DAY = 86400000;
 
+/** Count *pending* scheduler jobs whose function name contains `needle`. */
+async function pendingJobsNamed(
+  t: ReturnType<typeof convexTest>,
+  needle: string,
+): Promise<number> {
+  return t.run(async (ctx) => {
+    const jobs = await ctx.db.system.query("_scheduled_functions").collect();
+    return jobs.filter(
+      (j) => j.state.kind === "pending" && String(j.name).includes(needle),
+    ).length;
+  });
+}
+
 /** Create a draft event for a given day offset and return its planId. */
 async function makeEvent(
   t: ReturnType<typeof import("convex-test").convexTest>,
@@ -1095,5 +1108,213 @@ describe("inviteAndAssign", () => {
         phone: "2025550199",
       }),
     ).rejects.toThrow(ConvexError);
+  });
+});
+
+describe("confirmAssignment (leader manual confirm)", () => {
+  /** Assign the plain channel member to the role and return the assignmentId. */
+  async function assignMember(
+    t: ReturnType<typeof import("convex-test").convexTest>,
+    world: SchedulingWorld,
+    leaderToken: string,
+    planId: Id<"eventPlans">,
+  ): Promise<Id<"roleAssignments">> {
+    const { assignmentId } = await t.mutation(
+      api.functions.scheduling.assignments.assignRole,
+      {
+        token: leaderToken,
+        planId,
+        teamId: world.teamId,
+        roleId: world.roleId,
+        userId: world.channelMemberId,
+      },
+    );
+    return assignmentId;
+  }
+
+  it("lets a scheduler confirm someone else's unconfirmed assignment", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const planId = await makeEvent(t, world, leaderToken, 7);
+    const assignmentId = await assignMember(t, world, leaderToken, planId);
+
+    const res = await t.mutation(
+      api.functions.scheduling.assignments.confirmAssignment,
+      { token: leaderToken, assignmentId },
+    );
+    expect(res.status).toBe("confirmed");
+
+    const assignment = await t.run((ctx) => ctx.db.get(assignmentId));
+    expect(assignment?.status).toBe("confirmed");
+    expect(assignment?.respondedAt).toBeTypeOf("number");
+  });
+
+  it("rejects a group member who is not a scheduler with a ConvexError", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const planId = await makeEvent(t, world, leaderToken, 7);
+    const assignmentId = await assignMember(t, world, leaderToken, planId);
+
+    // A plain group member (not a channel admin/moderator, group leader, or
+    // community admin) cannot confirm on someone else's behalf.
+    const memberToken = (await generateTokens(world.staleGroupMemberId))
+      .accessToken;
+    await expect(
+      t.mutation(api.functions.scheduling.assignments.confirmAssignment, {
+        token: memberToken,
+        assignmentId,
+      }),
+    ).rejects.toThrow(ConvexError);
+  });
+
+  it("no-ops on an already-confirmed assignment", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const planId = await makeEvent(t, world, leaderToken, 7);
+    const assignmentId = await assignMember(t, world, leaderToken, planId);
+
+    // The volunteer confirms it themselves first.
+    const memberToken = (await generateTokens(world.channelMemberId))
+      .accessToken;
+    await t.mutation(api.functions.scheduling.assignments.respondToAssignment, {
+      token: memberToken,
+      assignmentId,
+      status: "confirmed",
+    });
+    const before = await t.run((ctx) => ctx.db.get(assignmentId));
+
+    const res = await t.mutation(
+      api.functions.scheduling.assignments.confirmAssignment,
+      { token: leaderToken, assignmentId },
+    );
+    expect(res.status).toBe("confirmed");
+
+    // True no-op: nothing on the row changed, not even respondedAt.
+    const after = await t.run((ctx) => ctx.db.get(assignmentId));
+    expect(after).toEqual(before);
+  });
+
+  it("confirming a declined assignment clears the decline note", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const planId = await makeEvent(t, world, leaderToken, 7);
+    const assignmentId = await assignMember(t, world, leaderToken, planId);
+
+    const memberToken = (await generateTokens(world.channelMemberId))
+      .accessToken;
+    await t.mutation(api.functions.scheduling.assignments.respondToAssignment, {
+      token: memberToken,
+      assignmentId,
+      status: "declined",
+      declineNote: "Out of town",
+    });
+
+    // Leader override — e.g. the volunteer changed their mind in person.
+    await t.mutation(api.functions.scheduling.assignments.confirmAssignment, {
+      token: leaderToken,
+      assignmentId,
+    });
+
+    const assignment = await t.run((ctx) => ctx.db.get(assignmentId));
+    expect(assignment?.status).toBe("confirmed");
+    expect(assignment?.declineNote).toBeUndefined();
+  });
+
+  it("lets a community admin confirm", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const planId = await makeEvent(t, world, leaderToken, 7);
+    const assignmentId = await assignMember(t, world, leaderToken, planId);
+
+    const adminToken = (await generateTokens(world.communityAdminId))
+      .accessToken;
+    const res = await t.mutation(
+      api.functions.scheduling.assignments.confirmAssignment,
+      { token: adminToken, assignmentId },
+    );
+    expect(res.status).toBe("confirmed");
+  });
+
+  it("lets a team manager confirm on their own team", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const planId = await makeEvent(t, world, leaderToken, 7);
+    const assignmentId = await assignMember(t, world, leaderToken, planId);
+
+    // Zeb is a plain group member until the leader makes him a manager of
+    // the assignment's team.
+    await t.mutation(api.functions.scheduling.teams.addTeamManager, {
+      token: leaderToken,
+      teamId: world.teamId,
+      userId: world.staleGroupMemberId,
+    });
+
+    const managerToken = (await generateTokens(world.staleGroupMemberId))
+      .accessToken;
+    const res = await t.mutation(
+      api.functions.scheduling.assignments.confirmAssignment,
+      { token: managerToken, assignmentId },
+    );
+    expect(res.status).toBe("confirmed");
+  });
+
+  it("rejects a manager of a DIFFERENT team (gate is scoped to the assignment's team)", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const planId = await makeEvent(t, world, leaderToken, 7);
+    const assignmentId = await assignMember(t, world, leaderToken, planId);
+
+    // Zeb manages a second team in the same group — that must NOT grant
+    // authority over world.teamId's assignments.
+    const { teamId: otherTeamId } = await t.mutation(
+      api.functions.scheduling.teams.createServingTeam,
+      {
+        token: leaderToken,
+        groupId: world.groupId,
+        name: "Production",
+        withChannel: false,
+      },
+    );
+    await t.mutation(api.functions.scheduling.teams.addTeamManager, {
+      token: leaderToken,
+      teamId: otherTeamId,
+      userId: world.staleGroupMemberId,
+    });
+
+    const managerToken = (await generateTokens(world.staleGroupMemberId))
+      .accessToken;
+    await expect(
+      t.mutation(api.functions.scheduling.assignments.confirmAssignment, {
+        token: managerToken,
+        assignmentId,
+      }),
+    ).rejects.toThrow(ConvexError);
+
+    const assignment = await t.run((ctx) => ctx.db.get(assignmentId));
+    expect(assignment?.status).not.toBe("confirmed");
+  });
+
+  it("schedules both channel reconciles and does NOT notify leaders", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const planId = await makeEvent(t, world, leaderToken, 7);
+    const assignmentId = await assignMember(t, world, leaderToken, planId);
+    // Drain the reconciles enqueued by assignRole so the counts below are
+    // attributable to confirmAssignment alone.
+    await t.finishInProgressScheduledFunctions();
+
+    await t.mutation(api.functions.scheduling.assignments.confirmAssignment, {
+      token: leaderToken,
+      assignmentId,
+    });
+
+    // The declined → confirmed override relies on these reconciles to re-add
+    // the volunteer to derived team-channel membership.
+    expect(await pendingJobsNamed(t, "reconcileTeamChannel")).toBe(1);
+    expect(
+      await pendingJobsNamed(t, "reconcileCrossTeamChannelsForSource"),
+    ).toBe(1);
+    // Deliberate: the scheduler acted themselves, so no leader notification.
+    expect(await pendingJobsNamed(t, "notifyLeadersOfResponse")).toBe(0);
   });
 });

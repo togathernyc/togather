@@ -98,6 +98,7 @@ export {
   inviteAndAssign,
   unassign,
   respondToAssignment,
+  confirmAssignment,
   previousFillers,
   publishEvent,
 } from "./assignments";

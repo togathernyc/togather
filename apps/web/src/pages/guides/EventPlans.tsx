@@ -390,7 +390,12 @@ export function EventPlans() {
           pings just that one person, so after you assign or reassign a single
           volunteer you can request them on their own instead of re-sending to the
           whole plan. (On a still-draft plan you publish first, which is what
-          sends the initial requests.) Choose{" "}
+          sends the initial requests.) There's also a <Term>Confirm</Term> next
+          to anyone not yet confirmed: when a volunteer tells you in person or
+          over text that they'll be there, tap it to record their yes on the
+          roster yourself — the cell goes green and their confirm-or-decline
+          nudges stop, no app response needed. It works on a declined slot too,
+          for the volunteer who changed their mind after declining. Choose{" "}
           <Term>Request history</Term> on the same popover to see the full trail
           for that slot: who was asked, when, and how many times, alongside
           whether they've since confirmed, declined, or been removed — and{" "}
