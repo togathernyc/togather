@@ -97,8 +97,16 @@ export function computeSegmentedClockTimes(
  * Each service `i` has three phases on the clock:
  *   - **pre-roll** `[startsAt − before, startsAt)` — call time, set-up, line
  *     check, soundcheck, platform briefing;
- *   - **core**     `[startsAt, startsAt + during)` — the service itself;
- *   - **post-roll**`[core end, core end + after)` — teardown, debrief.
+ *   - **core**     `[startsAt, coreEnd)` — the service itself;
+ *   - **post-roll**`[coreEnd, coreEnd + after)` — teardown, debrief.
+ *
+ * `coreEnd` is `startsAt + during` — EXCEPT when the plan carries no `during`
+ * durations at all (a sheet whose before block is filled in but whose service
+ * body isn't timed yet). A zero `during` makes the core empty, which would make
+ * "is a service in progress?" unanswerable and silently disable rule 1 below —
+ * the exact failure this function exists to prevent. With no timing to go on,
+ * a service instead holds the sheet until the NEXT service starts, which is the
+ * only other honest reading of "which service am I in?".
  *
  * Selection order, most specific first:
  *   1. **In progress** — a service whose CORE contains `now`. If several do (a
@@ -148,7 +156,18 @@ export function pickActiveServiceIndex(
 
   for (let i = 0; i < times.length; i++) {
     const start = times[i].startsAt;
-    const coreEnd = start + duringMs;
+    // An untimed service (no `during` durations entered) runs until the next
+    // service starts — see the note above. `times` isn't guaranteed sorted, so
+    // find the soonest start strictly after this one. The last service of the
+    // day has no successor and keeps an empty core; rule 5 catches it.
+    let coreEnd = start + duringMs;
+    if (duringMs === 0) {
+      let nextStart = Infinity;
+      for (const t of times) {
+        if (t.startsAt > start && t.startsAt < nextStart) nextStart = t.startsAt;
+      }
+      coreEnd = nextStart === Infinity ? start : nextStart;
+    }
 
     if (now >= start && now < coreEnd) {
       if (inProgress === -1 || start > times[inProgress].startsAt) inProgress = i;
