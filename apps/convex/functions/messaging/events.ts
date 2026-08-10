@@ -136,6 +136,13 @@ export const onMessageSent = internalMutation({
     const message = await ctx.db.get(args.messageId);
     if (!message) return;
 
+    // Hoisted from the push-fanout block below, which needed it only when
+    // there was someone to push to. The event-channel filter needs it earlier,
+    // before unread bookkeeping. Not free: this read is now unconditional, so
+    // blast mirrors (which return before the push block) and messages whose
+    // recipient list ends up empty pay one channel read they didn't before.
+    // Net-zero only on the common path — one message with at least one
+    // notifiable recipient.
     const channel = await ctx.db.get(args.channelId);
 
     // Dev-assistant bot: if a human @mentioned the @Togather sentinel bot, hand
