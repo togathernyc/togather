@@ -62,8 +62,16 @@ export const MAX_REAL_USERS = 10;
  * Placeholder "give" destination on the seeded "Partner with us" link. A church
  * points this at their real giving page (that edit is one of the Getting
  * Started missions); the link is removed on go-live if left unchanged.
+ *
+ * It deliberately targets our own guide — which explains that the link is a
+ * placeholder and how to replace it — rather than a third-party giving page we
+ * don't control and that can 404 (#780). Hardcoded to the production domain
+ * (not DOMAIN_CONFIG) because this value is stored on the row and later
+ * compared for equality to decide "did the church edit this?"; an
+ * environment-dependent value would make that comparison unreliable.
  */
-export const DEMO_GIVING_URL = "https://pushpay.com/g/togatherdemo";
+export const DEMO_GIVING_URL =
+  "https://togather.nyc/guides/create-your-community#giving";
 
 /** Fallback service times when a campus doesn't specify any. */
 const DEFAULT_SERVICE_TIMES = [
@@ -2762,7 +2770,7 @@ export const purgeDemoSeedUsers = internalMutation({
       }
 
       // Delete the demo-only "Partner with us" giving link ONLY if it still
-      // points at the placeholder Pushpay URL. If the church edited it (the
+      // points at the placeholder guide URL. If the church edited it (the
       // "Make giving yours" mission), it's their real giving link now — keep it
       // even though isDemoSeed is still set (groupResources.update doesn't
       // clear the flag).
