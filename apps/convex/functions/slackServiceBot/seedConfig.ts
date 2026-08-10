@@ -24,6 +24,8 @@ import {
   PCO_COMMUNITY_ID,
   PCO_SERVICE_TYPE_IDS,
   PCO_ROLE_MAPPINGS,
+  NATIVE_CAMPUS_GROUP_NAMES,
+  NATIVE_ROLE_MAPPINGS,
   OPENAI_MODEL,
 } from "./config";
 
@@ -164,6 +166,19 @@ export const seedSlackBotConfig = internalMutation({
           Object.entries(PCO_ROLE_MAPPINGS).map(([k, v]) => [
             k,
             { teamNamePattern: v.teamNamePattern, positionName: v.positionName },
+          ])
+        ),
+      },
+
+      // Native rostering config — seeded from the hardcoded config.ts
+      // constants; at runtime the DB row is the source of truth with the
+      // constants as fallback (see configDb native accessors).
+      nativeConfig: {
+        campusGroupNames: { ...NATIVE_CAMPUS_GROUP_NAMES },
+        roleMappings: Object.fromEntries(
+          Object.entries(NATIVE_ROLE_MAPPINGS).map(([k, v]) => [
+            k,
+            { teamName: v.teamName, roleName: v.roleName },
           ])
         ),
       },
@@ -310,6 +325,15 @@ export const seedSlackBotConfigForDemo = internalMutation({
           Object.entries(PCO_ROLE_MAPPINGS).map(([k, v]) => [
             k,
             { teamNamePattern: v.teamNamePattern, positionName: v.positionName },
+          ])
+        ),
+      },
+      nativeConfig: {
+        campusGroupNames: { ...NATIVE_CAMPUS_GROUP_NAMES },
+        roleMappings: Object.fromEntries(
+          Object.entries(NATIVE_ROLE_MAPPINGS).map(([k, v]) => [
+            k,
+            { teamName: v.teamName, roleName: v.roleName },
           ])
         ),
       },

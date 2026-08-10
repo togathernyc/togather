@@ -27,6 +27,7 @@
  * @see apps/api-trpc/src/lib/jwt.ts for the original tRPC implementation
  */
 
+import { ConvexError } from "convex/values";
 import * as jose from "jose";
 import type { Id } from "../_generated/dataModel";
 import type { QueryCtx, MutationCtx, ActionCtx } from "../_generated/server";
@@ -78,8 +79,15 @@ function getJwtSecret(): Uint8Array {
 
 /**
  * Authentication error thrown when token verification fails.
+ *
+ * Extends `ConvexError` (not plain `Error`) so the message reaches the
+ * mobile client cleanly — a plain `Error` would surface as a generic
+ * "Server Error" in the Convex client, dead-ending the user. By carrying
+ * the message via `ConvexError`'s `data`, the mobile `AuthErrorBoundary`
+ * can recognize the failure and prompt for re-authentication instead.
+ * See repo memory: `feedback_convex_require_auth`.
  */
-export class AuthenticationError extends Error {
+export class AuthenticationError extends ConvexError<string> {
   constructor(message: string = "Not authenticated") {
     super(message);
     this.name = "AuthenticationError";
@@ -521,27 +529,105 @@ export async function requireAuth(
   ctx: QueryCtx | MutationCtx,
   token: string,
 ): Promise<Id<"users">> {
+  const { userId, communityId } = await requireAuthResolved(ctx, token);
+
+  // Reject any request whose session is scoped to an archived (closed)
+  // community. Archived communities must be inaccessible in every way — not
+  // just un-enterable — so a still-live JWT (access tokens last 30 days) can't
+  // keep reading/writing community data. Users escape by switching or leaving,
+  // which use requireAuthAllowArchivedCommunity below.
+  if (communityId && (await isCommunityArchived(ctx, communityId))) {
+    throw new ConvexError("COMMUNITY_ARCHIVED");
+  }
+
+  return userId;
+}
+
+/**
+ * Like {@link requireAuth} but does NOT reject when the token is scoped to an
+ * archived community. Use ONLY for the handful of "escape hatch" operations a
+ * user stuck in an archived community needs to get out — listing their
+ * communities, clearing/switching the active community, leaving, or joining a
+ * different (non-archived) community. Every one of those still independently
+ * rejects an archived *target* community, so this does not weaken the block.
+ */
+export async function requireAuthAllowArchivedCommunity(
+  ctx: QueryCtx | MutationCtx,
+  token: string,
+): Promise<Id<"users">> {
+  const { userId } = await requireAuthResolved(ctx, token);
+  return userId;
+}
+
+/**
+ * Like {@link requireAuthAllowArchivedCommunity} but also reports whether the
+ * token's community is archived, for the handful of queries mounted
+ * unconditionally at app boot (e.g. notification badge counts). The mobile
+ * `AuthErrorBoundary` (providers/AuthErrorBoundary.tsx) *is* recovery UI and
+ * sits below these queries in the tree, so it would catch a COMMUNITY_ARCHIVED
+ * throw from them too — but short-circuiting here is still intentional
+ * defense-in-depth to avoid crash-recovery churn on every boot for queries
+ * that don't need to reject at all. New boot queries do not need to copy
+ * this pattern; only reach for it if a real crash-recovery loop shows up.
+ */
+export async function requireAuthWithArchivedStatus(
+  ctx: QueryCtx | MutationCtx,
+  token: string,
+): Promise<{ userId: Id<"users">; isArchivedCommunity: boolean }> {
+  const { userId, communityId } = await requireAuthResolved(ctx, token);
+  const isArchivedCommunity = communityId
+    ? await isCommunityArchived(ctx, communityId)
+    : false;
+  return { userId, isArchivedCommunity };
+}
+
+/**
+ * Shared core for {@link requireAuth}: verifies the access token, resolves the
+ * user, and enforces revocation. Returns the userId plus the community the
+ * token is scoped to (if any), without applying the archived-community gate.
+ */
+async function requireAuthResolved(
+  ctx: QueryCtx | MutationCtx,
+  token: string,
+): Promise<{ userId: Id<"users">; communityId?: string }> {
   if (!token) {
-    throw new Error("Not authenticated");
+    throw new ConvexError("Not authenticated");
   }
 
   const payload = await verifyAccessToken(token);
   if (!payload) {
-    throw new Error("Not authenticated");
+    throw new ConvexError("Not authenticated");
   }
 
   // Resolve user ID (handles both Convex and legacy IDs)
   const userId = await resolveUserId(ctx, payload.userId);
   if (!userId) {
-    throw new Error("Not authenticated");
+    throw new ConvexError("Not authenticated");
   }
 
   // Check if the token was revoked (issued before the user's last signout)
   if (await isTokenRevoked(ctx, userId, payload.issuedAt)) {
-    throw new Error("Not authenticated");
+    throw new ConvexError("Not authenticated");
   }
 
-  return userId;
+  return { userId, communityId: payload.communityId };
+}
+
+/**
+ * Whether the given community id (a string from a JWT) points to an archived
+ * community. Tolerates malformed ids by returning false — a bad id fails other
+ * checks, and we never want to mistakenly hard-block a valid session.
+ */
+async function isCommunityArchived(
+  ctx: QueryCtx | MutationCtx,
+  communityId: string,
+): Promise<boolean> {
+  try {
+    const community = await ctx.db.get(communityId as Id<"communities">);
+    return community?.isArchived === true;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -555,17 +641,17 @@ export async function requireAuthIgnoringRevocation(
   token: string,
 ): Promise<Id<"users">> {
   if (!token) {
-    throw new Error("Not authenticated");
+    throw new ConvexError("Not authenticated");
   }
 
   const payload = await verifyAccessTokenIgnoringExpiration(token);
   if (!payload) {
-    throw new Error("Not authenticated");
+    throw new ConvexError("Not authenticated");
   }
 
   const userId = await resolveUserId(ctx, payload.userId);
   if (!userId) {
-    throw new Error("Not authenticated");
+    throw new ConvexError("Not authenticated");
   }
 
   return userId;
@@ -639,7 +725,7 @@ export async function requireAuthUser(
   const userId = await requireAuth(ctx, token);
   const user = await ctx.db.get(userId);
   if (!user) {
-    throw new Error("User not found");
+    throw new ConvexError("User not found");
   }
   return user;
 }

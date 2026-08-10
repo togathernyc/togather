@@ -12,8 +12,10 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { AppImage } from "@components/ui";
 import { useTheme } from "@hooks/useTheme";
+import { useWhatsappShell } from "@hooks/useWhatsappShell";
 import { getGroupTypeColorScheme } from "../../../constants/groupTypes";
 import { useIsDesktopWeb } from "../../../hooks/useIsDesktopWeb";
+import { WA_CHAT_CHROME_LIGHT, WA_CHAT_CHROME_DARK } from "../waChatChrome";
 
 type ChatHeaderProps = {
   displayName: string;
@@ -43,13 +45,35 @@ export const ChatHeader = memo(function ChatHeader({
   onInfoPress,
   onGroupPagePress,
 }: ChatHeaderProps) {
-  const { colors: themeColors } = useTheme();
+  const { colors: themeColors, isDark } = useTheme();
   const scheme = getGroupTypeColorScheme(groupTypeId);
   const badgeColors = { bg: scheme.bg, text: scheme.color };
   const isDesktopWeb = useIsDesktopWeb();
+  // WA-VISUAL-DELTAS §2.2 + §S5.2: flag-on the chat-room header is a
+  // translucent near-white bar floating over the chat wallpaper, and the
+  // colored group-type chip is dropped entirely (colored chips are banned by
+  // the color-discipline rule) in favor of a plain gray member-count
+  // subtitle. Flag-off keeps the opaque bar and the chip.
+  const whatsappShellEnabled = useWhatsappShell();
 
   return (
-    <View style={[styles.header, { backgroundColor: themeColors.surface }]}>
+    <View
+      style={[
+        styles.header,
+        { backgroundColor: themeColors.surface },
+        whatsappShellEnabled && {
+          backgroundColor: isDark ? WA_CHAT_CHROME_DARK : WA_CHAT_CHROME_LIGHT,
+          // WA's nav row is 44pt tall; the 40pt identity block plus these
+          // paddings lands ours at ~50. The earlier 20/12 came from "breathes
+          // below the status bar" device feedback and overshot by ~16pt —
+          // enough on its own to make the whole chat screen read zoomed in
+          // (calibrated pixel pass, 2026-07-29). Flag-off keeps
+          // `paddingVertical: 12`.
+          paddingTop: 8,
+          paddingBottom: 4,
+        },
+      ]}
+    >
       {!isDesktopWeb && (
         <TouchableOpacity onPress={onBack} style={styles.backButton}>
           <Ionicons name="chevron-back" size={28} color={themeColors.text} />
@@ -82,7 +106,7 @@ export const ChatHeader = memo(function ChatHeader({
             {displayName}
           </Text>
           <View style={styles.headerMetaRow}>
-            {!!displayType && (
+            {!!displayType && !whatsappShellEnabled && (
               <View style={[styles.headerBadge, { backgroundColor: badgeColors.bg }]}>
                 <Text style={[styles.headerBadgeText, { color: badgeColors.text }]}>
                   {displayType}
@@ -91,7 +115,11 @@ export const ChatHeader = memo(function ChatHeader({
             )}
             {typeof memberCount === "number" && memberCount > 0 && (
               <Text
-                style={[styles.memberCountText, { color: themeColors.textSecondary }]}
+                style={[
+                  styles.memberCountText,
+                  whatsappShellEnabled && styles.waSubtitle,
+                  { color: themeColors.textSecondary },
+                ]}
               >
                 {memberCount} {memberCount === 1 ? "member" : "members"}
               </Text>
@@ -190,5 +218,11 @@ const styles = StyleSheet.create({
   },
   menuButton: {
     padding: 8,
+  },
+  // --- WhatsApp-shell header (flag-gated, §2.2/§S7) --------------------------
+  /** Subtitle under the 17pt semibold title: "62 members", 13pt gray. */
+  waSubtitle: {
+    fontSize: 13,
+    fontWeight: "400",
   },
 });

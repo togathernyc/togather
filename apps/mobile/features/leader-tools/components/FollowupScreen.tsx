@@ -1,9 +1,9 @@
 import React from "react";
+import { Platform } from "react-native";
 import { useLocalSearchParams } from "expo-router";
 
-import { useIsDesktopWeb } from "@hooks/useIsDesktopWeb";
 import { FollowupDesktopTable } from "./FollowupDesktopTable";
-import { FollowupMobileGrid } from "./FollowupMobileGrid";
+import { FollowupMobileCards } from "./FollowupMobileCards";
 
 export {
   SUBTITLE_VARIABLES,
@@ -13,16 +13,11 @@ export {
 
 export function FollowupScreen() {
   const { group_id } = useLocalSearchParams<{ group_id: string }>();
-  const isDesktop = useIsDesktopWeb();
   const groupId = group_id || "";
 
-  return (
-    <>
-      {isDesktop ? (
-        <FollowupDesktopTable groupId={groupId} />
-      ) : (
-        <FollowupMobileGrid groupId={groupId} />
-      )}
-    </>
-  );
+  // Fixed per platform (no in-app toggle): web shows the list/table, native
+  // shows the tile/card view. The group-scoped check-in keeps its header so the
+  // back button and group name stay available.
+  if (Platform.OS === "web") return <FollowupDesktopTable groupId={groupId} />;
+  return <FollowupMobileCards groupId={groupId} />;
 }

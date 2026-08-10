@@ -50,6 +50,100 @@ export function geocodeZipCode(zipCode: string | null | undefined): Coordinates 
   return null;
 }
 
+/** A real US ZIP code paired with its center coordinates. */
+export interface ZipPlacement extends Coordinates {
+  zipCode: string;
+}
+
+/**
+ * Nearest distinct US ZIP-code centers to a point, closest first.
+ * Excludes any ZIP whose center is the exact `base` point (i.e. the home ZIP).
+ * Longitude is scaled by cos(latitude) so degree-distance approximates real
+ * distance at US latitudes.
+ */
+export function findNearbyZipCenters(
+  base: Coordinates,
+  count: number
+): ZipPlacement[] {
+  if (count <= 0) return [];
+  const cosLat = Math.cos((base.latitude * Math.PI) / 180) || 1;
+  const scored: Array<{ placement: ZipPlacement; d2: number }> = [];
+  for (const zip in usZips) {
+    const z = usZips[zip];
+    if (!z || !z.latitude || !z.longitude) continue;
+    const dLat = z.latitude - base.latitude;
+    const dLng = (z.longitude - base.longitude) * cosLat;
+    const d2 = dLat * dLat + dLng * dLng;
+    if (d2 === 0) continue; // skip the home ZIP itself
+    scored.push({
+      placement: { zipCode: zip, latitude: z.latitude, longitude: z.longitude },
+      d2,
+    });
+  }
+  scored.sort((a, b) => a.d2 - b.d2);
+  return scored.slice(0, count).map((s) => s.placement);
+}
+
+/** Geographic layout for a seeded demo, derived from its home ZIP. */
+export interface DemoGeoPlacements {
+  /** The home ZIP's coordinates (church-wide anchor), or null if ungeocodable. */
+  base: Coordinates | null;
+  /** One distinct, spread-out real ZIP per campus (adjacent, none is the home ZIP). */
+  campusPlacements: ZipPlacement[];
+  /** Pool of nearby real ZIPs used to scatter small groups/teams across the area. */
+  areaPlacements: ZipPlacement[];
+}
+
+/**
+ * Resolve where a seeded demo's campuses and groups sit on the map from the
+ * church's home ZIP. The explore map geocodes each group from its stored
+ * `zipCode`, so realistic spread means handing every campus/group a *different
+ * real ZIP*: campuses land in distinct adjacent ZIPs, and small groups/teams
+ * scatter across a pool of nearby ZIPs (instead of stacking on one pin, which
+ * the map fans out into a ring). Returns empty arrays when the ZIP can't be
+ * geocoded — the seeder then falls back to a deterministic scatter.
+ */
+export function computeDemoGeoPlacements(
+  zipCode: string | null | undefined,
+  campusCount: number
+): DemoGeoPlacements {
+  const base = geocodeZipCode(zipCode);
+  if (!base) return { base: null, campusPlacements: [], areaPlacements: [] };
+
+  const campuses = Math.max(1, Math.floor(campusCount));
+  const nearby = findNearbyZipCenters(base, 60);
+
+  // Campuses: greedily take nearby ZIPs that are at least ~2 miles from every
+  // campus already chosen, so they read as separate locations. If separation is
+  // too strict to fill the count (dense metro), top up with nearest remaining.
+  const MIN_SEP2 = 0.03 * 0.03; // ~2 miles in squared degrees
+  const cosLat = Math.cos((base.latitude * Math.PI) / 180) || 1;
+  const farEnough = (a: Coordinates, b: Coordinates) => {
+    const dLat = a.latitude - b.latitude;
+    const dLng = (a.longitude - b.longitude) * cosLat;
+    return dLat * dLat + dLng * dLng >= MIN_SEP2;
+  };
+  const campusPlacements: ZipPlacement[] = [];
+  for (const cand of nearby) {
+    if (campusPlacements.length >= campuses) break;
+    if (campusPlacements.every((c) => farEnough(c, cand))) {
+      campusPlacements.push(cand);
+    }
+  }
+  for (const cand of nearby) {
+    if (campusPlacements.length >= campuses) break;
+    if (!campusPlacements.some((c) => c.zipCode === cand.zipCode)) {
+      campusPlacements.push(cand);
+    }
+  }
+
+  // Group scatter pool: the nearest ~24 ZIPs (includes the campus ZIPs and
+  // their neighbors, so groups cluster believably around the campuses).
+  const areaPlacements = nearby.slice(0, 24);
+
+  return { base, campusPlacements, areaPlacements };
+}
+
 /**
  * Geocodes a full address string to coordinates.
  * Currently uses zip code lookup from the address or provided zip code.

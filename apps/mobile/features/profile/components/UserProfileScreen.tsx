@@ -24,7 +24,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '@providers/AuthProvider';
 import { useTheme } from '@hooks/useTheme';
 import { useCommunityTheme } from '@hooks/useCommunityTheme';
-import { useConvexFeatureFlag } from '@hooks/useConvexFeatureFlag';
 import type { Id } from '@services/api/convex';
 import { useStartDirectMessage } from '@features/chat/hooks/useStartDirectMessage';
 import { RequireProfilePhotoSheet } from '@features/chat/components/RequireProfilePhotoSheet';
@@ -62,19 +61,10 @@ export function UserProfileScreen() {
     skipViewerScopedQueries: isSelf,
   });
 
-  // DM entry point. Hidden behind the `direct-messages` feature flag; while
-  // the flag is hydrating we render nothing so the button doesn't flicker in.
-  const { enabled: dmsEnabled, loaded: dmsFlagLoaded } =
-    useConvexFeatureFlag('direct-messages');
   const { messageUser, isStarting, canMessage } = useStartDirectMessage();
   const [photoSheetVisible, setPhotoSheetVisible] = useState(false);
 
-  const showMessageButton =
-    dmsFlagLoaded &&
-    dmsEnabled &&
-    !isSelf &&
-    !!profile &&
-    canMessage;
+  const showMessageButton = !isSelf && !!profile && canMessage;
 
   const handleMessagePress = async () => {
     if (!profile || !userId) return;

@@ -12,7 +12,7 @@ export type FollowupMemberForScore = {
  * Used when the `system_scores` feature flag is enabled.
  */
 export const SYSTEM_SCORE_COLUMNS = [
-  { id: "sys_service", name: "Service", slot: "score1" as const },
+  { id: "sys_service", name: "Serving", slot: "score1" as const },
   { id: "sys_attendance", name: "Attendance", slot: "score2" as const },
   { id: "sys_togather", name: "Connection", slot: "score3" as const },
 ] as const;
@@ -149,7 +149,7 @@ export function applyDevZipCodeSample<T extends MemberWithZipCode>(members: T[])
 
 /**
  * Adapt a communityPeople record into the FollowupMember shape
- * expected by FollowupDesktopTable and FollowupMobileGrid.
+ * expected by FollowupDesktopTable.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function adaptCommunityPerson(cp: any) {
@@ -203,5 +203,7 @@ export function adaptCommunityPerson(cp: any) {
     latestNote: cp.latestNote,
     latestNoteAt: cp.latestNoteAt,
     isLeader: cp.isLeader ?? false,
+    // Archived state. `isActive === false` = archived; undefined/true = active.
+    isActive: cp.isActive,
   };
 }

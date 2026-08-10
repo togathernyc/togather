@@ -15,7 +15,6 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import * as WebBrowser from "expo-web-browser";
 import { useAuth } from "@/providers/AuthProvider";
 import { useSelectCommunity } from "../hooks/useAuth";
 import { Environment } from "@/services/environment";
@@ -25,7 +24,6 @@ import { LeaveCommunityModal } from './LeaveCommunityModal';
 import { useConvex, useAuthenticatedMutation, api, Id, useStoredAuthToken } from '@services/api/convex';
 import { Avatar } from '@components/ui/Avatar';
 import { useTheme } from '@hooks/useTheme';
-import { DOMAIN_CONFIG } from '@togather/shared';
 
 // Check if there's a pending join intent and return the redirect path
 async function getPostAuthRedirect(): Promise<string> {
@@ -642,17 +640,11 @@ export function CommunitySelectionScreen() {
             </Text>
           </Text>
 
+          {/* Creation is demo-first: answer a short questionnaire, explore a
+              seeded demo as admin, then go live from inside the app. */}
           <TouchableOpacity
             style={[styles.createCommunityButton, { backgroundColor: colors.surfaceSecondary }]}
-            onPress={() => {
-              if (Platform.OS === "web") {
-                // On web, use current origin (works for localhost, staging, and prod)
-                window.open(`${window.location.origin}/onboarding/proposal`, "_blank");
-              } else {
-                const baseUrl = DOMAIN_CONFIG.landingUrl;
-                WebBrowser.openBrowserAsync(`${baseUrl}/onboarding/proposal`);
-              }
-            }}
+            onPress={() => router.push("/onboarding/demo")}
           >
             <Text style={[styles.createCommunityButtonText, { color: colors.text }]}>Create a Community</Text>
           </TouchableOpacity>

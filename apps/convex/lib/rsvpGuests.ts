@@ -6,6 +6,8 @@
  * via meetings.maxGuestsPerRsvp (future admin setting).
  */
 
+import { GOING_RSVP_OPTION_ID } from "./meetingConfig";
+
 export const MAX_GUESTS_PER_RSVP = 3;
 
 interface RsvpOptionLike {
@@ -15,28 +17,16 @@ interface RsvpOptionLike {
 }
 
 /**
- * Heuristic: is this RSVP option the "Going" option?
+ * Is this RSVP option the "Going" option?
  *
- * Matches on the label since the RSVP options schema doesn't include an
- * explicit flag. Must reject common decline variants before falling back
- * to a "going" substring check — otherwise labels like "Not Going" and
- * "Can't Go" would match as affirmative. Keep this in sync with
- * isGoingOptionLabel in EventRsvpSection.tsx.
+ * Matched by id, not label: option ids are stable semantic slots
+ * (1 = Going, 2 = Maybe, 3 = Can't Go — see DEFAULT_RSVP_OPTIONS and
+ * NOTIFIED_RSVP_OPTION_IDS in meetingConfig.ts). Hosts can freely rename
+ * labels ("I'm there 😳"), so any label heuristic breaks on custom labels.
+ * Keep in sync with isGoingRsvpOption in EventRsvpSection.tsx.
  */
 export function isGoingOption(option: RsvpOptionLike | null | undefined): boolean {
-  if (!option) return false;
-  const label = option.label.toLowerCase().trim();
-  // Explicit decline variants: reject first
-  if (
-    label.includes("can't") ||
-    label.includes("cannot") ||
-    label.includes("not going") ||
-    label.includes("not attending") ||
-    label === "no"
-  ) {
-    return false;
-  }
-  return label.includes("going");
+  return option?.id === GOING_RSVP_OPTION_ID;
 }
 
 export function getMaxGuestsForMeeting(meeting: {

@@ -22,7 +22,11 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import type { Id } from '@services/api/convex';
+import { api, useQuery } from '@services/api/convex';
+import { useAuth } from '@/providers/AuthProvider';
+import { useConvexFeatureFlag } from '@hooks/useConvexFeatureFlag';
 import { useImageUpload } from '../hooks/useImageUpload';
+import { getPastedImageFiles } from '../utils/imageUpload';
 import { useWebEnterToSend } from '../hooks/useWebEnterToSend';
 import { useFileUpload, type SelectedFile } from '../hooks/useFileUpload';
 import { useSendMessage } from '../hooks/useConvexSendMessage';
@@ -44,10 +48,22 @@ import {
   type FileCategory,
 } from '../utils/fileTypes';
 import { useTheme } from '@hooks/useTheme';
+import { useCommunityTheme } from '@hooks/useCommunityTheme';
+import { useWhatsappShell } from '@hooks/useWhatsappShell';
+import { waAccentPalette } from '@utils/waPalette';
+import {
+  WA_CHAT_FIELD_LIGHT,
+  WA_CHAT_FIELD_DARK,
+  WA_COMPOSER_BAR_LIGHT,
+  WA_COMPOSER_BAR_DARK,
+  WA_COMPOSER_FIELD_HEIGHT,
+  WA_COMPOSER_FIELD_RADIUS,
+} from '../waChatChrome';
 import { VoiceRecorderBar } from './VoiceRecorderBar';
 import { AttachmentPanel } from './AttachmentPanel';
 import { useDraftStore } from '../../../stores/draftStore';
 import { GifPicker } from './GifPicker';
+import { PollCreatorSheet } from './PollCreatorSheet';
 import { classifyChatSendError } from '../utils/chatSendErrors';
 
 interface MessageInputProps {
@@ -58,6 +74,13 @@ interface MessageInputProps {
     senderName: string;
   } | null;
   onCancelReply?: () => void;
+  /**
+   * Fired after a reply is successfully handed to the send pipeline, with the
+   * parent it answered. The chat room uses it to follow a reply that just
+   * turned its parent's conversation into a thread; ThreadPage doesn't pass it,
+   * so sends from inside a thread never navigate anywhere.
+   */
+  onReplySent?: (parentMessageId: Id<"chatMessages">) => void;
   /** Hide the reply preview banner (useful for thread page where context is already clear) */
   hideReplyPreview?: boolean;
   /** External send function (from parent, with optimistic/offline support) */
@@ -73,6 +96,12 @@ interface MessageInputProps {
    * still sends. Sourced from `channels.getChannel` → `recipientPending`.
    */
   recipientPending?: boolean;
+  /**
+   * Composer placeholder text. Defaults to "Message...". Channels can set a
+   * custom hint (e.g. "put experience updates here") on the channel info screen
+   * to guide members on what to post in this thread.
+   */
+  placeholder?: string;
 }
 
 interface ChannelMember {
@@ -90,6 +119,7 @@ interface MentionMatch {
 const MAX_INPUT_LINES = 8;
 const LINE_HEIGHT = 20;
 const INPUT_PADDING_VERTICAL = 10;
+
 const TYPING_STOP_DELAY = 3000; // 3 seconds
 const LINK_PREVIEW_DEBOUNCE = 500; // 500ms debounce for URL detection
 
@@ -124,8 +154,13 @@ const filterMembers = (members: ChannelMember[], searchText: string): ChannelMem
   );
 };
 
-export function MessageInput({ channelId, replyToMessage, onCancelReply, hideReplyPreview, externalSendMessage, externalIsSending, recipientPending = false }: MessageInputProps) {
-  const { colors: themeColors } = useTheme();
+export function MessageInput({ channelId, replyToMessage, onCancelReply, onReplySent, hideReplyPreview, externalSendMessage, externalIsSending, recipientPending = false, placeholder }: MessageInputProps) {
+  const { colors: themeColors, isDark } = useTheme();
+  const { isKnicksMode, primaryColor } = useCommunityTheme();
+  // WhatsApp-shell composer anatomy (WHATSAPP-DESIGN-SYSTEM.md §5) —
+  // flag-gated; flag-off rendering below is untouched.
+  const whatsappShellEnabled = useWhatsappShell();
+  const waAccent = useMemo(() => waAccentPalette(primaryColor, isDark).accent, [primaryColor, isDark]);
   const { getDraft, setDraft: saveDraft, clearDraft } = useDraftStore();
   const initialDraft = channelId ? getDraft(channelId) : '';
   const [text, setText] = useState(initialDraft);
@@ -142,6 +177,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
   const [isVoiceRecording, setIsVoiceRecording] = useState(false);
   const [showAttachmentMenu, setShowAttachmentMenu] = useState(false);
   const [showGifPicker, setShowGifPicker] = useState(false);
+  const [showPollCreator, setShowPollCreator] = useState(false);
   // Inline hint shown after a soft-fail send (e.g. attachments-pending,
   // profile-photo-required). Auto-clears after a short window. Used INSTEAD
   // of Alert/popup, which previously kept enough state churning to crash the
@@ -185,7 +221,36 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
   const sendMessage = externalSendMessage ?? internalHook.sendMessage;
   const isSending = externalIsSending ?? internalHook.isSending;
   const { setTyping } = useTypingIndicators(channelId);
-  const { members } = useChannelMembers(channelId);
+  const { members: baseMembers } = useChannelMembers(channelId);
+
+  // Dev-assistant bot: staff/superusers and delegated dev maintainers can
+  // @mention @Togather. Gated behind the dev-assistant-bot flag. The synthetic
+  // entry is appended to the member list so both the autocomplete dropdown and
+  // the @[Display Name] -> userId resolver (extractMentionedUserIds) see it.
+  // `canUseAssistant` is the same gate the server enforces on trigger.
+  const { token } = useAuth();
+  const { enabled: devAssistantFlagEnabled } = useConvexFeatureFlag(
+    "dev-assistant-bot",
+  );
+  const assistantAccess = useQuery(
+    api.functions.devAssistant.maintainers.myAccess,
+    token && devAssistantFlagEnabled ? { token } : "skip",
+  );
+  const canMentionBot =
+    devAssistantFlagEnabled && assistantAccess?.canUseAssistant === true;
+  const botUserId = useQuery(
+    api.functions.devAssistant.index.getBotUserId,
+    canMentionBot ? {} : "skip",
+  );
+  const members = useMemo(() => {
+    if (canMentionBot && botUserId) {
+      return [
+        ...baseMembers,
+        { userId: botUserId, displayName: "Togather", notificationsDisabled: false },
+      ];
+    }
+    return baseMembers;
+  }, [baseMembers, canMentionBot, botUserId]);
 
   // Combined upload state (used for disabling send button and input)
   const uploading = imageUploading || fileUploading || videoUploading;
@@ -290,6 +355,33 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
   /**
    * Pick photos and videos from gallery (supports multi-select for photos)
    */
+  /**
+   * Add image URIs to the composer and upload them in parallel. Shared by the
+   * media picker and the web paste handler so both behave identically.
+   */
+  const uploadAndAttachImages = useCallback(async (imageUris: string[]) => {
+    if (imageUris.length === 0) return;
+    setSelectedImages(prev => [...prev, ...imageUris]);
+
+    const uploadPromises = imageUris.map(async (uri) => {
+      const uploadResult = await uploadImage(uri);
+      if (uploadResult.error) {
+        console.error('[MessageInput] Upload failed for:', uri, uploadResult.error);
+        return null;
+      }
+      return uploadResult.url;
+    });
+
+    const results = await Promise.all(uploadPromises);
+    const successfulUrls = results.filter((url): url is string => url !== null);
+    setUploadedImageUrls(prev => [...prev, ...successfulUrls]);
+
+    const failedCount = imageUris.length - successfulUrls.length;
+    if (failedCount > 0) {
+      console.warn(`[MessageInput] ${failedCount} images failed to upload`);
+    }
+  }, [uploadImage]);
+
   const pickMedia = useCallback(async () => {
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
@@ -306,26 +398,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
 
         // Handle images (existing flow — multi-select, parallel upload)
         if (imageAssets.length > 0) {
-          const imageUris = imageAssets.map(asset => asset.uri);
-          setSelectedImages(prev => [...prev, ...imageUris]);
-
-          const uploadPromises = imageUris.map(async (uri) => {
-            const uploadResult = await uploadImage(uri);
-            if (uploadResult.error) {
-              console.error('[MessageInput] Upload failed for:', uri, uploadResult.error);
-              return null;
-            }
-            return uploadResult.url;
-          });
-
-          const results = await Promise.all(uploadPromises);
-          const successfulUrls = results.filter((url): url is string => url !== null);
-          setUploadedImageUrls(prev => [...prev, ...successfulUrls]);
-
-          const failedCount = imageUris.length - successfulUrls.length;
-          if (failedCount > 0) {
-            console.warn(`[MessageInput] ${failedCount} images failed to upload`);
-          }
+          await uploadAndAttachImages(imageAssets.map(asset => asset.uri));
         }
 
         // Handle video (take first only)
@@ -370,7 +443,56 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
     } catch (error) {
       console.error('[MessageInput] Media picker error:', error);
     }
-  }, [uploadImage, uploadVideoFile, resetVideoUpload]);
+  }, [uploadAndAttachImages, uploadVideoFile, resetVideoUpload]);
+
+  /**
+   * Web only: paste a copied image (e.g. a macOS screenshot via Cmd+V) straight
+   * into the composer. Screenshots arrive on the clipboard as image/* files; we
+   * pull them out, upload them through the normal image flow, and let plain-text
+   * pastes fall through to the default browser behavior untouched.
+   */
+  const handleWebPaste = useCallback((e: ClipboardEvent) => {
+    if (Platform.OS !== 'web') return;
+
+    // In a not-yet-accepted DM the attachment affordances are intentionally
+    // hidden — the server rejects attachments until the recipient accepts the
+    // request, and that failure path previously cascaded into a navigator
+    // crash loop (see the `recipientPending` prop docs). Don't let paste stage
+    // an image either; bail so a plain-text paste still works normally.
+    if (recipientPending) return;
+
+    const imageFiles = getPastedImageFiles(e?.clipboardData);
+    if (imageFiles.length === 0) return; // nothing to handle — allow normal paste
+
+    // We're taking over the paste, so stop the browser from also dropping the
+    // image (or a data: URL of it) into the text field.
+    e.preventDefault();
+
+    const objectUrls = imageFiles.map((file) => URL.createObjectURL(file));
+    void uploadAndAttachImages(objectUrls);
+  }, [uploadAndAttachImages, recipientPending]);
+
+  /**
+   * Wire up the web paste handler via a real DOM listener.
+   *
+   * react-native-web's <TextInput> only forwards an allowlisted set of props to
+   * the underlying <textarea> (see its `forwardedProps`), and `onPaste` is NOT
+   * on that list — so passing `onPaste` as a JSX prop is silently dropped and
+   * the handler never fires. Attach the listener directly to the host DOM node
+   * instead. The RN-Web ref resolves to the actual <textarea> element on web.
+   *
+   * `isVoiceRecording` is a dependency because the voice recorder unmounts the
+   * <TextInput> and remounts a fresh one when it closes — mirroring
+   * `useWebEnterToSend` — so the listener must re-attach to the new DOM node.
+   */
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const node = textInputRef.current as unknown as HTMLElement | null;
+    if (!node || typeof node.addEventListener !== 'function') return;
+    const listener = (event: Event) => handleWebPaste(event as ClipboardEvent);
+    node.addEventListener('paste', listener);
+    return () => node.removeEventListener('paste', listener);
+  }, [handleWebPaste, isVoiceRecording]);
 
   /**
    * Pick a document file (PDF, DOC, audio, video, etc.)
@@ -545,11 +667,12 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
         ],
         parentMessageId: replyToMessage?._id,
       });
-      if (replyToMessage && onCancelReply) {
-        onCancelReply();
+      if (replyToMessage) {
+        onCancelReply?.();
+        onReplySent?.(replyToMessage._id);
       }
     },
-    [channelId, uploadFile, sendMessage, replyToMessage, onCancelReply]
+    [channelId, uploadFile, sendMessage, replyToMessage, onCancelReply, onReplySent]
   );
 
   /**
@@ -743,8 +866,9 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
       }
 
       // Cancel reply
-      if (replyToMessage && onCancelReply) {
-        onCancelReply();
+      if (replyToMessage) {
+        onCancelReply?.();
+        onReplySent?.(replyToMessage._id);
       }
 
       // Re-focus input so keyboard stays open (like iMessage)
@@ -787,6 +911,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
     extractMentionedUserIds,
     replyToMessage,
     onCancelReply,
+    onReplySent,
     resetImageUpload,
     resetFileUpload,
     resetVideoUpload,
@@ -859,6 +984,21 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
       { id: 'media', label: 'Media', icon: 'images', iconColor: '#007AFF', onPress: pickMedia },
       { id: 'camera', label: 'Camera', icon: 'camera', iconColor: '#333', onPress: captureMedia },
     ];
+    // Polls only make sense on top-level messages — `createPoll` doesn't
+    // accept a `parentMessageId`, so tapping it from a thread reply
+    // composer would post into the main channel instead of the thread.
+    // Hide the option when this MessageInput is rendered for a reply.
+    if (!replyToMessage) {
+      options.push({
+        id: 'poll',
+        label: 'Poll',
+        icon: 'bar-chart-outline',
+        iconColor: '#34A853',
+        onPress: () => {
+          if (channelId) setShowPollCreator(true);
+        },
+      });
+    }
     if (process.env.EXPO_PUBLIC_KLIPY_API_KEY) {
       options.push({
         id: 'gif',
@@ -878,7 +1018,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
       });
     }
     return options;
-  }, [captureMedia, pickMedia, recipientPending]);
+  }, [captureMedia, pickMedia, recipientPending, channelId, replyToMessage]);
 
   const handleOptionPress = useCallback((option: { onPress: () => void }) => {
     setShowAttachmentMenu(false);
@@ -896,7 +1036,20 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
   });
 
   return (
-    <View style={[styles.container, { backgroundColor: themeColors.surface, borderTopColor: themeColors.border }]}>
+    <View
+      style={[
+        styles.container,
+        { backgroundColor: themeColors.surface, borderTopColor: themeColors.border },
+        // §S4.6 "translucent light bar over wallpaper (rgba fill, no
+        // hairline)" — the composer floats on the chat wallpaper rather than
+        // sitting in its own opaque strip; the pill field below carries the
+        // only visible edge.
+        whatsappShellEnabled && {
+          backgroundColor: isDark ? WA_COMPOSER_BAR_DARK : WA_COMPOSER_BAR_LIGHT,
+          borderTopWidth: 0,
+        },
+      ]}
+    >
       {/* Mention Autocomplete */}
       {showMentionAutocomplete && (
         <View style={[styles.autocompleteContainer, { borderBottomColor: themeColors.border, backgroundColor: themeColors.surface }]}>
@@ -1080,6 +1233,130 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
             rotateAnim.setValue(0);
           }}
         />
+      ) : whatsappShellEnabled ? (
+      <>
+      {/* Input Row — WhatsApp-shell composer anatomy (§S4.6): plain '⊕' glyph
+          (no circled background, opens the same attachment panel) → fully
+          rounded white field with a sticker/emoji glyph inside its right edge
+          → camera + mic dark-gray line glyphs, which morph into a single
+          accent send circle once there's something to send. Every handler
+          below is the same one the flag-off row uses; only the icon
+          arrangement and colors differ. */}
+      <View style={styles.inputRow}>
+        {!recipientPending && (
+          <Pressable
+            style={styles.iconButton}
+            onPress={handleAttachmentPress}
+            disabled={uploading || isSending}
+          >
+            <Animated.View style={{ transform: [{ rotate: plusRotation }] }}>
+              <Ionicons name="add" size={28} color={uploading ? themeColors.textTertiary : themeColors.icon} />
+            </Animated.View>
+          </Pressable>
+        )}
+
+        {/* §S4.6 "fully-rounded white field with sticker/emoji glyph
+            inside right" — the field is a container so the glyph can sit
+            *inside* the pill; the TextInput itself drops its border/fill. */}
+        <View
+          testID="wa-composer-field"
+          style={[
+            styles.waFieldWrap,
+            { backgroundColor: isDark ? WA_CHAT_FIELD_DARK : WA_CHAT_FIELD_LIGHT },
+          ]}
+        >
+          <TextInput
+            ref={textInputRef}
+            testID="wa-composer-input"
+            style={[
+              styles.input,
+              isWeb ? styles.inputWeb : styles.inputNative,
+              { color: themeColors.text },
+              styles.waInput,
+            ]}
+            value={text}
+            onChangeText={handleTextChange}
+            onSelectionChange={handleSelectionChange}
+            onContentSizeChange={isWeb ? undefined : (event) => {
+              const contentHeight = event.nativeEvent.contentSize.height;
+              const maxContentHeight = LINE_HEIGHT * MAX_INPUT_LINES;
+              setNativeScrollEnabled(contentHeight >= maxContentHeight);
+            }}
+            // The hint renders as the overlay Text below, not as a native
+            // placeholder: `numberOfLines={1}` is the only truncation that is
+            // correct at every width, font scale, and script — a character
+            // cap wraps on wide glyphs and can split surrogate pairs.
+            placeholder={undefined}
+            multiline
+            scrollEnabled={isWeb ? true : nativeScrollEnabled}
+            maxLength={2000}
+            editable={!uploading}
+          />
+          {text.length === 0 && (
+            <Text
+              pointerEvents="none"
+              numberOfLines={1}
+              ellipsizeMode="tail"
+              style={[styles.waHintOverlay, { color: themeColors.textTertiary }]}
+            >
+              {(placeholder ?? "").trim() || "Message..."}
+            </Text>
+          )}
+          {/* Hidden without a KLIPY key — the documented degradation is "GIF
+              picker hidden", matching the attachment-sheet option's gate. */}
+          {!recipientPending && !!process.env.EXPO_PUBLIC_KLIPY_API_KEY && (
+            <Pressable
+              style={styles.waFieldGlyph}
+              onPress={() => setShowGifPicker(true)}
+              disabled={uploading || isSending}
+              accessibilityRole="button"
+              accessibilityLabel="Stickers and GIFs"
+            >
+              <Ionicons name="happy-outline" size={22} color={themeColors.icon} />
+            </Pressable>
+          )}
+        </View>
+
+        {canSend ? (
+          <Pressable
+            testID="wa-composer-send"
+            style={[styles.sendButton, { backgroundColor: waAccent }]}
+            onPress={handleSend}
+            disabled={!canSend}
+          >
+            {isSending ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <Ionicons name={isKnicksMode ? 'basketball' : 'arrow-up'} size={20} color="#fff" />
+            )}
+          </Pressable>
+        ) : (
+          <>
+            {!recipientPending && (
+              <Pressable style={styles.iconButton} onPress={captureMedia} disabled={uploading || isSending}>
+                <Ionicons name="camera-outline" size={24} color={themeColors.icon} />
+              </Pressable>
+            )}
+            {!recipientPending && isVoiceRecordingSupported() && (
+              <Pressable
+                style={styles.iconButton}
+                onPress={() => setIsVoiceRecording(true)}
+                disabled={uploading || isSending}
+              >
+                <Ionicons name="mic-outline" size={24} color={themeColors.icon} />
+              </Pressable>
+            )}
+          </>
+        )}
+      </View>
+
+      {/* Inline Attachment Panel (below input row) */}
+      <AttachmentPanel
+        visible={showAttachmentMenu}
+        options={attachmentOptions}
+        onOptionPress={handleOptionPress}
+      />
+      </>
       ) : (
       <>
       {/* Input Row */}
@@ -1115,7 +1392,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
             const maxContentHeight = LINE_HEIGHT * MAX_INPUT_LINES;
             setNativeScrollEnabled(contentHeight >= maxContentHeight);
           }}
-          placeholder="Message..."
+          placeholder={placeholder || "Message..."}
           placeholderTextColor={themeColors.textTertiary}
           multiline
           scrollEnabled={isWeb ? true : nativeScrollEnabled}
@@ -1132,7 +1409,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
           {isSending ? (
             <ActivityIndicator size="small" color="#fff" />
           ) : (
-            <Ionicons name="send" size={20} color="#fff" />
+            <Ionicons name={isKnicksMode ? 'basketball' : 'send'} size={20} color="#fff" />
           )}
         </Pressable>
       </View>
@@ -1154,6 +1431,17 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
         onSelect={handleGifSelect}
         onClose={() => setShowGifPicker(false)}
       />
+
+      {/* Poll Creator Modal — same `recipientPending` guard as the GIF picker
+          so an unaccepted DM never sees a poll composer. */}
+      {channelId && showPollCreator && !recipientPending && (
+        <PollCreatorSheet
+          mode="create"
+          visible={showPollCreator}
+          channelId={channelId}
+          onClose={() => setShowPollCreator(false)}
+        />
+      )}
     </View>
   );
 }
@@ -1315,6 +1603,59 @@ const styles = StyleSheet.create({
   },
   sendButtonDisabled: {
     opacity: 0.4,
+  },
+  // --- WhatsApp-shell composer (flag-gated, §S4.6) ---------------------------
+  // Additive-only: layered on top of the flag-off styles above, which are
+  // never edited.
+  /** Fully-rounded field that holds the TextInput plus the in-field sticker
+   *  glyph. Carries the fill, radius and horizontal padding the bare
+   *  `styles.input` used to own. */
+  waFieldWrap: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    minHeight: WA_COMPOSER_FIELD_HEIGHT,
+    borderRadius: WA_COMPOSER_FIELD_RADIUS,
+    paddingLeft: 16,
+    paddingRight: 4,
+  },
+  /** The TextInput inside `waFieldWrap`: no border/fill of its own (the wrap
+   *  draws them) and no horizontal padding (ditto). */
+  waInput: {
+    borderWidth: 0,
+    backgroundColor: 'transparent',
+    paddingHorizontal: 0,
+    minHeight: WA_COMPOSER_FIELD_HEIGHT,
+    // Load-bearing for the field height: `styles.input`'s 10pt vertical
+    // padding alone puts a one-line field at ~40pt, so `minHeight` would never
+    // be the binding constraint and the pill would ignore
+    // `WA_COMPOSER_FIELD_HEIGHT` entirely. Sizing the padding off the line box
+    // instead lands one line exactly on the field height, and each extra line
+    // still adds exactly `LINE_HEIGHT`.
+    paddingVertical: (WA_COMPOSER_FIELD_HEIGHT - LINE_HEIGHT) / 2,
+    // WhatsApp's field shows no focus ring; RN-Web's TextInput otherwise
+    // paints the browser's focus outline around it. Ignored on native.
+    outlineStyle: 'none',
+  } as any,
+  /** Empty-field hint overlay: one quiet italic line, vertically centered
+   *  in the pill; sits behind taps (pointerEvents none) and clear of the
+   *  in-field sticker glyph. */
+  waHintOverlay: {
+    position: 'absolute',
+    left: 16,
+    // Clearance for the in-field sticker glyph (22pt icon + its 6pt side
+    // padding + the wrap's 4pt right padding = 38, rounded up) — NOT the field
+    // height, which this deliberately does not track.
+    right: 44,
+    fontSize: 14,
+    fontStyle: 'italic',
+    lineHeight: WA_COMPOSER_FIELD_HEIGHT,
+  },
+  waFieldGlyph: {
+    paddingHorizontal: 6,
+    height: WA_COMPOSER_FIELD_HEIGHT,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   videoExpirationHint: {
     alignItems: 'center',

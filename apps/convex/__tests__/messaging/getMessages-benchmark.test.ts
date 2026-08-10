@@ -9,7 +9,7 @@
  *   - Document reads = total messages in channel
  *
  * AFTER (index-driven pagination):
- *   - Reads only ~3x the page size via by_channel_lastActivityAt index
+ *   - Reads only ~3x the page size via by_channel_createdAt index
  *   - Document reads ≈ page_size * 3 (over-fetch to account for deleted/blocked)
  *
  * Run with:

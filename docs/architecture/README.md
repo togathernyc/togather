@@ -26,6 +26,12 @@ This folder contains Architecture Decision Records (ADRs) and implementation gui
 |-----|--------|-------------|
 | [ADR-010](./ADR-010-primary-admin-role.md) | Implemented | Primary admin role hierarchy |
 
+### Developer Platform
+
+| ADR | Status | Description |
+|-----|--------|-------------|
+| [ADR-029](./ADR-029-contributor-dev-dashboard.md) | Accepted | Contributor dev dashboard: in-house AI-driven contribution pipeline |
+
 ---
 
 ## Frontend Architecture Decisions
@@ -38,6 +44,7 @@ Located in [`decisions/`](./decisions/) - patterns for the mobile app.
 | [ADR-002](./decisions/ADR-002-feature-based-organization.md) | Accepted | Feature-based code organization |
 | [ADR-004](./decisions/ADR-004-dual-react-versions.md) | Accepted | React 18 (web) + React 19 (mobile) - temporary |
 | [ADR-006](./decisions/ADR-006-centralized-prefetch-system.md) | Accepted | Query prefetching for performance |
+| [ADR-028](./decisions/ADR-028-offline-support.md) | Accepted | Offline support: connectivity detection, stale-while-revalidate caches, and write queues |
 
 ---
 

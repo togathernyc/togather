@@ -15,12 +15,14 @@ import {
   TouchableOpacity,
   Alert,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useNotifications } from '@providers/NotificationProvider';
 import { useQuery, useAuthenticatedMutation, api } from '@services/api/convex';
 import { useCommunityTheme } from '@hooks/useCommunityTheme';
 import { useTheme } from '@hooks/useTheme';
 import { useAuth } from '@providers/AuthProvider';
 import { useEnableNotificationsFlow } from '@features/notifications/hooks/useEnableNotificationsFlow';
+import { PrayerNotificationsSheet } from '@features/prayer/components/PrayerNotificationsSheet';
 import type { Id } from '@services/api/convex';
 
 type GroupNotificationToggleProps = {
@@ -89,12 +91,14 @@ const GroupNotificationToggle: React.FC<GroupNotificationToggleProps> = ({
 };
 
 export const NotificationPreferencesSection: React.FC = () => {
-  const { user, token } = useAuth();
+  const { user, token, community } = useAuth();
   const { isEnabled, expoPushToken } = useNotifications();
   const { primaryColor } = useCommunityTheme();
   const { colors } = useTheme();
   const userId = user?.id as Id<"users"> | undefined;
   const [isUpdating, setIsUpdating] = useState(false);
+  const [prayerSheetOpen, setPrayerSheetOpen] = useState(false);
+  const prayerEnabled = community?.churchFeatures?.prayerEnabled === true;
 
   // Fetch preferences using Convex
   const preferences = useQuery(
@@ -254,6 +258,34 @@ export const NotificationPreferencesSection: React.FC = () => {
         </View>
       )}
 
+      {prayerEnabled && community?.id && (
+        <>
+          <TouchableOpacity
+            style={[
+              styles.linkRow,
+              { borderTopColor: colors.borderLight, borderBottomColor: colors.borderLight },
+            ]}
+            onPress={() => setPrayerSheetOpen(true)}
+            accessibilityRole="button"
+          >
+            <View style={styles.linkRowText}>
+              <Text style={[styles.linkRowLabel, { color: colors.text }]}>
+                Prayer notifications
+              </Text>
+              <Text style={[styles.linkRowDescription, { color: colors.textSecondary }]}>
+                Per-type controls for prayer requests, digests, and reminders.
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color={colors.iconSecondary} />
+          </TouchableOpacity>
+          <PrayerNotificationsSheet
+            visible={prayerSheetOpen}
+            onClose={() => setPrayerSheetOpen(false)}
+            communityId={community.id as Id<'communities'>}
+          />
+        </>
+      )}
+
       {isUpdating && (
         <View style={styles.savingIndicator}>
           <ActivityIndicator size="small" color={colors.textSecondary} />
@@ -378,4 +410,15 @@ const styles = StyleSheet.create({
     marginLeft: 8,
     fontSize: 12,
   },
+  linkRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+    marginTop: 16,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  linkRowText: { flex: 1, marginRight: 12 },
+  linkRowLabel: { fontSize: 16, fontWeight: '600' },
+  linkRowDescription: { fontSize: 13, marginTop: 2 },
 });

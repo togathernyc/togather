@@ -270,6 +270,7 @@ describe("CreateChannelScreen", () => {
           name: "Test Channel",
           description: "Test description",
           joinMode: "open",
+          addCreatorAsMember: true,
         });
       });
     });
@@ -297,6 +298,7 @@ describe("CreateChannelScreen", () => {
           name: "Test Channel",
           description: "Test description",
           joinMode: "open",
+          addCreatorAsMember: true,
         });
       });
     });
@@ -322,6 +324,7 @@ describe("CreateChannelScreen", () => {
           name: "Test Channel",
           description: undefined,
           joinMode: "open",
+          addCreatorAsMember: true,
         });
       });
     });
@@ -393,6 +396,74 @@ describe("CreateChannelScreen", () => {
       const toastMessage = await findByTestId("toast-message");
       expect(toastMessage.props.children).toBe(
         "This group has reached the maximum of 20 channels. Archive some channels to create new ones."
+      );
+    });
+
+    // Regression: in production a ConvexError arrives with a generic
+    // "Server Error" `.message` and the real text on `.data`. The handler must
+    // read `.data`, otherwise the friendly message never surfaces and the raw
+    // "Server Error" leaks into the toast.
+    it("surfaces a production ConvexError from error.data, not 'Server Error'", async () => {
+      mockCreateChannel.mockRejectedValueOnce(
+        Object.assign(
+          new Error("[CONVEX M(...)] [Request ID: abc] Server Error"),
+          { data: "This group has reached the maximum of 20 channels" }
+        )
+      );
+
+      const { getByPlaceholderText, getByTestId, findByTestId } = render(
+        <CreateChannelScreen />
+      );
+      const nameInput = getByPlaceholderText("Enter channel name");
+
+      act(() => {
+        fireEvent.changeText(nameInput, "Test Channel");
+      });
+
+      const createButton = getByTestId("create-button");
+      await act(async () => {
+        fireEvent.press(createButton);
+      });
+
+      const toastMessage = await findByTestId("toast-message");
+      expect(toastMessage.props.children).toBe(
+        "This group has reached the maximum of 20 channels. Archive some channels to create new ones."
+      );
+    });
+
+    // Regression: createAutoChannel (Planning Center) throws
+    // ConvexError({ code, message }) — an object payload — so the useful text
+    // lives at error.data.message, not a bare string error.data.
+    it("surfaces an object ConvexError payload from error.data.message", async () => {
+      mockCreateChannel.mockRejectedValueOnce(
+        Object.assign(
+          new Error("[CONVEX M(...)] [Request ID: abc] Server Error"),
+          {
+            data: {
+              code: "NO_INTEGRATION",
+              message: "Planning Center integration is not configured.",
+            },
+          }
+        )
+      );
+
+      const { getByPlaceholderText, getByTestId, findByTestId } = render(
+        <CreateChannelScreen />
+      );
+      const nameInput = getByPlaceholderText("Enter channel name");
+
+      act(() => {
+        fireEvent.changeText(nameInput, "Test Channel");
+      });
+
+      const createButton = getByTestId("create-button");
+      await act(async () => {
+        fireEvent.press(createButton);
+      });
+
+      const toastMessage = await findByTestId("toast-message");
+      expect(toastMessage.props.children).toBe(
+        "Planning Center integration is not configured."
       );
     });
 

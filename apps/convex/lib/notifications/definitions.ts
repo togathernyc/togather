@@ -1,5 +1,6 @@
 import type { NotificationDefinition } from './types';
 import { escapeHtml } from './emailTemplates';
+import { truncateWithEllipsis } from '../textPreview';
 
 // ============================================================================
 // Data Types
@@ -41,7 +42,13 @@ interface MessageData {
   senderName: string;
   senderAvatarUrl?: string;
   groupName: string;
+  /** Email-grade body: effectively the whole message (1000-char safety cap). */
   messagePreview: string;
+  /**
+   * Push-grade body: shortened + always ellipsized. Optional so older/other
+   * callers keep working — the push falls back to `messagePreview`.
+   */
+  messagePushPreview?: string;
   groupId: string;
   channelId: string;
   channelName?: string;
@@ -332,7 +339,10 @@ function getChannelLabel(data: MessageData): string {
 }
 
 function formatChatPushBody(data: MessageData): string {
-  return `${data.groupName}: ${getChannelLabel(data)}\n${data.messagePreview}`;
+  // The push gets the shortened, ellipsized excerpt; the mention email below
+  // gets the full `messagePreview`.
+  const body = data.messagePushPreview ?? data.messagePreview;
+  return `${data.groupName}: ${getChannelLabel(data)}\n${body}`;
 }
 
 /**
@@ -407,9 +417,7 @@ export const mention: NotificationDefinition<MessageData> = {
         <h1 class="heading">${escapeHtml(ctx.data.senderName)} mentioned you</h1>
         <p class="text">${greeting}</p>
         <p class="text">${escapeHtml(ctx.data.senderName)} mentioned you in ${escapeHtml(ctx.data.groupName)}:</p>
-        <p class="text" style="background-color: #f5f5f5; padding: 16px; border-radius: 8px; font-style: italic;">
-          "${escapeHtml(ctx.data.messagePreview)}"
-        </p>
+        <p class="text" style="background-color: #f5f5f5; padding: 16px; border-radius: 8px; font-style: italic; white-space: pre-wrap;">"${escapeHtml(ctx.data.messagePreview)}"</p>
       `),
       };
     },
@@ -557,6 +565,36 @@ export const eventCreatedByMember: NotificationDefinition<EventCreatedByMemberDa
   defaultChannels: ['push'],
 };
 
+// Sent to group leaders when a member fills out or updates their serving
+// availability. Debounced (~5 min) so a member clicking through several
+// events produces a single notification, not one per tap. See
+// `queueAvailabilityLeaderNotice` in scheduling/availability.ts.
+interface AvailabilityUpdatedData {
+  memberName: string;
+  groupName: string;
+  groupId: string;
+  communityId?: string;
+}
+
+export const availabilityUpdated: NotificationDefinition<AvailabilityUpdatedData> = {
+  type: 'availability_updated',
+  description:
+    'Sent to group leaders when a member updates their serving availability',
+  formatters: {
+    push: (ctx) => ({
+      title: 'Availability updated',
+      body: `${ctx.data.memberName} updated their availability in ${ctx.data.groupName}`,
+      data: {
+        type: 'availability_updated',
+        groupId: ctx.data.groupId,
+        communityId: ctx.data.communityId,
+        url: `/rostering/${ctx.data.groupId}/grid`,
+      },
+    }),
+  },
+  defaultChannels: ['push'],
+};
+
 // ============================================================================
 // Admin Definitions
 // ============================================================================
@@ -567,7 +605,7 @@ export const contentReport: NotificationDefinition<ContentReportData> = {
   formatters: {
     push: (ctx) => ({
       title: 'Content Reported',
-      body: `${ctx.data.reporterName} reported: "${ctx.data.messagePreview.slice(0, 50)}..."`,
+      body: `${ctx.data.reporterName} reported: "${truncateWithEllipsis(ctx.data.messagePreview, 50)}"`,
       data: {
         type: 'content_report',
         communityId: ctx.data.communityId,
@@ -741,6 +779,314 @@ export const followupAssigned: NotificationDefinition<FollowupAssignedData> = {
     }),
   },
   defaultChannels: ['push'],
+};
+
+// ============================================================================
+// Member Archive Definitions
+// ============================================================================
+
+interface MemberPreArchiveCheckinData {
+  memberName: string;
+  communityId?: string;
+  userId: string;
+}
+
+export const memberPreArchiveCheckin: NotificationDefinition<MemberPreArchiveCheckinData> = {
+  type: 'member.pre_archive_checkin',
+  description:
+    "Sent to a member's leaders/assignees ~1 week before they are auto-archived for inactivity",
+  formatters: {
+    push: (ctx) => ({
+      title: 'Time to check in',
+      body: `${ctx.data.memberName} hasn't been around in almost 2 months. Reach out before they're archived.`,
+      data: {
+        type: 'member.pre_archive_checkin',
+        communityId: ctx.data.communityId,
+        userId: ctx.data.userId,
+        url: '/(tabs)/people',
+      },
+    }),
+  },
+  defaultChannels: ['push'],
+};
+
+// ============================================================================
+// Prayer Definitions
+// ============================================================================
+
+interface PrayerPrayedForData {
+  prayerId: string;
+  communityId?: string;
+  communityName?: string;
+}
+
+interface PrayerFollowUpData {
+  prayerId: string;
+  followUpId: string;
+  bodySnippet: string;
+  communityId?: string;
+}
+
+export const prayerPrayedFor: NotificationDefinition<PrayerPrayedForData> = {
+  type: 'prayer.prayed_for',
+  description: 'Sent to a prayer author when another member completes praying for them',
+  formatters: {
+    push: (ctx) => ({
+      title: 'Someone prayed for you',
+      body: ctx.data.communityName
+        ? `Your prayer was just prayed for in ${ctx.data.communityName}.`
+        : 'Your prayer was just prayed for.',
+      data: {
+        type: 'prayer.prayed_for',
+        prayerId: ctx.data.prayerId,
+        communityId: ctx.data.communityId,
+        url: '/(user)/my-prayers',
+      },
+    }),
+  },
+  defaultChannels: ['push'],
+};
+
+export const prayerPraiseReport: NotificationDefinition<PrayerFollowUpData> = {
+  type: 'prayer.praise_report',
+  description: 'Sent to everyone who prayed for a request when the author posts a praise report',
+  formatters: {
+    push: (ctx) => ({
+      title: 'Praise report',
+      body: ctx.data.bodySnippet,
+      data: {
+        type: 'prayer.praise_report',
+        prayerId: ctx.data.prayerId,
+        followUpId: ctx.data.followUpId,
+        communityId: ctx.data.communityId,
+        // Routes the recipient (someone who prayed for this request) to
+        // the detail screen where they can read the follow-up.
+        // getDetail re-gates on community membership before returning.
+        url: `/(user)/my-prayers/${ctx.data.prayerId}`,
+      },
+    }),
+  },
+  defaultChannels: ['push'],
+};
+
+export const prayerUpdate: NotificationDefinition<PrayerFollowUpData> = {
+  type: 'prayer.update',
+  description: 'Sent to everyone who prayed for a request when the author posts an update',
+  formatters: {
+    push: (ctx) => ({
+      title: 'Prayer update',
+      body: ctx.data.bodySnippet,
+      data: {
+        type: 'prayer.update',
+        prayerId: ctx.data.prayerId,
+        followUpId: ctx.data.followUpId,
+        communityId: ctx.data.communityId,
+        url: `/(user)/my-prayers/${ctx.data.prayerId}`,
+      },
+    }),
+  },
+  defaultChannels: ['push'],
+};
+
+interface PrayerAdminReviewData {
+  prayerId: string;
+  communityId?: string;
+  snippet: string;
+  category: string;
+}
+
+export const prayerAdminReviewNeeded: NotificationDefinition<PrayerAdminReviewData> = {
+  type: 'prayer.admin_review_needed',
+  description:
+    'Sent to community admins when a prayer is flagged YELLOW and held for human review',
+  formatters: {
+    push: (ctx) => ({
+      title: 'Prayer needs review',
+      body: ctx.data.snippet,
+      data: {
+        type: 'prayer.admin_review_needed',
+        prayerId: ctx.data.prayerId,
+        communityId: ctx.data.communityId,
+        category: ctx.data.category,
+        url: '/(user)/admin/prayer-reviews',
+      },
+    }),
+  },
+  defaultChannels: ['push'],
+};
+
+interface PrayerDailyDigestData {
+  communityId: string;
+  communityName?: string;
+  count: number;
+}
+
+export const prayerDailyDigest: NotificationDefinition<PrayerDailyDigestData> = {
+  type: 'prayer.daily_digest',
+  description:
+    'Sent once per day summarizing how many new prayer requests landed in the community',
+  formatters: {
+    push: (ctx) => {
+      const { count, communityName } = ctx.data;
+      const where = communityName ? ` in ${communityName}` : '';
+      const title =
+        count === 1
+          ? `1 new prayer request${where}`
+          : `${count} new prayer requests${where}`;
+      return {
+        title,
+        body:
+          count === 1
+            ? 'Take a few minutes to pray for someone in your community.'
+            : 'Take a few minutes to lift them up.',
+        data: {
+          type: 'prayer.daily_digest',
+          communityId: ctx.data.communityId,
+          url: '/(tabs)/prayer',
+        },
+      };
+    },
+  },
+  defaultChannels: ['push'],
+};
+
+interface PrayerMondayNudgeData {
+  communityId: string;
+  communityName?: string;
+}
+
+export const prayerMondayNudge: NotificationDefinition<PrayerMondayNudgeData> = {
+  type: 'prayer.monday_nudge',
+  description:
+    "Monday-morning nudge inviting users who don't have an active prayer request to share one",
+  formatters: {
+    push: (ctx) => ({
+      title: 'Is there something on your heart?',
+      body: ctx.data.communityName
+        ? `Your community in ${ctx.data.communityName} would love to pray for you this week.`
+        : 'Your community would love to pray for you this week.',
+      data: {
+        type: 'prayer.monday_nudge',
+        communityId: ctx.data.communityId,
+        // The PrayerScreen reads this query param on mount and auto-opens
+        // the AddPrayerSheet — one-tap from notification to the compose UI.
+        url: '/(tabs)/prayer?openAdd=1',
+      },
+    }),
+  },
+  defaultChannels: ['push'],
+};
+
+interface PrayerUpdateNudgeData {
+  prayerId: string;
+  communityId: string;
+}
+
+export const prayerUpdateNudge: NotificationDefinition<PrayerUpdateNudgeData> = {
+  type: 'prayer.update_nudge',
+  description:
+    "Sent to the author of an active prayer ~14 days after posting, encouraging an update or praise report",
+  formatters: {
+    push: (ctx) => ({
+      title: 'Any update on your prayer?',
+      body: "If God's been working, share a praise report — it encourages everyone who prayed.",
+      data: {
+        type: 'prayer.update_nudge',
+        prayerId: ctx.data.prayerId,
+        communityId: ctx.data.communityId,
+        url: `/(user)/my-prayers/${ctx.data.prayerId}`,
+      },
+    }),
+  },
+  defaultChannels: ['push'],
+};
+
+interface PrayerMemberReportedData {
+  prayerId: string;
+  communityId?: string;
+  snippet: string;
+  reason: string;
+}
+
+export const prayerMemberReported: NotificationDefinition<PrayerMemberReportedData> = {
+  type: 'prayer.member_reported',
+  description:
+    'Sent to community admins when a member files a report against a published prayer',
+  formatters: {
+    push: (ctx) => ({
+      title: 'Prayer was reported',
+      body: ctx.data.snippet,
+      data: {
+        type: 'prayer.member_reported',
+        prayerId: ctx.data.prayerId,
+        communityId: ctx.data.communityId,
+        reason: ctx.data.reason,
+        url: '/(user)/admin/prayer-reviews',
+      },
+    }),
+  },
+  defaultChannels: ['push'],
+};
+
+// ============================================================================
+// Billing
+// ============================================================================
+
+interface BillingMonthlyPreviewData {
+  communityId: string;
+  communityName: string;
+  billableActiveUsers: number;
+  monthlyPriceUsd: number;
+  /** Whether applicable sales tax is added on top of the price at invoice. */
+  taxAddedOnTop?: boolean;
+}
+
+/**
+ * Pre-period bill disclosure for per-active-user billing: sent to community
+ * admins right after the monthly quantity sync (the 28th), a few days before
+ * the invoice on the 1st, so the amount is never a surprise. See
+ * functions/ee/billing.ts syncPerUserSubscriptionQuantities and ADR-030.
+ */
+export const billingMonthlyPreview: NotificationDefinition<BillingMonthlyPreviewData> = {
+  type: 'billing.monthly_preview',
+  description:
+    'Sent to community admins after the monthly billing sync with the upcoming invoice amount',
+  formatters: {
+    email: (ctx) => {
+      const members = ctx.data.billableActiveUsers;
+      const memberWord = members === 1 ? 'active member' : 'active members';
+      // The subject shows the clean base ($1 × members); when sales tax is
+      // passed through it's added on top of that at invoice time.
+      const extras = ctx.data.taxAddedOnTop
+        ? `<p class="text">
+          Any applicable sales tax is added on top of this amount at checkout,
+          shown as a separate line on your invoice.
+        </p>`
+        : '';
+      return {
+        subject: `${ctx.data.communityName}: $${ctx.data.monthlyPriceUsd} on the 1st (${members} ${memberWord})`,
+        htmlBody: baseEmailLayout(`
+        <h1 class="heading">Your upcoming Togather bill</h1>
+        <p class="text">
+          ${escapeHtml(ctx.data.communityName)} had <strong>${members} ${memberWord}</strong>
+          this month &mdash; people who opened the app in your community within
+          the past 30 days.
+        </p>
+        <p class="text">
+          On the 1st you'll be billed <strong>$${ctx.data.monthlyPriceUsd}</strong>
+          ($1 per active member).
+        </p>
+        ${extras}
+        <p class="text">
+          This is the same number as the Active Members card on your admin
+          Stats tab. It updates automatically each month &mdash; anyone who
+          stops opening the app rolls off, and returns when they come back.
+        </p>
+      `),
+      };
+    },
+  },
+  defaultChannels: ['email'],
 };
 
 // ============================================================================

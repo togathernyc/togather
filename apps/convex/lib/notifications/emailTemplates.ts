@@ -69,6 +69,20 @@ export const baseStyles = {
     border-top: 1px solid #e6ebf1;
     margin: 20px 0;
   `,
+  /**
+   * The quoted message body inside a `messageBox`. `white-space: pre-wrap`
+   * is load-bearing now that emails carry the *whole* message: without it a
+   * multi-paragraph message collapses into one run-on blob. Interpolate the
+   * escaped text with NO surrounding whitespace — `pre-wrap` would render the
+   * template literal's own newlines and indentation too.
+   */
+  quote: `
+    color: #1a1a1a;
+    font-size: 15px;
+    line-height: 24px;
+    margin: 0;
+    white-space: pre-wrap;
+  `,
   footer: `
     text-align: center;
     color: #8898aa;
@@ -195,13 +209,51 @@ export function chatRequestEmail(data: {
     <p style="${baseStyles.text}">${greeting}</p>
     <h1 style="${baseStyles.heading}">${escapeHtml(data.senderName)} ${channelLine}</h1>
     <div style="${baseStyles.messageBox}">
-      <p style="color: #1a1a1a; font-size: 15px; line-height: 24px; margin: 0;">
-        "${escapeHtml(data.messagePreview)}"
-      </p>
+      <p style="${baseStyles.quote}">"${escapeHtml(data.messagePreview)}"</p>
     </div>
     <p style="${baseStyles.text}">
       Open Togather to accept the chat, reply, or block. Until you accept,
       read receipts and typing indicators stay hidden.
+    </p>
+    <div style="${baseStyles.buttonContainer}">
+      <a href="${DOMAIN_CONFIG.appUrl}" style="${baseStyles.button}">Open Togather</a>
+    </div>
+  `;
+  return wrapInLayout(content);
+}
+
+/**
+ * First-message email for a leader/co-lead DM.
+ *
+ * Unlike `chatRequestEmail`, these DMs are already accepted (no request to
+ * accept), so the copy explains the leadership relationship and points the
+ * recipient straight at their inbox. `relationshipLabel` is the warmest,
+ * most-specific tie ("co-leader" | "group leader" | "community leader") and
+ * `bodyLine` is the one-sentence explanation of why they're hearing from the
+ * sender.
+ */
+export function leaderDmEmail(data: {
+  senderName: string;
+  relationshipLabel: string;
+  bodyLine: string;
+  messagePreview: string;
+  firstName?: string;
+}): string {
+  const greeting = data.firstName
+    ? `Hi ${escapeHtml(data.firstName)},`
+    : "Hi there,";
+  const heading = `Your ${escapeHtml(data.relationshipLabel)} ${escapeHtml(
+    data.senderName,
+  )} messaged you`;
+  const content = `
+    <p style="${baseStyles.text}">${greeting}</p>
+    <h1 style="${baseStyles.heading}">${heading}</h1>
+    <p style="${baseStyles.text}">${escapeHtml(data.bodyLine)}</p>
+    <div style="${baseStyles.messageBox}">
+      <p style="${baseStyles.quote}">"${escapeHtml(data.messagePreview)}"</p>
+    </div>
+    <p style="${baseStyles.text}">
+      It's already in your inbox — no request to accept. Open Togather to reply.
     </p>
     <div style="${baseStyles.buttonContainer}">
       <a href="${DOMAIN_CONFIG.appUrl}" style="${baseStyles.button}">Open Togather</a>

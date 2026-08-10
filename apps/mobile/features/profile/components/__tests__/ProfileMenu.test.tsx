@@ -9,6 +9,12 @@ jest.mock("expo-router", () => ({
   useRouter: jest.fn(),
 }));
 
+// Flag off = the behavior this suite asserts; the real hook would reach
+// PostHog + a Convex query that the partial api mock below doesn't provide.
+jest.mock("@hooks/useWhatsappShell", () => ({
+  useWhatsappShell: () => false,
+}));
+
 jest.mock("@providers/AuthProvider", () => ({
   useAuth: jest.fn(),
 }));
@@ -26,6 +32,11 @@ jest.mock("@services/api/convex", () => ({
       tasks: {
         index: {
           hasLeaderAccess: "api.functions.tasks.index.hasLeaderAccess",
+        },
+      },
+      devAssistant: {
+        maintainers: {
+          myAccess: "api.functions.devAssistant.maintainers.myAccess",
         },
       },
     },
@@ -70,5 +81,33 @@ describe("ProfileMenu", () => {
 
     const { queryByText } = render(<ProfileMenu />);
     expect(queryByText("Tasks")).toBeNull();
+  });
+
+  it("shows the dev dashboard entry for maintainers and navigates to contribute", () => {
+    (useAuthenticatedQuery as jest.Mock).mockImplementation((queryFn: string) => {
+      if (queryFn === "api.functions.communities.listForUser") return [];
+      if (queryFn === "api.functions.tasks.index.hasLeaderAccess") return false;
+      if (queryFn === "api.functions.devAssistant.maintainers.myAccess")
+        return { canUseAssistant: true };
+      return undefined;
+    });
+
+    const { getByText } = render(<ProfileMenu />);
+    fireEvent.press(getByText("Dev Dashboard"));
+
+    expect(mockPush).toHaveBeenCalledWith("/(user)/dev");
+  });
+
+  it("hides the dev dashboard entry for non-maintainers", () => {
+    (useAuthenticatedQuery as jest.Mock).mockImplementation((queryFn: string) => {
+      if (queryFn === "api.functions.communities.listForUser") return [];
+      if (queryFn === "api.functions.tasks.index.hasLeaderAccess") return false;
+      if (queryFn === "api.functions.devAssistant.maintainers.myAccess")
+        return { canUseAssistant: false };
+      return undefined;
+    });
+
+    const { queryByText } = render(<ProfileMenu />);
+    expect(queryByText("Dev Dashboard")).toBeNull();
   });
 });

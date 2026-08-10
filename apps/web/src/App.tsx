@@ -333,6 +333,12 @@ function HeroSection() {
               >
                 FAQ
               </a>
+              <Link
+                to="/guides"
+                className="text-sm font-medium text-neutral-700 hover:text-neutral-900"
+              >
+                Guides
+              </Link>
               <a
                 href="https://github.com/togathernyc/togather"
                 target="_blank"
@@ -386,6 +392,13 @@ function HeroSection() {
             >
               FAQ
             </a>
+            <Link
+              to="/guides"
+              className="block text-neutral-600 hover:text-neutral-900 py-2"
+              onClick={() => setMobileMenuOpen(false)}
+            >
+              Guides
+            </Link>
             <a
               href="https://github.com/togathernyc/togather"
               target="_blank"
@@ -444,8 +457,8 @@ function HeroSection() {
                 >
                   <IconAndroid className="w-6 h-6" />
                   <div className="flex flex-col leading-tight">
-                    <span className="text-[10px] font-medium text-white/70 uppercase tracking-wide">Download</span>
-                    <span className="text-base font-semibold -mt-0.5">APK for Android</span>
+                    <span className="text-[10px] font-medium text-white/70 uppercase tracking-wide">Join</span>
+                    <span className="text-base font-semibold -mt-0.5">Android testers</span>
                   </div>
                 </Link>
               </div>
@@ -713,6 +726,12 @@ function FeaturesSection() {
 function FAQSection() {
   const faqs = [
     {
+      question: "How much does Togather cost?",
+      answer:
+        "Togather is $1/month per active member — someone who opened the app in your community in the last 30 days — so you only pay for who's actually using it. A typical church has about a third of its members active in a given month, so a 1,000-member church pays around $300/month, not $1,000. It's beta pricing you can lock in by starting now. The only thing added on top is any applicable sales tax; card processing is already included.",
+      link: "/guides/pricing",
+    },
+    {
       question: "What does it mean that Togather is open source?",
       answer:
         "It means the entire codebase is public on GitHub under the AGPL-3.0 license. For your church or organization, that means full transparency into how your data is handled, no vendor lock-in, and a product shaped by the community that uses it. You don't need to think about any of that to get started though — we offer shared hosting so you can sign up and go in minutes.",
@@ -720,7 +739,7 @@ function FAQSection() {
     {
       question: "What platforms does Togather support?",
       answer:
-        "Togather is available on iOS (App Store), Android (APK download), and the web. Your data syncs seamlessly across all devices.",
+        "Togather is available on iOS (App Store), Android (Google Play closed testing), and the web. Your data syncs seamlessly across all devices.",
     },
     {
       question: "Can I import members from Planning Center?",
@@ -852,8 +871,8 @@ function CTASection() {
               >
                 <IconAndroid className="w-5 h-5" />
                 <div className="flex flex-col leading-tight">
-                  <span className="text-[9px] font-medium text-white/70 uppercase tracking-wide">Download</span>
-                  <span className="text-sm font-semibold -mt-0.5">APK for Android</span>
+                  <span className="text-[9px] font-medium text-white/70 uppercase tracking-wide">Join</span>
+                  <span className="text-sm font-semibold -mt-0.5">Android testers</span>
                 </div>
               </Link>
             </div>
@@ -893,6 +912,11 @@ function Footer() {
                   </a>
                 </li>
                 <li>
+                  <Link to="/guides" className="hover:text-white">
+                    Guides
+                  </Link>
+                </li>
+                <li>
                   <a href="#faq" className="hover:text-white">
                     FAQ
                   </a>
@@ -916,6 +940,16 @@ function Footer() {
                 <li>
                   <Link to="/contribute" className="hover:text-white">
                     Contribute
+                  </Link>
+                </li>
+                <li>
+                  <Link to="/contribute/ai" className="hover:text-white">
+                    AI Workflow
+                  </Link>
+                </li>
+                <li>
+                  <Link to="/developers" className="hover:text-white">
+                    Developer API
                   </Link>
                 </li>
               </ul>

@@ -15,6 +15,7 @@ import { TimezoneSection } from "./TimezoneSection";
 import { NotificationPreferencesSection } from "./NotificationPreferencesSection";
 import { LeaderToolsSection } from "./LeaderToolsSection";
 import { QuickLinksSection } from "./QuickLinksSection";
+import { ContributeSection } from "./ContributeSection";
 import { BlockedUsersSection } from "./BlockedUsersSection";
 import { DeleteAccountSection } from "./DeleteAccountSection";
 import { AppearanceSection } from "./AppearanceSection";
@@ -49,6 +50,7 @@ export function SettingsScreen() {
       <NotificationPreferencesSection />
       <LeaderToolsSection />
       <QuickLinksSection />
+      <ContributeSection />
       <BlockedUsersSection />
       <AppInfoSection />
       <DeleteAccountSection />

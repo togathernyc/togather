@@ -137,10 +137,58 @@ const botDefinitions: Record<string, BotDefinition> = {
       },
     ],
   },
+  followup: {
+    id: "followup",
+    name: "Followup Bot",
+    description: "Assigns a leader to follow up with each new member",
+    icon: "🤝",
+    triggerType: "event",
+    defaultConfig: {
+      message:
+        "🤝 Hey [[leader_name]], please follow up with [[member_name]] who just joined [[group_name]]!",
+      assignmentMode: "round_robin",
+      targetChannelSlug: "leaders",
+    },
+    configFields: [
+      {
+        key: "message",
+        label: "Followup Message",
+        type: "textarea",
+        placeholder:
+          "🤝 Hey [[leader_name]], please follow up with [[member_name]] who just joined [[group_name]]!",
+        helpText:
+          "Available placeholders: [[leader_name]], [[member_name]], [[group_name]], [[community_name]]",
+      },
+      {
+        key: "assignmentMode",
+        label: "Leader Assignment",
+        type: "select",
+        options: [
+          { value: "round_robin", label: "Rotate leaders" },
+          { value: "specific_leader", label: "Specific leader" },
+        ],
+        helpText: "How to choose which leader follows up with new members",
+      },
+      {
+        key: "specificLeaderId",
+        label: "Select Leader",
+        type: "leader_select",
+        helpText: "Choose which leader should follow up with new members",
+        showWhen: { field: "assignmentMode", value: "specific_leader" },
+      },
+      {
+        key: "targetChannelSlug",
+        label: "Target Channel",
+        type: "channel_select",
+        helpText:
+          "Select which channel the assignment is posted to. Defaults to Leaders if not set.",
+      },
+    ],
+  },
   "task-reminder": {
     id: "task-reminder",
     name: "Task Reminder Bot",
-    description: "Sends daily reminders to role-assigned members",
+    description: "Sends weekly or monthly reminders to role-assigned members",
     icon: "📋",
     triggerType: "cron",
     customConfigUI: true,
@@ -155,6 +203,10 @@ const botDefinitions: Record<string, BotDefinition> = {
         saturday: [],
         sunday: [],
       },
+      // "weekly" fires the schedule every week; "monthly" fires it only on
+      // the configured weekday occurrence (weekOfMonth) each month.
+      frequency: "weekly",
+      weekOfMonth: 1,
       deliveryMode: "task_and_channel_post",
       targetChannelSlugs: [],
     },
@@ -226,9 +278,25 @@ function normalizeTaskReminderConfig(rawConfig: Record<string, unknown>) {
       ? [rawConfig.targetChannelSlug]
       : [];
 
+  const frequency = rawConfig.frequency === "monthly" ? "monthly" : "weekly";
+  const rawWeekOfMonth = rawConfig.weekOfMonth;
+  // Accept the 1st–4th occurrence or "last". We deliberately omit a "5th"
+  // option: a 5th occurrence exists in only some months, so "last" is the
+  // intuitive (and UI-exposed) way to target the final occurrence.
+  const weekOfMonth =
+    rawWeekOfMonth === "last"
+      ? "last"
+      : typeof rawWeekOfMonth === "number" &&
+          rawWeekOfMonth >= 1 &&
+          rawWeekOfMonth <= 4
+        ? rawWeekOfMonth
+        : 1;
+
   return {
     roles: Array.isArray(rawConfig.roles) ? rawConfig.roles : [],
     schedule,
+    frequency,
+    weekOfMonth,
     deliveryMode,
     targetChannelSlugs: [...new Set([...channelSlugsFromArray, ...channelSlugsFromLegacy])],
   };
@@ -737,6 +805,11 @@ export const testTaskReminder = action({
         messageId: result.messageId as string,
       };
     }
+    // A suppressed (skipped) send — e.g. the target channel was disabled —
+    // surfaces as a graceful failure with a reason for this user-triggered path.
+    if ("skipped" in result) {
+      return { success: false, error: result.reason };
+    }
     return result;
   },
 });
@@ -788,7 +861,11 @@ export const sendCommunicationNow = action({
     try {
       resolvedMessage = await ctx.runAction(
         internal.functions.pcoServices.actions.resolvePositionPlaceholdersInternal,
-        { communityId: group.communityId, message: args.message }
+        {
+          communityId: group.communityId,
+          message: args.message,
+          groupId: args.groupId,
+        }
       );
     } catch (error) {
       console.warn(
@@ -814,6 +891,11 @@ export const sendCommunicationNow = action({
         channelId: result.channelId as string,
         messageId: result.messageId as string,
       };
+    }
+    // A suppressed (skipped) send — e.g. the target channel was disabled —
+    // surfaces as a graceful failure with a reason for this user-triggered path.
+    if ("skipped" in result) {
+      return { success: false, error: result.reason };
     }
     return result;
   },

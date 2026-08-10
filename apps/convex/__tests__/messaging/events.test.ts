@@ -222,8 +222,9 @@ describe("onMessageSent Event", () => {
     vi.runAllTimers();
     await t.finishInProgressScheduledFunctions();
 
-    // Verify muted member doesn't get unread count incremented
-    // (notifications are sent via centralized system, not queue)
+    // Mute suppresses notification delivery only — unread bookkeeping keeps
+    // running so messages received while muted don't look already-read after
+    // unmuting (see PR #636 review).
     const user2ReadState = await t.run(async (ctx) => {
       return await ctx.db
         .query("chatReadState")
@@ -233,8 +234,7 @@ describe("onMessageSent Event", () => {
         .first();
     });
 
-    // Muted members don't get unread counts incremented
-    expect(user2ReadState?.unreadCount || 0).toBe(0);
+    expect(user2ReadState?.unreadCount || 0).toBe(1);
   });
 
   test("should handle mentions in messages", async () => {
@@ -1092,5 +1092,959 @@ describe("onThreadReply Event", () => {
     });
 
     expect(parent?.threadReplyCount).toBe(3);
+  });
+});
+
+// ============================================================================
+// DM message-request email notifications
+// ============================================================================
+//
+// A new direct-message request should email the recipient *in conjunction
+// with* the push (not only as a fallback when push is unreachable), so users
+// hear about message requests even when they aren't actively using the app.
+
+const RESEND_EMAIL_URL = "https://api.resend.com/emails";
+const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
+
+/** Seed a pending 1:1 DM request from `sender` to `recipient`. */
+async function seedDmRequest(
+  t: ReturnType<typeof convexTest>,
+  opts: {
+    communityId: Id<"communities">;
+    senderId: Id<"users">;
+    recipientId: Id<"users">;
+  },
+): Promise<Id<"chatChannels">> {
+  const now = Date.now();
+  return await t.run(async (ctx) => {
+    const channelId = await ctx.db.insert("chatChannels", {
+      communityId: opts.communityId,
+      channelType: "dm",
+      name: "",
+      isAdHoc: true,
+      createdById: opts.senderId,
+      createdAt: now,
+      updatedAt: now,
+      isArchived: false,
+      memberCount: 2,
+    });
+    // Sender is an accepted member; recipient's request is still pending.
+    await ctx.db.insert("chatChannelMembers", {
+      channelId,
+      userId: opts.senderId,
+      role: "member",
+      joinedAt: now,
+      isMuted: false,
+      requestState: "accepted",
+    });
+    await ctx.db.insert("chatChannelMembers", {
+      channelId,
+      userId: opts.recipientId,
+      role: "member",
+      joinedAt: now,
+      isMuted: false,
+      requestState: "pending",
+      invitedById: opts.senderId,
+    });
+    await ctx.db.insert("chatReadState", {
+      channelId,
+      userId: opts.recipientId,
+      lastReadAt: 0,
+      unreadCount: 0,
+    });
+    return channelId;
+  });
+}
+
+describe("DM request email notifications", () => {
+  test("emails the recipient in conjunction with push when a DM request is sent", async () => {
+    process.env.RESEND_API_KEY = "test-resend-key";
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const { userId, user2Id, communityId } = await seedTestData(t);
+    const now = Date.now();
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: [{ id: "ticket-dm-req", status: "ok" }] }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    // Recipient has an email + an active push token, so push succeeds. The
+    // email must still be sent (in conjunction), not skipped as a fallback.
+    await t.run(async (ctx) => {
+      await ctx.db.patch(user2Id, {
+        email: "recipient@example.com",
+        emailNotificationsEnabled: true,
+      });
+      await ctx.db.insert("pushTokens", {
+        userId: user2Id,
+        token: "ExponentPushToken[dm-request-test]",
+        platform: "ios",
+        environment: "staging",
+        isActive: true,
+        createdAt: now,
+        updatedAt: now,
+        lastUsedAt: now,
+      });
+    });
+
+    const channelId = await seedDmRequest(t, {
+      communityId,
+      senderId: userId,
+      recipientId: user2Id,
+    });
+
+    const messageId = await t.run(async (ctx) => {
+      return await ctx.db.insert("chatMessages", {
+        channelId,
+        senderId: userId,
+        content: "Hey, would love to connect!",
+        contentType: "text",
+        createdAt: now,
+        isDeleted: false,
+        senderName: "Test User",
+      });
+    });
+
+    await t.mutation(internal.functions.messaging.events.onMessageSent, {
+      messageId,
+      channelId,
+      senderId: userId,
+    });
+
+    vi.runAllTimers();
+    await t.finishInProgressScheduledFunctions();
+
+    const calls = fetchMock.mock.calls;
+    const pushCall = calls.find((c) => c?.[0] === EXPO_PUSH_URL);
+    const emailCall = calls.find((c) => c?.[0] === RESEND_EMAIL_URL);
+
+    // Push landed AND the email was sent alongside it — not as a fallback.
+    expect(pushCall).toBeDefined();
+    expect(emailCall).toBeDefined();
+
+    const emailBody = JSON.parse(String(emailCall?.[1]?.body));
+    expect(emailBody.to).toBe("recipient@example.com");
+    expect(emailBody.subject).toBe("Test User would like to chat");
+    expect(emailBody.html).toContain("would like to chat with you");
+  });
+
+  test("does not email when the recipient disabled email notifications", async () => {
+    process.env.RESEND_API_KEY = "test-resend-key";
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const { userId, user2Id, communityId } = await seedTestData(t);
+    const now = Date.now();
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: [{ id: "ticket-dm-req-2", status: "ok" }] }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await t.run(async (ctx) => {
+      await ctx.db.patch(user2Id, {
+        email: "optout@example.com",
+        emailNotificationsEnabled: false,
+      });
+      await ctx.db.insert("pushTokens", {
+        userId: user2Id,
+        token: "ExponentPushToken[dm-request-optout]",
+        platform: "ios",
+        environment: "staging",
+        isActive: true,
+        createdAt: now,
+        updatedAt: now,
+        lastUsedAt: now,
+      });
+    });
+
+    const channelId = await seedDmRequest(t, {
+      communityId,
+      senderId: userId,
+      recipientId: user2Id,
+    });
+
+    const messageId = await t.run(async (ctx) => {
+      return await ctx.db.insert("chatMessages", {
+        channelId,
+        senderId: userId,
+        content: "Hello there",
+        contentType: "text",
+        createdAt: now,
+        isDeleted: false,
+        senderName: "Test User",
+      });
+    });
+
+    await t.mutation(internal.functions.messaging.events.onMessageSent, {
+      messageId,
+      channelId,
+      senderId: userId,
+    });
+
+    vi.runAllTimers();
+    await t.finishInProgressScheduledFunctions();
+
+    const emailCall = fetchMock.mock.calls.find(
+      (c) => c?.[0] === RESEND_EMAIL_URL,
+    );
+    expect(emailCall).toBeUndefined();
+  });
+
+  test("does not email on follow-up messages sent while the recipient is still pending", async () => {
+    process.env.RESEND_API_KEY = "test-resend-key";
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const { userId, user2Id, communityId } = await seedTestData(t);
+    const now = Date.now();
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: [{ id: "ticket-dm-followup", status: "ok" }] }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await t.run(async (ctx) => {
+      await ctx.db.patch(user2Id, {
+        email: "recipient@example.com",
+        emailNotificationsEnabled: true,
+      });
+      await ctx.db.insert("pushTokens", {
+        userId: user2Id,
+        token: "ExponentPushToken[dm-followup-test]",
+        platform: "ios",
+        environment: "staging",
+        isActive: true,
+        createdAt: now,
+        updatedAt: now,
+        lastUsedAt: now,
+      });
+    });
+
+    const channelId = await seedDmRequest(t, {
+      communityId,
+      senderId: userId,
+      recipientId: user2Id,
+    });
+
+    // The opening request message already exists (and would have emailed).
+    await t.run(async (ctx) => {
+      await ctx.db.insert("chatMessages", {
+        channelId,
+        senderId: userId,
+        content: "Hey, would love to connect!",
+        contentType: "text",
+        createdAt: now,
+        isDeleted: false,
+        senderName: "Test User",
+      });
+    });
+
+    // A follow-up sent while the recipient is still pending must not email.
+    const followUpId = await t.run(async (ctx) => {
+      return await ctx.db.insert("chatMessages", {
+        channelId,
+        senderId: userId,
+        content: "Still hoping to chat!",
+        contentType: "text",
+        createdAt: now + 1000,
+        isDeleted: false,
+        senderName: "Test User",
+      });
+    });
+
+    await t.mutation(internal.functions.messaging.events.onMessageSent, {
+      messageId: followUpId,
+      channelId,
+      senderId: userId,
+    });
+
+    vi.runAllTimers();
+    await t.finishInProgressScheduledFunctions();
+
+    const emailCall = fetchMock.mock.calls.find(
+      (c) => c?.[0] === RESEND_EMAIL_URL,
+    );
+    expect(emailCall).toBeUndefined();
+  });
+});
+
+// ============================================================================
+// Leader / co-lead DM notifications (first-message copy)
+// ============================================================================
+//
+// A leader/co-lead DM is created already-accepted, so its FIRST message lands
+// in the accepted branch of `sendAdHocMessageNotifications`. That first message
+// gets relationship-specific push copy (sender name title + relationship line)
+// plus a one-off heads-up email. Later messages fall back to the plain
+// accepted-DM push (sender name, no email).
+
+/** Seed an already-accepted 1:1 DM (recipient row `accepted`, not pending). */
+async function seedAcceptedDm(
+  t: ReturnType<typeof convexTest>,
+  opts: {
+    communityId: Id<"communities">;
+    senderId: Id<"users">;
+    recipientId: Id<"users">;
+  },
+): Promise<Id<"chatChannels">> {
+  const now = Date.now();
+  return await t.run(async (ctx) => {
+    const channelId = await ctx.db.insert("chatChannels", {
+      communityId: opts.communityId,
+      channelType: "dm",
+      name: "",
+      isAdHoc: true,
+      createdById: opts.senderId,
+      createdAt: now,
+      updatedAt: now,
+      isArchived: false,
+      memberCount: 2,
+    });
+    await ctx.db.insert("chatChannelMembers", {
+      channelId,
+      userId: opts.senderId,
+      role: "admin",
+      joinedAt: now,
+      isMuted: false,
+      requestState: "accepted",
+    });
+    await ctx.db.insert("chatChannelMembers", {
+      channelId,
+      userId: opts.recipientId,
+      role: "member",
+      joinedAt: now,
+      isMuted: false,
+      requestState: "accepted",
+      invitedById: opts.senderId,
+    });
+    await ctx.db.insert("chatReadState", {
+      channelId,
+      userId: opts.recipientId,
+      lastReadAt: 0,
+      unreadCount: 0,
+    });
+    return channelId;
+  });
+}
+
+/** Give a recipient an email + push token so both channels are exercisable. */
+async function enableRecipientNotifications(
+  t: ReturnType<typeof convexTest>,
+  recipientId: Id<"users">,
+  email: string,
+  tokenTag: string,
+): Promise<void> {
+  const now = Date.now();
+  await t.run(async (ctx) => {
+    await ctx.db.patch(recipientId, {
+      email,
+      emailNotificationsEnabled: true,
+    });
+    await ctx.db.insert("pushTokens", {
+      userId: recipientId,
+      token: `ExponentPushToken[${tokenTag}]`,
+      platform: "ios",
+      environment: "staging",
+      isActive: true,
+      createdAt: now,
+      updatedAt: now,
+      lastUsedAt: now,
+    });
+  });
+}
+
+async function makeGroupWithMembers(
+  t: ReturnType<typeof convexTest>,
+  communityId: Id<"communities">,
+  members: Array<{ userId: Id<"users">; role: "leader" | "member" }>,
+): Promise<Id<"groups">> {
+  return await t.run(async (ctx) => {
+    const groupTypeId = await ctx.db.insert("groupTypes", {
+      communityId,
+      name: "Small Group",
+      slug: `sg-${Math.floor(Math.random() * 1_000_000)}`,
+      isActive: true,
+      displayOrder: 0,
+      createdAt: Date.now(),
+    });
+    const groupId = await ctx.db.insert("groups", {
+      communityId,
+      groupTypeId,
+      name: "Test Group",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      isArchived: false,
+    });
+    for (const m of members) {
+      await ctx.db.insert("groupMembers", {
+        groupId,
+        userId: m.userId,
+        role: m.role,
+        joinedAt: Date.now(),
+        notificationsEnabled: true,
+      });
+    }
+    return groupId;
+  });
+}
+
+async function makeAdmin(
+  t: ReturnType<typeof convexTest>,
+  communityId: Id<"communities">,
+  userId: Id<"users">,
+): Promise<void> {
+  await t.run(async (ctx) => {
+    await ctx.db.insert("userCommunities", {
+      userId,
+      communityId,
+      roles: 3,
+      status: 1,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+  });
+}
+
+/** Insert a message and fire the onMessageSent fanout, draining schedules. */
+async function fireDmMessage(
+  t: ReturnType<typeof convexTest>,
+  opts: {
+    channelId: Id<"chatChannels">;
+    senderId: Id<"users">;
+    content: string;
+    senderName: string;
+  },
+): Promise<void> {
+  const messageId = await t.run(async (ctx) => {
+    return await ctx.db.insert("chatMessages", {
+      channelId: opts.channelId,
+      senderId: opts.senderId,
+      content: opts.content,
+      contentType: "text",
+      createdAt: Date.now(),
+      isDeleted: false,
+      senderName: opts.senderName,
+    });
+  });
+  await t.mutation(internal.functions.messaging.events.onMessageSent, {
+    messageId,
+    channelId: opts.channelId,
+    senderId: opts.senderId,
+  });
+  vi.runAllTimers();
+  await t.finishInProgressScheduledFunctions();
+}
+
+function pushFrom(fetchMock: ReturnType<typeof vi.fn>) {
+  const call = fetchMock.mock.calls.find((c) => c?.[0] === EXPO_PUSH_URL);
+  return call ? JSON.parse(String(call?.[1]?.body))[0] : undefined;
+}
+function emailFrom(fetchMock: ReturnType<typeof vi.fn>) {
+  const call = fetchMock.mock.calls.find((c) => c?.[0] === RESEND_EMAIL_URL);
+  return call ? JSON.parse(String(call?.[1]?.body)) : undefined;
+}
+
+describe("leader/co-lead DM notifications", () => {
+  test("group leader first DM: group-leader push + email", async () => {
+    process.env.RESEND_API_KEY = "test-resend-key";
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    // seedTestData makes `userId` a leader and `user2Id` a member of the group.
+    const { userId, user2Id, communityId } = await seedTestData(t);
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue({ ok: true, json: async () => ({ data: [{ id: "x" }] }) });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await enableRecipientNotifications(t, user2Id, "member@example.com", "gl");
+    const channelId = await seedAcceptedDm(t, {
+      communityId,
+      senderId: userId,
+      recipientId: user2Id,
+    });
+
+    await fireDmMessage(t, {
+      channelId,
+      senderId: userId,
+      content: "Hey — welcome to the group!",
+      senderName: "Test User",
+    });
+
+    const push = pushFrom(fetchMock);
+    expect(push?.title).toBe("Test User");
+    expect(push?.body).toContain("Your group leader messaged you");
+    expect(push?.body).toContain("Hey — welcome to the group!");
+
+    const email = emailFrom(fetchMock);
+    expect(email?.subject).toBe("Your group leader Test User messaged you");
+  });
+
+  test("co-leader first DM: co-leader push + email (beats group-leader)", async () => {
+    process.env.RESEND_API_KEY = "test-resend-key";
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const { userId, user2Id, communityId } = await seedTestData(t);
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue({ ok: true, json: async () => ({ data: [{ id: "x" }] }) });
+    vi.stubGlobal("fetch", fetchMock);
+
+    // Sender co-leads one group with the recipient AND leads another group the
+    // recipient is a plain member of → co-leader must win.
+    await makeGroupWithMembers(t, communityId, [
+      { userId, role: "leader" },
+      { userId: user2Id, role: "leader" },
+    ]);
+    // (seedTestData already added a group where userId=leader, user2Id=member.)
+
+    await enableRecipientNotifications(t, user2Id, "colead@example.com", "cl");
+    const channelId = await seedAcceptedDm(t, {
+      communityId,
+      senderId: userId,
+      recipientId: user2Id,
+    });
+
+    await fireDmMessage(t, {
+      channelId,
+      senderId: userId,
+      content: "Great co-leading with you!",
+      senderName: "Test User",
+    });
+
+    const push = pushFrom(fetchMock);
+    expect(push?.body).toContain("Your co-leader just messaged you");
+    const email = emailFrom(fetchMock);
+    expect(email?.subject).toBe("Your co-leader Test User messaged you");
+  });
+
+  test("community admin first DM (no group tie): community-leader copy", async () => {
+    process.env.RESEND_API_KEY = "test-resend-key";
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const communityId = await t.run(async (ctx) =>
+      ctx.db.insert("communities", {
+        name: "Admin Community",
+        subdomain: "admin-c",
+        slug: "admin-c",
+        timezone: "America/New_York",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      }),
+    );
+    const adminId = await t.run(async (ctx) =>
+      ctx.db.insert("users", {
+        firstName: "Ada",
+        lastName: "Okafor",
+        phone: "+15555551111",
+        phoneVerified: true,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      }),
+    );
+    const memberId = await t.run(async (ctx) =>
+      ctx.db.insert("users", {
+        firstName: "Moe",
+        lastName: "Member",
+        phone: "+15555552222",
+        phoneVerified: true,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      }),
+    );
+    await makeAdmin(t, communityId, adminId);
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue({ ok: true, json: async () => ({ data: [{ id: "x" }] }) });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await enableRecipientNotifications(t, memberId, "moe@example.com", "ca");
+    const channelId = await seedAcceptedDm(t, {
+      communityId,
+      senderId: adminId,
+      recipientId: memberId,
+    });
+
+    await fireDmMessage(t, {
+      channelId,
+      senderId: adminId,
+      content: "Welcome to the community!",
+      senderName: "Ada Okafor",
+    });
+
+    const push = pushFrom(fetchMock);
+    expect(push?.body).toContain("Your community leader messaged you");
+    const email = emailFrom(fetchMock);
+    expect(email?.subject).toBe("Your community leader Ada Okafor messaged you");
+  });
+
+  test("precedence: group-leader + community-admin → group-leader copy", async () => {
+    process.env.RESEND_API_KEY = "test-resend-key";
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    // userId leads a group user2Id is a member of (seedTestData).
+    const { userId, user2Id, communityId } = await seedTestData(t);
+    // ...AND userId is also a community admin. Group leadership must win.
+    await makeAdmin(t, communityId, userId);
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue({ ok: true, json: async () => ({ data: [{ id: "x" }] }) });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await enableRecipientNotifications(t, user2Id, "prec@example.com", "pr");
+    const channelId = await seedAcceptedDm(t, {
+      communityId,
+      senderId: userId,
+      recipientId: user2Id,
+    });
+
+    await fireDmMessage(t, {
+      channelId,
+      senderId: userId,
+      content: "Checking in",
+      senderName: "Test User",
+    });
+
+    const push = pushFrom(fetchMock);
+    expect(push?.body).toContain("Your group leader messaged you");
+    expect(push?.body).not.toContain("community leader");
+  });
+
+  test("later messages use the plain accepted push (no leader line, no email)", async () => {
+    process.env.RESEND_API_KEY = "test-resend-key";
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const { userId, user2Id, communityId } = await seedTestData(t);
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue({ ok: true, json: async () => ({ data: [{ id: "x" }] }) });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await enableRecipientNotifications(t, user2Id, "later@example.com", "lt");
+    const channelId = await seedAcceptedDm(t, {
+      communityId,
+      senderId: userId,
+      recipientId: user2Id,
+    });
+
+    // First message (leader copy) — then reset the mock and send a follow-up.
+    await fireDmMessage(t, {
+      channelId,
+      senderId: userId,
+      content: "First",
+      senderName: "Test User",
+    });
+    fetchMock.mockClear();
+
+    await fireDmMessage(t, {
+      channelId,
+      senderId: userId,
+      content: "Second message",
+      senderName: "Test User",
+    });
+
+    const push = pushFrom(fetchMock);
+    expect(push?.title).toBe("Test User");
+    expect(push?.body).toBe("Second message");
+    expect(push?.body).not.toContain("group leader");
+    // No email on follow-ups.
+    expect(emailFrom(fetchMock)).toBeUndefined();
+  });
+
+  test("non-leader accepted DM first message: plain push, no leader copy", async () => {
+    process.env.RESEND_API_KEY = "test-resend-key";
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    // Two users with NO group/admin tie between them.
+    const communityId = await t.run(async (ctx) =>
+      ctx.db.insert("communities", {
+        name: "Plain Community",
+        subdomain: "plain-c",
+        slug: "plain-c",
+        timezone: "America/New_York",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      }),
+    );
+    const aId = await t.run(async (ctx) =>
+      ctx.db.insert("users", {
+        firstName: "Alice",
+        lastName: "A",
+        phone: "+15555553333",
+        phoneVerified: true,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      }),
+    );
+    const bId = await t.run(async (ctx) =>
+      ctx.db.insert("users", {
+        firstName: "Bob",
+        lastName: "B",
+        phone: "+15555554444",
+        phoneVerified: true,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      }),
+    );
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue({ ok: true, json: async () => ({ data: [{ id: "x" }] }) });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await enableRecipientNotifications(t, bId, "bob@example.com", "np");
+    // Accepted DM but no relationship → the "recipient accepted an empty
+    // request first" case: falls through to the normal accepted push.
+    const channelId = await seedAcceptedDm(t, {
+      communityId,
+      senderId: aId,
+      recipientId: bId,
+    });
+
+    await fireDmMessage(t, {
+      channelId,
+      senderId: aId,
+      content: "Hello there",
+      senderName: "Alice A",
+    });
+
+    const push = pushFrom(fetchMock);
+    expect(push?.title).toBe("Alice A");
+    expect(push?.body).toBe("Hello there");
+    expect(emailFrom(fetchMock)).toBeUndefined();
+  });
+});
+
+// ============================================================================
+// Issue #661 — full message in previews & notifications
+// ============================================================================
+//
+// The message body used to be sliced to 100 chars before it reached ANY
+// notification surface, so the "would like to chat" email quoted a half-word
+// with no "…". Emails now get the whole message (1000-char safety cap); the
+// push gets a 200-char, always-ellipsized excerpt.
+
+describe("full message in previews & notifications (#661)", () => {
+  /** Longer than the old 100-char cut, shorter than the new caps. */
+  const LONG_MESSAGE =
+    "Hi there, I have been going through a really hard week at work. " +
+    "Please keep me in prayers, I will be back next week for sure.";
+
+  test("chat-request email quotes the whole message, not the first 100 chars", async () => {
+    process.env.RESEND_API_KEY = "test-resend-key";
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const { userId, user2Id, communityId } = await seedTestData(t);
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue({ ok: true, json: async () => ({ data: [{ id: "x" }] }) });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await enableRecipientNotifications(t, user2Id, "recipient@example.com", "full-661");
+    const channelId = await seedDmRequest(t, {
+      communityId,
+      senderId: userId,
+      recipientId: user2Id,
+    });
+
+    await fireDmMessage(t, {
+      channelId,
+      senderId: userId,
+      content: LONG_MESSAGE,
+      senderName: "Test User",
+    });
+
+    expect(LONG_MESSAGE.length).toBeGreaterThan(100);
+    const email = emailFrom(fetchMock);
+    expect(email?.html).toContain("Please keep me in prayers");
+    expect(email?.html).toContain(LONG_MESSAGE);
+    // Nothing was shortened, so no ellipsis was appended to the quote.
+    expect(email?.html).not.toContain(`${LONG_MESSAGE}…`);
+  });
+
+  test("email caps a runaway message at ~1000 chars and ends in an ellipsis", async () => {
+    process.env.RESEND_API_KEY = "test-resend-key";
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const { userId, user2Id, communityId } = await seedTestData(t);
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue({ ok: true, json: async () => ({ data: [{ id: "x" }] }) });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await enableRecipientNotifications(t, user2Id, "recipient@example.com", "cap-661");
+    const channelId = await seedDmRequest(t, {
+      communityId,
+      senderId: userId,
+      recipientId: user2Id,
+    });
+
+    await fireDmMessage(t, {
+      channelId,
+      senderId: userId,
+      content: "A".repeat(1500),
+      senderName: "Test User",
+    });
+
+    const email = emailFrom(fetchMock);
+    expect(email?.html).toContain(`${"A".repeat(999)}…`);
+    expect(email?.html).not.toContain("A".repeat(1001));
+  });
+
+  test("push body shows ~200 chars and always ends in an ellipsis when shortened", async () => {
+    process.env.RESEND_API_KEY = "test-resend-key";
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const { userId, user2Id, communityId } = await seedTestData(t);
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue({ ok: true, json: async () => ({ data: [{ id: "x" }] }) });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await enableRecipientNotifications(t, user2Id, "recipient@example.com", "push-661");
+    const channelId = await seedDmRequest(t, {
+      communityId,
+      senderId: userId,
+      recipientId: user2Id,
+    });
+
+    await fireDmMessage(t, {
+      channelId,
+      senderId: userId,
+      content: "B".repeat(500),
+      senderName: "Test User",
+    });
+
+    const push = pushFrom(fetchMock);
+    // "would like to chat: " prefix + a 200-char ellipsized excerpt.
+    expect(push?.body).toBe(`would like to chat: ${"B".repeat(199)}…`);
+  });
+
+  test("group push carries the short excerpt while the mention email carries the full body", async () => {
+    process.env.RESEND_API_KEY = "test-resend-key";
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const { userId, user2Id, channelId } = await seedTestData(t);
+    const now = Date.now();
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue({ ok: true, json: async () => ({ data: [{ id: "x" }] }) });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await enableRecipientNotifications(t, user2Id, "mentioned@example.com", "mention-661");
+    await t.run(async (ctx) => {
+      await ctx.db.insert("chatReadState", {
+        channelId,
+        userId: user2Id,
+        lastReadAt: now,
+        unreadCount: 0,
+      });
+    });
+
+    const essay = "C".repeat(400);
+    const messageId = await t.run(async (ctx) => {
+      return await ctx.db.insert("chatMessages", {
+        channelId,
+        senderId: userId,
+        content: essay,
+        contentType: "text",
+        createdAt: now,
+        isDeleted: false,
+        senderName: "Test User",
+        mentionedUserIds: [user2Id],
+      });
+    });
+
+    await t.mutation(internal.functions.messaging.events.onMessageSent, {
+      messageId,
+      channelId,
+      senderId: userId,
+    });
+    vi.runAllTimers();
+    await t.finishInProgressScheduledFunctions();
+
+    // Push: 200-char ellipsized excerpt under the "Group: Channel" line.
+    const push = pushFrom(fetchMock);
+    expect(push?.body).toBe(`Test Group: General\n${"C".repeat(199)}…`);
+
+    // Email: the full 400-char body, still HTML-escaped by the template.
+    const email = emailFrom(fetchMock);
+    expect(email?.html).toContain(essay);
+  });
+
+  test("emails keep escaping the longer body", async () => {
+    process.env.RESEND_API_KEY = "test-resend-key";
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const { userId, user2Id, communityId } = await seedTestData(t);
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue({ ok: true, json: async () => ({ data: [{ id: "x" }] }) });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await enableRecipientNotifications(t, user2Id, "recipient@example.com", "escape-661");
+    const channelId = await seedDmRequest(t, {
+      communityId,
+      senderId: userId,
+      recipientId: user2Id,
+    });
+
+    await fireDmMessage(t, {
+      channelId,
+      senderId: userId,
+      content: `${"D".repeat(120)}<script>alert(1)</script>`,
+      senderName: "Test User",
+    });
+
+    const email = emailFrom(fetchMock);
+    expect(email?.html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+    expect(email?.html).not.toContain("<script>alert(1)</script>");
+  });
+
+  test("an emoji at the push cut boundary is not split", async () => {
+    process.env.RESEND_API_KEY = "test-resend-key";
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const { userId, user2Id, communityId } = await seedTestData(t);
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue({ ok: true, json: async () => ({ data: [{ id: "x" }] }) });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await enableRecipientNotifications(t, user2Id, "recipient@example.com", "emoji-661");
+    const channelId = await seedDmRequest(t, {
+      communityId,
+      senderId: userId,
+      recipientId: user2Id,
+    });
+
+    // 🙏 is a surrogate pair. Land it exactly across the 199-char cut so a
+    // naive slice would keep only its high surrogate and render "�".
+    await fireDmMessage(t, {
+      channelId,
+      senderId: userId,
+      content: `${"E".repeat(198)}🙏${"F".repeat(50)}`,
+      senderName: "Test User",
+    });
+
+    const push = pushFrom(fetchMock);
+    expect(push?.body).toBe(`would like to chat: ${"E".repeat(198)}…`);
+    // No lone surrogate anywhere in the body.
+    expect(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(String(push?.body))).toBe(
+      false,
+    );
   });
 });

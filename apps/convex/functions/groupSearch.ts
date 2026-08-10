@@ -8,7 +8,7 @@
  * - Community members search
  */
 
-import { v } from "convex/values";
+import { v, ConvexError } from "convex/values";
 import { query } from "../_generated/server";
 import { normalizePagination, getMediaUrl } from "../lib/utils";
 import { paginationArgs } from "../lib/validators";
@@ -668,13 +668,21 @@ export const publicGroupDetail = query({
 
 /**
  * Search community members (for adding to groups, proposing leaders, etc.)
- * Available to all authenticated community members
+ * Available to all authenticated community members.
+ *
+ * Backed by the `users.search_users` full-text index — read count is
+ * O(matches), not O(community size). The leader-facing "Add people" group
+ * info screen uses this with `annotateGroupId` so each row carries
+ * `inGroup`, letting the UI dim already-in-group members instead of having
+ * the server hide them.
  *
  * Supports:
  * - Comma-separated search terms: "john, jane, 555-1234"
- * - Phone number normalization: "(555) 123-4567" matches "5551234567"
- * - Full-text search on name, email
- * - Rich results with email, phone, groupsCount
+ * - Phone-formatted queries: a digits-only fallback term is added per
+ *   search term so `(555) 123-4567` still hits `+15551234567`
+ * - Empty search + `annotateGroupId`: returns the most recently active
+ *   community members (via `userCommunities.by_community_lastLogin`)
+ * - Annotated `inGroup` per row when `annotateGroupId` is supplied
  */
 export const searchCommunityMembers = query({
   args: {
@@ -683,6 +691,12 @@ export const searchCommunityMembers = query({
     excludeUserIds: v.optional(v.array(v.id("users"))),
     includeGroupIds: v.optional(v.array(v.id("groups"))),
     excludeGroupId: v.optional(v.id("groups")),
+    /**
+     * When set, each result row carries `inGroup: boolean`. Empty searches
+     * also fall back to the community's most-recently-active members so the
+     * "Add people" picker isn't blank before the leader types anything.
+     */
+    annotateGroupId: v.optional(v.id("groups")),
     token: v.string(),
     /** If true, includes the current user in results (default: false, excludes current user) */
     includeSelf: v.optional(v.boolean()),
@@ -691,8 +705,21 @@ export const searchCommunityMembers = query({
   handler: async (ctx, args): Promise<MemberSearchResult[]> => {
     const userId = await requireAuth(ctx, args.token);
 
-    if (!args.search.trim()) {
+    // Empty search with no group context → nothing to show. The
+    // `annotateGroupId` branch triggers the recent-members fallback inside
+    // the shared helper.
+    if (!args.search.trim() && !args.annotateGroupId) {
       return [];
+    }
+
+    if (args.annotateGroupId) {
+      const group = await ctx.db.get(args.annotateGroupId);
+      if (!group) {
+        throw new ConvexError("Group not found");
+      }
+      if (group.communityId !== args.communityId) {
+        throw new ConvexError("Group is not in this community");
+      }
     }
 
     // Use the shared search helper
@@ -707,7 +734,11 @@ export const searchCommunityMembers = query({
       excludeUserIds,
       groupIds: args.includeGroupIds,
       excludeGroupId: args.excludeGroupId,
-      limit: Math.min(args.limit ?? 20, 50),
+      annotateGroupId: args.annotateGroupId,
+      // Default 30, hard cap 100 — matches the admin People search and keeps
+      // the per-row notif-disabled / membership lookups bounded.
+      limit: Math.min(args.limit ?? 30, 100),
+      fallbackToRecentWhenEmpty: !!args.annotateGroupId,
     });
   },
 });

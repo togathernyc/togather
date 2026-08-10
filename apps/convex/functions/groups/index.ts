@@ -35,6 +35,7 @@ export {
   updateLeaderToolbarTools,
   updateToolbarVisibility,
   setHiddenFromDiscovery,
+  setJoinApprovalMode,
 } from "./mutations";
 
 // Member queries

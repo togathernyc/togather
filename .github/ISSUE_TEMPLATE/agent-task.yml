@@ -1,0 +1,122 @@
+name: Agent Task
+description: Queue a self-contained task for the overnight orchestrator to pick up and ship as a PR.
+title: "[agent] "
+labels: ["agent:ready"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This issue goes into the queue that `/overnight` drains. An agent will
+        claim it, branch, implement it, gather evidence, and open a PR — with
+        nobody watching.
+
+        **That means the acceptance criteria below are the whole specification.**
+        Anything you would have clarified in a follow-up message has to be in
+        here, or the run escalates the issue instead of shipping it.
+
+        Adding the `agent:ready` label is what queues it (this template adds it
+        for you). Queueing does not start a run — a run starts when `/overnight`
+        is invoked.
+
+        **If you are not a maintainer of this repo, this form will not run
+        anything.** `togathernyc/togather` is public, so the label alone proves
+        nothing about who filed the issue. Before claiming any issue the
+        orchestrator checks the author's repo association and skips anything
+        that is not `OWNER`, `MEMBER`, or `COLLABORATOR` — the label is the
+        owner's inbox, not an execution trigger. Issues from outside
+        contributors are very welcome; they just go through normal human triage.
+        Please use the Bug report or Feature request templates for those.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What needs to happen?
+      description: >
+        The change, and enough context to act on it unattended. Name files or
+        screens if you know them, and say what the current behaviour is — an
+        agent at 3am cannot ask you what "the broken one" means.
+      placeholder: |
+        Example: "The thread page header shows the parent message's author even
+        when you opened the thread from a reply. It should always show the
+        thread root's author. Lives in
+        apps/mobile/features/chat/components/ThreadPage.tsx."
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: >
+        A markdown checklist. **Each item must be verifiable from a transcript
+        or a screenshot** — the agent copies these verbatim into its `/goal` and
+        into the PR body, and it can only tick a box it can show evidence for.
+        Write "the group list row shows two lines of preview text" rather than
+        "previews look better".
+      placeholder: |
+        - [ ] Opening a thread from any reply shows the thread root's author in the header
+        - [ ] Opening the same thread from the root itself is unchanged
+        - [ ] `pnpm --filter mobile test` passes
+    validations:
+      required: true
+
+  - type: input
+    id: initiative
+    attributes:
+      label: Initiative (optional)
+      description: >
+        Groups this with related work and becomes the branch prefix
+        (`<initiative>/<slug>`). Add a matching `init:<name>` label after
+        filing — labels cannot be set from a text field. Left blank, the branch
+        is prefixed `misc/`.
+      placeholder: chat-polish
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Helps the agent pick which test suites to run for the evidence bundle.
+      options:
+        - Mobile (apps/mobile)
+        - Backend (apps/convex)
+        - Web / marketing (apps/web)
+        - Shared packages (packages/)
+        - Docs only
+        - Not sure
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: automerge
+    attributes:
+      label: Auto-merge
+      description: >
+        **Merge-on-green is the default.** When CI is green and the review agent
+        is clean, the agent merges the PR itself — no human in the loop. Tick
+        the box below (and add the `agent:no-automerge` label after filing) only
+        if you want this one held open for your review instead.
+
+        The default is a policy, not a guarantee. The agent still refuses to
+        merge if CI is not green, or if the diff touches a CODEOWNERS-protected
+        path — dependencies and native config, auth, billing/finance, migrations,
+        CI workflows, or `packages/`. Those always wait for a person, whatever
+        this box says.
+      options:
+        - label: Hold this one — open the PR but leave the merge to me (add the `agent:no-automerge` label after filing)
+          required: false
+
+  - type: markdown
+    attributes:
+      value: |
+        ---
+        **After filing**, add any of these labels by hand (an issue form cannot
+        set them conditionally):
+
+        - `priority:high` — jump the queue ahead of older issues
+        - `agent:no-automerge` — if you ticked the hold box above
+        - `init:<name>` — if you named an initiative
+
+        The agent manages `agent:in-progress` and `agent:blocked` itself and will
+        never touch the labels above, your title, or your body. If it decides the
+        criteria are unworkable it says so in a comment and labels the issue
+        `agent:blocked` — which takes it out of the queue until you clear it.

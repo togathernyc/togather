@@ -2,7 +2,39 @@
   "enabledPlugins": {
     "ralph-loop@claude-plugins-official": true
   },
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/ralph-logger.sh",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/completion-gate.sh",
+            "timeout": 140
+          }
+        ]
+      }
+    ]
+  },
   "permissions": {
-    "dangerouslySkipPermissions": true
+    "allow": [
+      "mcp__Claude_Code_Remote__send_later",
+      "mcp__playwright",
+      "mcp__ios-simulator",
+      "mcp__github",
+      "WebFetch",
+      "WebSearch",
+      "PushNotification"
+    ],
+    "deny": [
+      "mcp__github__merge_pull_request",
+      "mcp__github__enable_pr_auto_merge",
+      "mcp__github__create_repository",
+      "mcp__github__delete_file"
+    ]
   }
 }

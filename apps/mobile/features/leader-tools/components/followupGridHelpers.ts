@@ -12,6 +12,9 @@ export type LeaderInfo = {
 export type ParsedFollowupFilters = {
   searchText: string;
   statusFilter?: string;
+  // Archived (inactive) people are hidden by default. "include" shows them
+  // alongside active people; "only" shows just archived people.
+  archivedFilter?: "include" | "only";
   assigneeFilter?: string;
   excludedAssigneeFilters: string[];
   scoreField?: string;
@@ -117,8 +120,15 @@ export function parseFollowupQuerySyntax(
     return "";
   });
 
+  // archived:true / archived:only — reveal archived (inactive) people.
+  freeText = freeText.replace(/archived:(\w+)/gi, (_, v) => {
+    filters.archivedFilter = v.toLowerCase() === "only" ? "only" : "include";
+    return "";
+  });
+
   const systemScoreNames: Record<string, string> = {
-    service: "score1",
+    serving: "score1",
+    service: "score1", // legacy alias (column was renamed Service → Serving)
     attendance: "score2",
     connection: "score3",
     togather: "score3", // legacy alias
@@ -151,6 +161,11 @@ export function parseFollowupQuerySyntax(
       );
       if (scoreIndex !== -1) {
         matchedField = `score${scoreIndex + 1}`;
+      } else {
+        // Fall back to the stable system-score aliases so legacy tokens like
+        // `service:` keep working even after the display label changed to
+        // "Serving" (the desktop table parses by score name).
+        matchedField = systemScoreNames[lowerName];
       }
     }
 
@@ -283,6 +298,18 @@ export function getFollowupSearchSuggestions(
       insertText: "date added:>",
       helperText: "Members added after a date",
     },
+    {
+      id: "archived",
+      label: "archived:true",
+      insertText: "archived:true",
+      helperText: "Include archived (inactive) people",
+    },
+    {
+      id: "archived-only",
+      label: "archived:only",
+      insertText: "archived:only",
+      helperText: "Show only archived (inactive) people",
+    },
   ];
 
   let scoreSuggestions: FollowupSearchSuggestion[];
@@ -293,13 +320,13 @@ export function getFollowupSearchSuggestions(
         id: "score-min-sys_service",
         label: "service:>50",
         insertText: "service:>",
-        helperText: "Service greater than value",
+        helperText: "Serving greater than value",
       },
       {
         id: "score-max-sys_service",
         label: "service:<30",
         insertText: "service:<",
-        helperText: "Service less than value",
+        helperText: "Serving less than value",
       },
       {
         id: "score-min-sys_attendance",
@@ -397,6 +424,9 @@ export function getFollowupQueryHelperText(
   }
   if (lower.includes("status:") || fragment.startsWith("status")) {
     return "Status filters: status:green, status:orange, status:red.";
+  }
+  if (lower.includes("archived:") || fragment.startsWith("archiv")) {
+    return "Archived people are hidden by default. Use archived:true to include them, or archived:only to see just archived people.";
   }
 
   const scoreNames = useSystemScores

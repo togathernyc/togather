@@ -20,6 +20,7 @@ import { MembersRow } from "./MembersRow";
 import { HighlightsGrid } from "./HighlightsGrid";
 import { JoinGroupButton } from "./JoinGroupButton";
 import { GroupOptionsModal } from "./GroupOptionsModal";
+import { ChannelsSection } from "./ChannelsSection";
 import { sectionStyles } from "./sectionStyles";
 import { Group } from "../types";
 import { ImageViewerManager } from "@/providers/ImageViewerProvider";
@@ -106,6 +107,22 @@ export function GroupNonMemberView({
   const handleMembersPress = () => {
     if (!group._id) return;
     router.push(`/leader-tools/${group._id}/members`);
+  };
+
+  // Community admins can open any channel read-only without joining (backend
+  // grants the read access; the chat screen hides the composer for them).
+  // Route straight to the chat — not the channel info/settings screen — so
+  // "look inside the channel" lands on the conversation.
+  const handleAdminChannelPress = (slug: string) => {
+    if (!group._id) return;
+    router.push({
+      pathname: `/inbox/${group._id}/${slug}` as any,
+      params: {
+        groupName: group.name || group.title || "",
+        imageUrl: group.preview || "",
+        isAnnouncementGroup: group.is_announcement_group ? "1" : "0",
+      },
+    });
   };
 
   // Resolve a single address string the same way the member view does so
@@ -460,6 +477,23 @@ export function GroupNonMemberView({
           </View>
         )}
 
+        {/* CHANNELS — admin-only. Community admins can browse and read any
+            channel without joining (backend read access from PR #525). Tapping
+            a channel opens the read-only chat. The note flags the asymmetry,
+            mirroring the LOCATION / MEMBERS admin disclaimers above. */}
+        {isAdmin && group._id && (
+          <View>
+            <ChannelsSection
+              groupId={group._id}
+              userRole={group.user_role}
+              onChannelPress={handleAdminChannelPress}
+            />
+            <View style={styles.channelsNoteWrap}>
+              <AdminViewNote text="Channels shown because you're a community admin. You can read but can't post until you join." />
+            </View>
+          </View>
+        )}
+
         {/* HIGHLIGHTS — already a self-contained section component. */}
         {group.highlights && group.highlights.length > 0 && (
           <HighlightsGrid
@@ -535,6 +569,12 @@ const styles = StyleSheet.create({
   },
   adminNoteWrap: {
     marginTop: 8,
+  },
+  // ChannelsSection carries its own horizontal padding; align the note under
+  // it (it sits flush to the section, not inside a section card).
+  channelsNoteWrap: {
+    marginTop: 8,
+    paddingHorizontal: 20,
   },
   // Leaders horizontal scroll lives inside the section card.
   leadersScrollContent: {

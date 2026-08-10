@@ -35,6 +35,16 @@ interface GroupAttendanceDetailsProps {
   onBack: () => void;
 }
 
+/**
+ * Parse a "YYYY-MM-DD" day string as a LOCAL calendar date. `new Date("2026-06-16")`
+ * parses as UTC midnight, which renders as the previous day in US time zones — these
+ * header labels must reflect the day the admin actually picked.
+ */
+function dayStringToLocalDate(s: string): Date {
+  const [y, m, d] = s.slice(0, 10).split("-").map(Number);
+  return new Date(y, (m ?? 1) - 1, d ?? 1);
+}
+
 export function GroupAttendanceDetails({
   groupId,
   startDate,
@@ -122,15 +132,15 @@ export function GroupAttendanceDetails({
           <Text style={[styles.headerTitle, { color: colors.text }]}>{data.groupName}</Text>
           <Text style={[styles.headerSubtitle, { color: colors.textSecondary }]}>
             {data.isSingleDay
-              ? new Date((data as any).date).toLocaleDateString("en-US", {
+              ? dayStringToLocalDate((data as any).date).toLocaleDateString("en-US", {
                   weekday: "long",
                   month: "long",
                   day: "numeric",
                 })
-              : `${new Date((data as any).startDate).toLocaleDateString("en-US", {
+              : `${dayStringToLocalDate((data as any).startDate).toLocaleDateString("en-US", {
                   month: "short",
                   day: "numeric",
-                })} - ${new Date((data as any).endDate).toLocaleDateString("en-US", {
+                })} - ${dayStringToLocalDate((data as any).endDate).toLocaleDateString("en-US", {
                   month: "short",
                   day: "numeric",
                   year: "numeric",

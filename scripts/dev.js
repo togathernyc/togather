@@ -478,7 +478,7 @@ function main() {
       console.error('   See .env.example and docs/secrets.md for required values.');
     }
     console.error('');
-    console.error('   See CLAUDE.md for full setup instructions.');
+    console.error('   See .claude/skills/onboarding-new-dev/SKILL.md for full setup instructions.');
     console.error('');
     process.exit(1);
   }
@@ -513,7 +513,7 @@ function main() {
       console.error('');
       console.error('   3. Run "pnpm dev" again');
       console.error('');
-      console.error('   See CLAUDE.md for full setup instructions.');
+      console.error('   See .claude/skills/onboarding-new-dev/SKILL.md for full setup instructions.');
       console.error('');
       process.exit(1);
     }

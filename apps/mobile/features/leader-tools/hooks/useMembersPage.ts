@@ -25,6 +25,7 @@ export function useMembersPage(groupId: string) {
       group_type_id: groupData.groupTypeId,
       group_type_name: groupData.groupTypeName ?? undefined,
       userRole: groupData.userRole ?? undefined,
+      shortId: groupData.shortId ?? undefined,
     };
   }, [groupData]);
 

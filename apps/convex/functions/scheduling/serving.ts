@@ -1,0 +1,731 @@
+/**
+ * Scheduling — Serving Mode
+ *
+ * Serving Mode is the focused, day-of view a volunteer drops into around their
+ * event. `getServingEligibility` decides whether the current user has an active
+ * plan to serve on (and whether the client should auto-enter). The channel
+ * resolver `resolveServingChannelIds` gathers the chat channels relevant to a
+ * plan (team channels + linked meeting channels) — Agent D imports it into the
+ * messaging layer, so it is exported.
+ *
+ * Auth note: like the rest of the backend this uses token-based auth (there is
+ * no ambient `ctx.auth` identity — see `lib/auth.ts`).
+ */
+
+import { v } from "convex/values";
+import { query } from "../../_generated/server";
+import type { QueryCtx } from "../../_generated/server";
+import type { Doc, Id } from "../../_generated/dataModel";
+import { requireAuth } from "../../lib/auth";
+import { getDisplayName } from "../../lib/utils";
+import { isActiveGroupMember, requireGroupMember } from "./permissions";
+import { ADD_DAYS_BEFORE } from "./teamChannelSync";
+
+/** Milliseconds in one day. */
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+/** Assumed run-time of the last service so we can bound the event's end. */
+const LAST_SERVICE_DURATION_MS = 4 * 60 * 60 * 1000;
+/** A plan is "eligible" (manual entry) anywhere in this same-day window. */
+const SAME_DAY_LEAD_MS = 12 * 60 * 60 * 1000;
+/**
+ * How early serving auto-enters, measured before the first service. Matches the
+ * same-day eligibility window so a volunteer who opens the app any time on the
+ * day of their event is dropped straight into serving mode (they can still Exit
+ * — a manual exit suppresses auto re-entry for the session, see the mobile
+ * eventModeStore `autoEnterBlocked`).
+ */
+const AUTO_ENTER_LEAD_MS = SAME_DAY_LEAD_MS;
+/**
+ * How many future plans `upcomingPlans` offers for early opening. A volunteer
+ * preparing ahead cares about their next few events, not their whole year.
+ */
+const UPCOMING_PLANS_LIMIT = 10;
+
+/** Earliest service `startsAt` on a plan, or its `eventDate` if it has none. */
+function planStartsAt(plan: Doc<"eventPlans">): number {
+  if (plan.times.length === 0) return plan.eventDate;
+  return Math.min(...plan.times.map((t) => t.startsAt));
+}
+
+/** End of the event: last service `startsAt` + an assumed service duration. */
+function planEndsAt(plan: Doc<"eventPlans">): number {
+  if (plan.times.length === 0) {
+    return plan.eventDate + LAST_SERVICE_DURATION_MS;
+  }
+  const lastStart = Math.max(...plan.times.map((t) => t.startsAt));
+  return lastStart + LAST_SERVICE_DURATION_MS;
+}
+
+/**
+ * Resolve the set of chat channel ids relevant to a plan's serving context:
+ *   (a) `teams.channelId` for every team that has needed roles or assignments
+ *       on the plan,
+ *   (b) `chatChannels` scoped (`meetingId`) to any of the plan's linked
+ *       `meetingIds`, and
+ *   (c) cross-team channels whose selectors reference a team on the plan.
+ *
+ * Returned as a `Set` of channel id strings. Agent D imports this into
+ * `messaging/channels.ts`.
+ */
+export async function resolveServingChannelIds(
+  ctx: QueryCtx,
+  planId: Id<"eventPlans">,
+): Promise<Set<string>> {
+  const channelIds = new Set<string>();
+
+  const plan = await ctx.db.get(planId);
+  if (!plan) return channelIds;
+
+  // (a) Team channels — teams that own a needed role or an assignment here.
+  const [neededRoles, assignments] = await Promise.all([
+    ctx.db
+      .query("neededRoles")
+      .withIndex("by_plan", (q) => q.eq("planId", planId))
+      .collect(),
+    ctx.db
+      .query("roleAssignments")
+      .withIndex("by_plan", (q) => q.eq("planId", planId))
+      .collect(),
+  ]);
+  const teamIds = new Set<string>();
+  for (const r of neededRoles) teamIds.add(r.teamId as string);
+  for (const a of assignments) teamIds.add(a.teamId as string);
+  for (const teamId of teamIds) {
+    const team = await ctx.db.get(teamId as Id<"teams">);
+    if (team?.channelId) channelIds.add(team.channelId as string);
+  }
+
+  // (c) Cross-team channels that draw from any team on this plan. Their
+  // membership is auto-synced (syncSource "event_plan") from the same
+  // roleAssignments, so a rostered member belongs in the serving inbox too.
+  // Resolved community-wide by the channel's `crossTeamSync.selectors[]`
+  // `sourceTeamId` matching a team on the plan — NOT scoped to `plan.groupId`,
+  // because a cross-team channel can be created in one group while sourcing a
+  // team that lives in another group, so a plan-group scope would drop those
+  // cross-group channels. This mirrors the sibling `getServingUpcomingChannels`
+  // (cross-team channels are rare, so a filtered scan is fine). It's
+  // membership-agnostic like the team-channel branch above: the serving flatten
+  // in messaging/channels.ts only iterates channels already in the per-user,
+  // active-membership-gated result, so widening this Set leaks nothing — only
+  // users with an active chatChannelMembers row actually see the channel.
+  const crossTeamChannels = await ctx.db
+    .query("chatChannels")
+    .filter((q) => q.eq(q.field("channelType"), "cross_team"))
+    .collect();
+  for (const ch of crossTeamChannels) {
+    if (ch.isArchived === true) continue;
+    const selectors = ch.crossTeamSync?.selectors ?? [];
+    if (selectors.some((s) => teamIds.has(s.sourceTeamId as string))) {
+      channelIds.add(ch._id as string);
+    }
+  }
+
+  // (b) Linked meeting channels.
+  for (const meetingId of plan.meetingIds ?? []) {
+    const meetingChannels = await ctx.db
+      .query("chatChannels")
+      .withIndex("by_meetingId", (q) => q.eq("meetingId", meetingId))
+      .collect();
+    for (const ch of meetingChannels) channelIds.add(ch._id as string);
+  }
+
+  return channelIds;
+}
+
+/**
+ * Split a plan's resolved serving channels into team-channel vs
+ * meeting-channel id arrays (the shape the client needs). Recomputed here
+ * rather than folded into `resolveServingChannelIds` because that helper is
+ * shared with the messaging layer, which only needs the flat set.
+ */
+async function servingChannelArrays(
+  ctx: QueryCtx,
+  plan: Doc<"eventPlans">,
+): Promise<{ teamChannelIds: string[]; meetingChannelIds: string[] }> {
+  const all = await resolveServingChannelIds(ctx, plan._id);
+
+  const meetingChannelIds = new Set<string>();
+  for (const meetingId of plan.meetingIds ?? []) {
+    const meetingChannels = await ctx.db
+      .query("chatChannels")
+      .withIndex("by_meetingId", (q) => q.eq("meetingId", meetingId))
+      .collect();
+    for (const ch of meetingChannels) meetingChannelIds.add(ch._id as string);
+  }
+
+  const teamChannelIds = [...all].filter((id) => !meetingChannelIds.has(id));
+  return {
+    teamChannelIds,
+    meetingChannelIds: [...meetingChannelIds],
+  };
+}
+
+/**
+ * The client-facing shape of one plan the user can serve on.
+ *
+ * `groupName` / `teamNames` exist purely so the serving surfaces can SAY which
+ * campus rostered the viewer. Two plans on the same morning otherwise render
+ * identical headers ("Untitled event plan · Sun, Aug 3 · 9:00 AM"), which is
+ * how a volunteer ends up believing their tasks vanished when they were really
+ * looking at the other plan's section. `teamNames` mirrors `teamIds` (the
+ * viewer's own teams on the plan), in the same order.
+ */
+type ServingPlan = {
+  planId: string;
+  groupId: string;
+  groupName: string;
+  title: string;
+  startsAt: number;
+  endsAt: number;
+  teamIds: string[];
+  teamNames: string[];
+  teamChannelIds: string[];
+  meetingChannelIds: string[];
+};
+
+/**
+ * A future plan the user can open EARLY to prepare (see `upcomingPlans`). Same
+ * fields as `ServingPlan` minus the resolved channel arrays: the client opens
+ * exactly one of these at a time and the inbox re-resolves that plan's channels
+ * server-side, so resolving them for every future plan would be wasted work.
+ */
+type UpcomingServingPlan = {
+  planId: string;
+  groupId: string;
+  groupName: string;
+  title: string;
+  startsAt: number;
+  endsAt: number;
+};
+
+/**
+ * Every plan the current user can currently enter Serving Mode for. A plan is a
+ * candidate when the user has a non-declined (`unconfirmed` or `confirmed`) role
+ * assignment on it and "now" falls inside the plan's serving window; multiple
+ * plans can be active at once (e.g. two campuses on the same morning), so the
+ * client can render one entry per event and the volunteer picks which one
+ * they're serving. `plans` is sorted soonest-first; `activePlan` is the soonest
+ * (kept for the inbox chip / runsheet consumers).
+ *
+ * `autoEnter` is true only when exactly one plan is active AND the user holds a
+ * `confirmed` assignment on it (auto and eligibility share the same same-day
+ * window). An assigned-but-*unconfirmed* volunteer is therefore *eligible* to
+ * enter (they get the serving chip and can tap in) but is never auto-forced into
+ * "you're serving now" before they've accepted — the nudge to accept stays
+ * meaningful without locking them out. With multiple active plans the choice is
+ * ambiguous, so we never auto-enter and the client offers a manual chip instead.
+ *
+ * `upcomingPlans` is a SEPARATE, soonest-first list of PUBLISHED plans that are
+ * still in the future (before the same-day window opens) and that the user holds
+ * a non-declined assignment on, capped at `UPCOMING_PLANS_LIMIT`. Draft plans are
+ * excluded: opening one early would expose a run sheet and tasks still being
+ * written, weeks ahead, to anyone holding an unconfirmed assignment. (Same-day
+ * `plans` stays status-agnostic — see the loop.) It exists so the
+ * client can offer "open this event early to prepare" from My Schedule; it does
+ * NOT make anyone eligible and never feeds `autoEnter`. The client opens exactly
+ * ONE of them at a time (`eventModeStore.previewPlanId`) and scopes every
+ * serving surface — including the inbox's `servingPlanIds` — to that single
+ * plan; scoping to the whole list would explode the serving inbox across every
+ * future event.
+ *
+ * Auth: any authenticated user.
+ */
+export const getServingEligibility = query({
+  args: { token: v.string() },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    const now = Date.now();
+
+    // All plans the user hasn't declined (may hold multiple roles per plan).
+    // Unconfirmed people "count but haven't accepted" — the same predicate the
+    // rest of the app uses (team chat membership, leader fill counts).
+    const myAssignments = await ctx.db
+      .query("roleAssignments")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .collect();
+    const nonDeclined = myAssignments.filter((a) => a.status !== "declined");
+    const planIds = [...new Set(nonDeclined.map((a) => a.planId as string))];
+
+    const entries: (ServingPlan & { autoEnter: boolean })[] = [];
+    const upcoming: UpcomingServingPlan[] = [];
+
+    // `isActiveGroupMember` is 2 serial reads and a volunteer's plans cluster
+    // into a handful of groups, so memoise it per group for this call. Without
+    // it a weekly assignment a year out costs ~100 redundant reads of the same
+    // group doc on every invalidation of this (reactive) query.
+    const membershipByGroup = new Map<string, boolean>();
+    const isActiveMember = async (groupId: Id<"groups">): Promise<boolean> => {
+      const key = groupId as string;
+      const cached = membershipByGroup.get(key);
+      if (cached !== undefined) return cached;
+      const active = await isActiveGroupMember(ctx, groupId, userId);
+      membershipByGroup.set(key, active);
+      return active;
+    };
+
+    // Group / team display names, memoised for the same reason membership is:
+    // a volunteer's plans cluster into a handful of groups and teams, and this
+    // query is reactive.
+    const groupNames = new Map<string, string>();
+    const groupNameFor = async (groupId: Id<"groups">): Promise<string> => {
+      const key = groupId as string;
+      if (!groupNames.has(key)) {
+        const group = await ctx.db.get(groupId);
+        groupNames.set(key, group?.name ?? "");
+      }
+      return groupNames.get(key)!;
+    };
+    const teamNames = new Map<string, string>();
+    const teamNameFor = async (teamId: Id<"teams">): Promise<string> => {
+      const key = teamId as string;
+      if (!teamNames.has(key)) {
+        const team = await ctx.db.get(teamId);
+        teamNames.set(key, team?.name ?? "Team");
+      }
+      return teamNames.get(key)!;
+    };
+
+    // Split first, membership-check second. The upcoming list is capped at
+    // `UPCOMING_PLANS_LIMIT`, so checking membership in soonest-first order and
+    // stopping at the cap bounds the work instead of only trimming the result.
+    const sameDayPlans: Doc<"eventPlans">[] = [];
+    const upcomingCandidates: Doc<"eventPlans">[] = [];
+
+    for (const planIdStr of planIds) {
+      const plan = await ctx.db.get(planIdStr as Id<"eventPlans">);
+      if (!plan) continue;
+
+      // The event is over — neither servable nor worth preparing for.
+      if (now > planEndsAt(plan)) continue;
+
+      if (now < planStartsAt(plan) - SAME_DAY_LEAD_MS) {
+        // Before the same-day window: openable EARLY to prepare, but not
+        // eligible and never auto-entered — `plans` stays strictly same-day.
+        // Only PUBLISHED plans though: a draft's run sheet and tasks are still
+        // being written, and preview would otherwise expose them weeks ahead to
+        // anyone holding an unconfirmed assignment. (The same-day `plans` array
+        // deliberately keeps its status-agnostic behaviour — a volunteer
+        // standing at the venue must not be locked out by an unpublished plan.)
+        if (plan.status !== "published") continue;
+        upcomingCandidates.push(plan);
+        continue;
+      }
+
+      sameDayPlans.push(plan);
+    }
+
+    upcomingCandidates.sort((a, b) => planStartsAt(a) - planStartsAt(b));
+    for (const plan of upcomingCandidates) {
+      if (upcoming.length >= UPCOMING_PLANS_LIMIT) break;
+      if (!(await isActiveMember(plan.groupId))) continue;
+      upcoming.push({
+        planId: plan._id as string,
+        groupId: plan.groupId as string,
+        groupName: await groupNameFor(plan.groupId),
+        title: plan.title,
+        startsAt: planStartsAt(plan),
+        endsAt: planEndsAt(plan),
+      });
+    }
+
+    for (const plan of sameDayPlans) {
+      const planIdStr = plan._id as string;
+      const startsAt = planStartsAt(plan);
+      const endsAt = planEndsAt(plan);
+
+      // A stale assignment can outlive group membership: `groupMembers.remove`
+      // soft-deletes (sets `leftAt`) but leaves the `roleAssignments` row
+      // intact. Since we now admit *unconfirmed* assignments, skip any plan
+      // whose group the user has since left — otherwise a former member with a
+      // never-answered assignment would regain serving access (and the roster's
+      // teammate phone numbers). Confirmed-only never surfaced this because an
+      // unanswered assignment is unconfirmed.
+      if (!(await isActiveMember(plan.groupId))) continue;
+
+      // The user's assignments on this plan (any status), from the set above.
+      const planAssignments = nonDeclined.filter(
+        (a) => (a.planId as string) === planIdStr,
+      );
+      // Auto-entry stays confirmed-only: only drop a *confirmed* volunteer
+      // straight into serving mode. Unconfirmed people are eligible but must
+      // tap in themselves.
+      const hasConfirmed = planAssignments.some((a) => a.status === "confirmed");
+      const autoEnter =
+        hasConfirmed && now >= startsAt - AUTO_ENTER_LEAD_MS && now <= endsAt;
+
+      // Team ids the user is on (non-declined) for this plan.
+      const teamIds = [
+        ...new Set(planAssignments.map((a) => a.teamId as string)),
+      ];
+
+      const { teamChannelIds, meetingChannelIds } = await servingChannelArrays(
+        ctx,
+        plan,
+      );
+
+      entries.push({
+        planId: plan._id as string,
+        groupId: plan.groupId as string,
+        groupName: await groupNameFor(plan.groupId),
+        title: plan.title,
+        startsAt,
+        endsAt,
+        teamIds,
+        teamNames: await Promise.all(
+          teamIds.map((id) => teamNameFor(id as Id<"teams">)),
+        ),
+        teamChannelIds,
+        meetingChannelIds,
+        autoEnter,
+      });
+    }
+
+    // Soonest-first so the first entry is the natural default. (`upcoming` is
+    // already in that order — its candidates were sorted before the capped
+    // membership pass above.)
+    entries.sort((a, b) => a.startsAt - b.startsAt);
+
+    const plans: ServingPlan[] = entries.map(
+      ({ autoEnter: _autoEnter, ...plan }) => plan,
+    );
+    const activePlan: ServingPlan | null = plans[0] ?? null;
+    // Auto-enter only when exactly ONE plan is auto-eligible (confirmed + inside
+    // the auto-enter window). Gating on the count of auto-eligible entries — not
+    // the total non-declined plan count — keeps a confirmed volunteer's
+    // auto-entry unchanged even when they also hold an unrelated *unconfirmed*
+    // assignment on a different same-day plan (which is eligible but never
+    // auto-entered).
+    const autoEntries = entries.filter((e) => e.autoEnter);
+    const autoEnter = autoEntries.length === 1;
+
+    return {
+      eligible: plans.length > 0,
+      autoEnter,
+      activePlan,
+      plans,
+      upcomingPlans: upcoming,
+    };
+  },
+});
+
+/** A channel the user will belong to for a plan but isn't an active member of yet. */
+type UpcomingChannel = {
+  channelId: Id<"chatChannels">;
+  name: string;
+  kind: "team" | "cross_team";
+  availableAt: number;
+};
+
+/**
+ * Serving-mode "coming soon" channels: the team + cross-team channels the
+ * CURRENT user WILL be added to for this plan (via the rotation engine in
+ * `teamChannelSync.ts`) but is NOT yet an active member of. These exist as
+ * `chatChannels` rows already, but the user is only mirrored into
+ * `chatChannelMembers` inside a rotation window starting
+ * `eventDate − ADD_DAYS_BEFORE days`, so before that they don't appear in the
+ * (membership-filtered) serving inbox. The serving inbox renders these as
+ * non-tappable "ghost" cards showing when the channel opens.
+ *
+ * Scope is the user's OWN teams on the plan — their non-declined role
+ * assignments (unconfirmed included, mirroring team-chat membership) — not
+ * every team on the plan:
+ *   - team channels: `teams.channelId` for each team the user is assigned to;
+ *   - cross-team channels (`channelType === "cross_team"`): any whose
+ *     `crossTeamSync.selectors` match one of the user's non-declined assignments
+ *     (same `sourceTeamId`, and matching `roleId` when the selector pins one).
+ * Channels the user is already an active member of (`chatChannelMembers` with
+ * `leftAt === undefined`) are excluded — those render as real rows.
+ *
+ * `availableAt = plan.eventDate − ADD_DAYS_BEFORE * MS_PER_DAY`. Returns `[]`
+ * when there's nothing upcoming. Membership-gated like the rest of the plan
+ * surface.
+ *
+ * Takes a LIST of plan ids — serving mode spans every plan the user is serving
+ * today — and unions the upcoming channels across them, deduped by channel id
+ * (a channel shared by two plans shows once, using the earliest `availableAt`).
+ */
+export const getServingUpcomingChannels = query({
+  args: { token: v.string(), planIds: v.array(v.id("eventPlans")) },
+  handler: async (ctx, args): Promise<UpcomingChannel[]> => {
+    const userId = await requireAuth(ctx, args.token);
+
+    const result: UpcomingChannel[] = [];
+    const seen = new Set<string>();
+
+    for (const planId of args.planIds) {
+      const plan = await ctx.db.get(planId);
+      if (!plan) continue;
+      await requireGroupMember(ctx, plan.groupId, userId);
+
+      // The user's non-declined assignments on this plan → the teams they'll be
+      // in. Unconfirmed volunteers are mirrored into team channels too (team
+      // chat membership already includes everyone who hasn't declined), so their
+      // "coming soon" channels should resolve the same way.
+      const planAssignments = await ctx.db
+        .query("roleAssignments")
+        .withIndex("by_plan", (q) => q.eq("planId", planId))
+        .filter((q) => q.eq(q.field("userId"), userId))
+        .collect();
+      const serving = planAssignments.filter((a) => a.status !== "declined");
+      if (serving.length === 0) continue;
+
+      const availableAt = plan.eventDate - ADD_DAYS_BEFORE * MS_PER_DAY;
+
+      // Candidate channels (may include channels the user is already in — those
+      // are filtered out below).
+      const candidates: Array<Omit<UpcomingChannel, "availableAt">> = [];
+
+      // (a) Team channels — one per team the user is assigned to (non-declined).
+      const teamIds = new Set<string>(serving.map((a) => a.teamId as string));
+      for (const teamId of teamIds) {
+        const team = await ctx.db.get(teamId as Id<"teams">);
+        if (team?.channelId && team.isArchived !== true) {
+          candidates.push({
+            channelId: team.channelId,
+            name: team.name,
+            kind: "team",
+          });
+        }
+      }
+
+      // (b) Cross-team channels whose selectors match one of the user's
+      // non-declined assignments. Cross-team channels are rare, so a filtered
+      // scan is fine (mirrors `reconcileCrossTeamChannelsForSource`).
+      const crossChannels = await ctx.db
+        .query("chatChannels")
+        .filter((q) => q.eq(q.field("channelType"), "cross_team"))
+        .collect();
+      for (const ch of crossChannels) {
+        if (ch.isArchived === true) continue;
+        const selectors = ch.crossTeamSync?.selectors ?? [];
+        const willBeMember = serving.some((a) =>
+          selectors.some(
+            (s) =>
+              (s.sourceTeamId as string) === (a.teamId as string) &&
+              (s.roleId === undefined ||
+                (s.roleId as string) === (a.roleId as string)),
+          ),
+        );
+        if (willBeMember) {
+          candidates.push({
+            channelId: ch._id,
+            name: ch.name,
+            kind: "cross_team",
+          });
+        }
+      }
+
+      // Exclude channels the user is already an active member of, and dedupe
+      // across all plans (a channel already emitted for an earlier plan is kept
+      // as-is — earliest `availableAt` wins).
+      for (const candidate of candidates) {
+        const key = candidate.channelId as string;
+        if (seen.has(key)) continue;
+        seen.add(key);
+
+        const memberRows = await ctx.db
+          .query("chatChannelMembers")
+          .withIndex("by_channel_user", (q) =>
+            q.eq("channelId", candidate.channelId).eq("userId", userId),
+          )
+          .collect();
+        const isActiveMember = memberRows.some((r) => r.leftAt === undefined);
+        if (isActiveMember) continue;
+
+        result.push({ ...candidate, availableAt });
+      }
+    }
+
+    return result;
+  },
+});
+
+/** One serving teammate card in the Team roster grid. */
+type ServingTeamPerson = {
+  userId: string;
+  displayName: string;
+  firstName: string | null;
+  /** The role they fill on this team for this plan, e.g. "Vocals". */
+  roleName: string;
+  roleColor: string | null;
+  profilePhoto: string | null;
+  /** Their phone number, if on file — powers the "Text" action. Null otherwise. */
+  phone: string | null;
+  /** True for the current user's own card (no message/text actions on self). */
+  isSelf: boolean;
+  /**
+   * Whether this person has accepted their assignment. Declined people are
+   * never included, so this is always `"confirmed"` or `"unconfirmed"`; the
+   * client badges the unconfirmed ones.
+   */
+  status: "confirmed" | "unconfirmed";
+};
+
+/** One team column in a plan's Team roster grid. */
+type ServingTeamColumn = {
+  teamId: string;
+  name: string;
+  people: ServingTeamPerson[];
+};
+
+/**
+ * One plan section in the Team roster grid. `groupName` names the campus that
+ * rostered the viewer — without it two same-day plans stack as two identically
+ * headed sections. See `ServingPlan`.
+ */
+type ServingTeamPlan = {
+  planId: string;
+  groupName: string;
+  title: string;
+  eventDate: number;
+  teams: ServingTeamColumn[];
+};
+
+/**
+ * Serving-mode "Team" grid: who is serving alongside the current user, grouped
+ * by plan then by team. For EVERY plan the user can currently serve (same
+ * eligibility window as `getServingEligibility` — a non-declined assignment plus
+ * "now" inside the plan's same-day window), returns each team that has at least
+ * one non-declined volunteer as a column, and each volunteer as a card (name,
+ * the role they fill, avatar, phone for the day-of "Text" action, and their
+ * accept `status` so the client can badge the unconfirmed ones).
+ *
+ * Includes people who are still *unconfirmed* (assigned but not yet accepted) —
+ * they're "more than likely to still come," so they belong on the day-of
+ * roster, tagged as unconfirmed. Only *declined* people are hidden.
+ *
+ * One card per (user, role) non-declined assignment — a person filling two roles
+ * on the same team shows two cards (each with its own status, so one role can
+ * read confirmed while the other reads unconfirmed). `isSelf` flags the current
+ * user's own cards so the client can suppress the message/text actions on them.
+ *
+ * Plans whose group the caller has since left are skipped (a soft-deleted
+ * membership can outlive an unconfirmed assignment), so a former member can't
+ * reach the roster. Phone numbers are surfaced only among people serving the
+ * same event — the day-of coordination context the grid exists for.
+ *
+ * Auth: any authenticated user.
+ */
+export const getServingTeamRoster = query({
+  args: { token: v.string() },
+  handler: async (ctx, args): Promise<{ plans: ServingTeamPlan[] }> => {
+    const userId = await requireAuth(ctx, args.token);
+    const now = Date.now();
+
+    // Plans the user is on, non-declined (mirrors getServingEligibility's
+    // window and predicate — unconfirmed people count, declined don't).
+    const myAssignments = await ctx.db
+      .query("roleAssignments")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .collect();
+    const nonDeclined = myAssignments.filter((a) => a.status !== "declined");
+    const planIds = [...new Set(nonDeclined.map((a) => a.planId as string))];
+
+    const eligiblePlans: Doc<"eventPlans">[] = [];
+    for (const planIdStr of planIds) {
+      const plan = await ctx.db.get(planIdStr as Id<"eventPlans">);
+      if (!plan) continue;
+      const startsAt = planStartsAt(plan);
+      const endsAt = planEndsAt(plan);
+      if (now < startsAt - SAME_DAY_LEAD_MS || now > endsAt) continue;
+      // Skip plans whose group the user has left (stale unconfirmed assignment)
+      // — mirrors getServingEligibility so a former member can't reach the
+      // roster and its teammate phone numbers. See the note there.
+      if (!(await isActiveGroupMember(ctx, plan.groupId, userId))) continue;
+      eligiblePlans.push(plan);
+    }
+    // Soonest-first so the grid's plan sections read in event order.
+    eligiblePlans.sort((a, b) => planStartsAt(a) - planStartsAt(b));
+
+    // Resolve every team/role/user referenced across the eligible plans once.
+    const teamCache = new Map<string, Doc<"teams"> | null>();
+    const roleCache = new Map<string, Doc<"teamRoles"> | null>();
+    const userCache = new Map<string, Doc<"users"> | null>();
+    const groupCache = new Map<string, Doc<"groups"> | null>();
+    const getGroupName = async (id: Id<"groups">): Promise<string> => {
+      const key = id as string;
+      if (!groupCache.has(key)) groupCache.set(key, await ctx.db.get(id));
+      return groupCache.get(key)?.name ?? "";
+    };
+    const getTeam = async (id: string) => {
+      if (!teamCache.has(id))
+        teamCache.set(id, await ctx.db.get(id as Id<"teams">));
+      return teamCache.get(id) ?? null;
+    };
+    const getRole = async (id: string) => {
+      if (!roleCache.has(id))
+        roleCache.set(id, await ctx.db.get(id as Id<"teamRoles">));
+      return roleCache.get(id) ?? null;
+    };
+    const getUser = async (id: string) => {
+      if (!userCache.has(id))
+        userCache.set(id, await ctx.db.get(id as Id<"users">));
+      return userCache.get(id) ?? null;
+    };
+
+    const plans: ServingTeamPlan[] = [];
+    for (const plan of eligiblePlans) {
+      const assignments = (
+        await ctx.db
+          .query("roleAssignments")
+          .withIndex("by_plan", (q) => q.eq("planId", plan._id))
+          .collect()
+      ).filter((a) => a.status !== "declined");
+
+      // Group non-declined assignments by team, de-duping identical (user, role)
+      // rows so a double-written assignment can't produce a duplicate card.
+      const byTeam = new Map<string, typeof assignments>();
+      const seen = new Set<string>();
+      for (const a of assignments) {
+        const dedupeKey = `${a.userId}:${a.roleId}:${a.teamId}`;
+        if (seen.has(dedupeKey)) continue;
+        seen.add(dedupeKey);
+        const teamId = a.teamId as string;
+        (byTeam.get(teamId) ?? byTeam.set(teamId, []).get(teamId)!).push(a);
+      }
+
+      const teams: ServingTeamColumn[] = [];
+      for (const [teamId, teamAssignments] of byTeam) {
+        const team = await getTeam(teamId);
+        if (!team || team.isArchived === true) continue;
+
+        const people: ServingTeamPerson[] = [];
+        for (const a of teamAssignments) {
+          const [role, user] = await Promise.all([
+            getRole(a.roleId as string),
+            getUser(a.userId as string),
+          ]);
+          people.push({
+            userId: a.userId as string,
+            displayName: getDisplayName(user?.firstName, user?.lastName),
+            firstName: user?.firstName ?? null,
+            roleName: role?.name ?? "Role",
+            roleColor: role?.color ?? null,
+            profilePhoto: user?.profilePhoto ?? null,
+            phone: user?.phone ?? null,
+            isSelf: (a.userId as string) === (userId as string),
+            status: a.status === "confirmed" ? "confirmed" : "unconfirmed",
+          });
+        }
+        people.sort((x, y) => x.displayName.localeCompare(y.displayName));
+        teams.push({
+          teamId,
+          name: team.name,
+          people,
+        });
+      }
+      teams.sort((x, y) => x.name.localeCompare(y.name));
+
+      plans.push({
+        planId: plan._id as string,
+        groupName: await getGroupName(plan.groupId),
+        title: plan.title,
+        eventDate: plan.eventDate,
+        teams,
+      });
+    }
+
+    return { plans };
+  },
+});

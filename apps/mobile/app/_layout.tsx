@@ -11,16 +11,18 @@ if (typeof URL !== 'undefined' && !URL.canParse) {
 }
 
 import React, { useMemo, useEffect, useState } from "react";
-import { Platform, View, ActivityIndicator, StyleSheet } from "react-native";
-import { Stack, useSegments } from "expo-router";
+import { Platform, View, ActivityIndicator } from "react-native";
+import { Stack } from "expo-router";
 import * as Font from "expo-font";
 import { Ionicons } from "@expo/vector-icons";
 import { StatusBar } from "expo-status-bar";
-import { SafeAreaProvider, useSafeAreaInsets } from "react-native-safe-area-context";
+import { SafeAreaProvider } from "react-native-safe-area-context";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 // Note: KeyboardProvider from react-native-keyboard-controller was causing conflicts
 // with Stream Chat's overlay system during interactive keyboard dismiss
 import { AuthProvider } from "@providers/AuthProvider";
+import { AuthErrorBoundary } from "@providers/AuthErrorBoundary";
+import { KnicksModeSync } from "@providers/KnicksModeSync";
 import { EnvironmentProvider, useEnvironment } from "@providers/EnvironmentProvider";
 import { ImageViewerProvider } from "@providers/ImageViewerProvider";
 import { NotificationProvider } from "@providers/NotificationProvider";
@@ -31,10 +33,12 @@ import { useTheme } from "@hooks/useTheme";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ErrorBoundary } from "@components/ErrorBoundary";
 import { TestFlightBanner } from "@components/ui/TestFlightBanner";
-import { StatusBar as BottomStatusBar, useStatusBarVisible, STATUS_BAR_CONTENT_HEIGHT } from "@components/ui/StatusBar";
+import { DemoBanner } from "@components/ui/DemoBanner";
+import { StatusBarAwareContainer } from "@components/ui/StatusBarAwareContainer";
 import { ConnectionProvider } from "@providers/ConnectionProvider";
 import { NativeUpdateModal } from "@components/ui/NativeUpdateModal";
 import { OTAUpdateModal } from "@components/ui/OTAUpdateModal";
+import { PostUpdateRecoveryBanner } from "@components/ui/PostUpdateRecoveryBanner";
 import { OTAUpdateProvider } from "@providers/OTAUpdateProvider";
 import { BirthdayCollectionModal } from "@components/legal/BirthdayCollectionModal";
 import { initializeMobileApiClient } from "@services/api/init";
@@ -96,8 +100,18 @@ function ThemedStack() {
           gestureEnabled: true,
         }}
       />
+      {/* Group detail is a pushed page (card), not a modal: a modal would
+          obscure screens pushed after it — e.g. /inbox/[groupId]/create
+          opened from the channels list rendered behind the modal. */}
       <Stack.Screen
-        name="groups"
+        name="groups/[group_id]/index"
+        options={{
+          animation: "slide_from_right",
+          gestureEnabled: true,
+        }}
+      />
+      <Stack.Screen
+        name="groups/[group_id]/edit"
         options={{
           presentation: "modal",
           animation: "slide_from_bottom",
@@ -106,6 +120,15 @@ function ThemedStack() {
       />
       <Stack.Screen
         name="e"
+        options={{
+          presentation: "modal",
+          animation: "slide_from_right",
+          gestureEnabled: true,
+        }}
+      />
+      {/* Public availability pages (/a/[token]) — app-optional, no auth gate */}
+      <Stack.Screen
+        name="a"
         options={{
           presentation: "modal",
           animation: "slide_from_right",
@@ -137,42 +160,46 @@ function ThemedStack() {
           gestureEnabled: true,
         }}
       />
+      {/* Rostering routes - leader scheduling screens, slide from right like inbox */}
+      <Stack.Screen
+        name="rostering"
+        options={{
+          animation: "slide_from_right",
+          gestureEnabled: true,
+        }}
+      />
+      {/* Serving-mode pushed screens (e.g. the Team who's-serving grid),
+          slide from right like inbox/rostering. */}
+      <Stack.Screen
+        name="serving"
+        options={{
+          animation: "slide_from_right",
+          gestureEnabled: true,
+        }}
+      />
+      {/* Community finance onboarding (ADR-032) — a full pushed screen, NOT
+          inside the (user) modal group: a multi-step form with a keyboard up
+          must not be swipe-to-dismissable as a sheet. */}
+      <Stack.Screen
+        name="finance-setup"
+        options={{
+          animation: "slide_from_right",
+          gestureEnabled: true,
+        }}
+      />
+      {/* Scheduling deep links — assignment request accept/decline screen */}
+      <Stack.Screen
+        name="scheduling"
+        options={{
+          presentation: "modal",
+          animation: "slide_from_bottom",
+          gestureEnabled: true,
+        }}
+      />
       {/* Onboarding - browser-only flow for community proposals, setup, and billing */}
       <Stack.Screen name="onboarding" />
-      <Stack.Screen name="billing" />
+      <Stack.Screen name="billing/[communityId]" />
     </Stack>
-  );
-}
-
-/**
- * Container that adds bottom safe area padding + extra space for the
- * status bar banner when it's visible. This keeps ALL screens (tabs,
- * chat, modals) above the banner without per-screen fixes.
- */
-function StatusBarAwareContainer({ children }: { children: React.ReactNode }) {
-  const insets = useSafeAreaInsets();
-  const isStatusBarVisible = useStatusBarVisible();
-  const segments = useSegments();
-  const { colors } = useTheme();
-
-  // Landing page needs edge-to-edge design with dark background
-  const segmentArray = segments as string[];
-  const isLandingPage = segmentArray.includes("landing") || (segmentArray[0] === "(auth)" && segmentArray[1] === "landing");
-
-  // Keep padding consistent to prevent jank
-  const bottomPadding = insets.bottom + (isStatusBarVisible ? STATUS_BAR_CONTENT_HEIGHT : 0);
-
-  return (
-    <>
-      {/* Background layer for landing page - matches image bottom fade */}
-      {isLandingPage && (
-        <View style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.landing }]} />
-      )}
-      <View style={{ flex: 1, backgroundColor: isLandingPage ? "transparent" : colors.background, paddingBottom: bottomPadding }}>
-        {children}
-      </View>
-      <BottomStatusBar />
-    </>
   );
 }
 
@@ -208,6 +235,8 @@ function AppLayout() {
       <ConnectionProvider>
         <QueryClientProvider client={queryClient}>
         <AuthProvider>
+          <AuthErrorBoundary>
+          <KnicksModeSync />
           <PostHogProvider>
             <ImageViewerProvider>
             <ChatPrefetchProvider>
@@ -217,14 +246,19 @@ function AppLayout() {
                     <NativeUpdateModal />
                     <OTAUpdateModal />
                     <BirthdayCollectionModal />
+                    <PostUpdateRecoveryBanner />
                     <TestFlightBanner />
                     <ThemedStack />
+                    {/* After the stack: renders as a persistent strip at the
+                        bottom of every screen while the community is a demo. */}
+                    <DemoBanner />
                   </StatusBarAwareContainer>
               </NotificationProvider>
               </PrefetchExecutorRegistration>
             </ChatPrefetchProvider>
             </ImageViewerProvider>
           </PostHogProvider>
+          </AuthErrorBoundary>
         </AuthProvider>
         </QueryClientProvider>
       </ConnectionProvider>

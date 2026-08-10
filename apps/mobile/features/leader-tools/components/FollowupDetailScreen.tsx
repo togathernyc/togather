@@ -12,7 +12,11 @@ import {
   Modal,
   Pressable,
   Image,
+  KeyboardAvoidingView,
+  Platform,
 } from "react-native";
+import DateTimePicker from "@react-native-community/datetimepicker";
+import * as Clipboard from "expo-clipboard";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -41,12 +45,14 @@ const SNOOZE_OPTIONS: { value: SnoozeDuration; label: string }[] = [
 export function FollowupDetailContent({
   groupId,
   memberId,
+  memberIdKind = "communityPeople",
   onClose,
   scrollToNotes,
   scrollToTasks,
 }: {
   groupId: string;
   memberId: string;
+  memberIdKind?: "communityPeople" | "groupMember";
   onClose?: () => void;
   scrollToNotes?: boolean;
   scrollToTasks?: boolean;
@@ -92,6 +98,21 @@ export function FollowupDetailContent({
   } | null>(null);
   const [isConvertingFollowup, setIsConvertingFollowup] = useState(false);
 
+  // Log Past Contact modal
+  const [showLogPastModal, setShowLogPastModal] = useState(false);
+  const [logPastType, setLogPastType] = useState<"call" | "text" | "followed_up">("followed_up");
+  const [logPastDate, setLogPastDate] = useState<Date>(() => new Date());
+  const [logPastNote, setLogPastNote] = useState("");
+  const [showLogPastDatePicker, setShowLogPastDatePicker] = useState(false);
+
+  // Quick-action note modal — captures an optional note before logging an
+  // in-person / call / text follow-up. `quickActionType` doubles as the
+  // visibility flag (null = closed).
+  const [quickActionType, setQuickActionType] = useState<
+    "followed_up" | "call" | "text" | null
+  >(null);
+  const [quickActionNote, setQuickActionNote] = useState("");
+
   // Reset local state when switching between members (desktop side-sheet reuses component)
   useEffect(() => {
     setNoteText("");
@@ -114,21 +135,34 @@ export function FollowupDetailContent({
     setTagInput("");
     setConvertEntry(null);
     setIsConvertingFollowup(false);
+    setShowLogPastModal(false);
+    setLogPastType("followed_up");
+    setLogPastDate(new Date());
+    setLogPastNote("");
+    setShowLogPastDatePicker(false);
+    setQuickActionType(null);
+    setQuickActionNote("");
   }, [memberId]);
 
   const group_id = groupId;
   const member_id = memberId;
 
   // Fetch member history using Convex.
-  // Both per-group and cross-group modes now use communityPeople records via adaptCommunityPerson,
-  // so memberId is always a communityPeople ID.
+  // Per-group / cross-group entry points pass a communityPeople ID; the
+  // followup_assigned push notification route passes a groupMembers ID, so the
+  // caller signals which kind of ID this is via memberIdKind.
   const historyData = useAuthenticatedQuery(
     api.functions.communityPeople.history,
     member_id
-      ? {
-          communityPeopleId: member_id as Id<"communityPeople">,
-          currentUserId: currentUserId,
-        }
+      ? memberIdKind === "groupMember"
+        ? {
+            groupMemberId: member_id as Id<"groupMembers">,
+            currentUserId: currentUserId,
+          }
+        : {
+            communityPeopleId: member_id as Id<"communityPeople">,
+            currentUserId: currentUserId,
+          }
       : "skip"
   );
 
@@ -228,6 +262,13 @@ export function FollowupDetailContent({
     };
   }, [historyData]);
 
+  // All mutations on this screen take a communityPeople ID. When the route
+  // param is a groupMembers ID (notification deep link), use the resolved
+  // communityPeople ID returned by the history query instead.
+  const communityPeopleId = historyData?.member?.id as
+    | Id<"communityPeople">
+    | undefined;
+
   // Convex mutations (auto-inject token)
   const addFollowup = useAuthenticatedMutation(api.functions.communityPeople.addFollowup);
   const snoozeMember = useAuthenticatedMutation(api.functions.communityPeople.snooze);
@@ -236,32 +277,41 @@ export function FollowupDetailContent({
   const convertFollowupTypeMut = useAuthenticatedMutation(
     api.functions.communityPeople.convertFollowupType,
   );
+  const setActiveMut = useAuthenticatedMutation(
+    api.functions.communityPeople.setActive,
+  );
+  const [isTogglingArchive, setIsTogglingArchive] = useState(false);
 
   // Confirmation hook — logs action only after user confirms they completed it
   const { setPendingAction } = useContactConfirmation({
     onConfirm: (type) => {
-      addFollowupMutation.mutate({
-        communityPeopleId: member_id || "",
-        type,
-        content: type === "call" ? "Made a phone call" : "Sent a text message",
-      });
+      // Instead of logging immediately on "Yes", open the note modal so the
+      // leader can capture what came of the call / text.
+      if (type === "email") return;
+      setQuickActionNote("");
+      setQuickActionType(type);
     },
   });
 
-  // Mutation wrapper objects for backward compatibility
+  // Mutation wrapper objects for backward compatibility.
+  // Returns true on success / false on failure so callers can decide whether
+  // to close a modal or preserve the user's typed input.
   const addFollowupMutation = {
-    mutate: async (args: { communityPeopleId: string; type: string; content?: string }) => {
+    mutate: async (args: { communityPeopleId: string; type: string; content?: string; occurredAt?: number }): Promise<boolean> => {
       setIsAddingFollowup(true);
       try {
         await addFollowup({
           communityPeopleId: args.communityPeopleId as Id<"communityPeople">,
           type: args.type as "note" | "call" | "text" | "followed_up",
           content: args.content,
+          occurredAt: args.occurredAt,
         });
         setNoteText("");
         // Convex auto-updates reactive queries
+        return true;
       } catch (err: any) {
         Alert.alert("Error", err.message || "Failed to add note");
+        return false;
       } finally {
         setIsAddingFollowup(false);
       }
@@ -339,25 +389,97 @@ export function FollowupDetailContent({
   };
 
   const handleMarkFollowedUp = () => {
-    addFollowupMutation.mutate({
-      communityPeopleId: member_id || "",
-      type: "followed_up",
-      content: "Marked as followed up",
+    if (!communityPeopleId) return;
+    setQuickActionNote("");
+    setQuickActionType("followed_up");
+  };
+
+  // Archive (set inactive) hides someone from the people table by default;
+  // unarchive brings them back. Archiving applies across all their groups.
+  const isArchived = historyData?.member?.isActive === false;
+  const handleToggleArchive = () => {
+    if (!communityPeopleId || isTogglingArchive) return;
+    const nextActive = isArchived;
+    const memberName =
+      `${historyData?.member?.firstName ?? ""} ${historyData?.member?.lastName ?? ""}`.trim() ||
+      "this person";
+    Alert.alert(
+      nextActive ? "Unarchive person" : "Archive person",
+      nextActive
+        ? `Bring ${memberName} back into the people table?`
+        : `Archive ${memberName}? They'll be hidden from the people table until they open the app again or you unarchive them.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: nextActive ? "Unarchive" : "Archive",
+          style: nextActive ? "default" : "destructive",
+          onPress: async () => {
+            setIsTogglingArchive(true);
+            try {
+              await setActiveMut({
+                communityPeopleId,
+                isActive: nextActive,
+              });
+            } catch (err: any) {
+              Alert.alert(
+                "Error",
+                err?.message ||
+                  `Failed to ${nextActive ? "unarchive" : "archive"} ${memberName}`,
+              );
+            } finally {
+              setIsTogglingArchive(false);
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  const handleSubmitQuickAction = async () => {
+    if (!communityPeopleId || !quickActionType) return;
+    const ok = await addFollowupMutation.mutate({
+      communityPeopleId,
+      type: quickActionType,
+      content: quickActionNote.trim() || undefined,
     });
+    if (!ok) return; // keep the modal + typed note so the user can retry
+    setQuickActionType(null);
+    setQuickActionNote("");
   };
 
   const handleAddNote = () => {
-    if (!noteText.trim()) return;
+    if (!noteText.trim() || !communityPeopleId) return;
     addFollowupMutation.mutate({
-      communityPeopleId: member_id || "",
+      communityPeopleId,
       type: "note",
       content: noteText.trim(),
     });
   };
 
+  const handleSubmitLogPast = async () => {
+    if (!communityPeopleId) return;
+    const occurredAt = logPastDate.getTime();
+    if (occurredAt > Date.now()) {
+      Alert.alert("Invalid date", "Past contact date cannot be in the future.");
+      return;
+    }
+    const ok = await addFollowupMutation.mutate({
+      communityPeopleId,
+      type: logPastType,
+      content: logPastNote.trim() || undefined,
+      occurredAt,
+    });
+    if (!ok) return; // keep the modal + typed note so the user can retry
+    setShowLogPastModal(false);
+    setLogPastNote("");
+    setLogPastDate(new Date());
+    setLogPastType("followed_up");
+  };
+
   const handleSnooze = (duration: SnoozeDuration) => {
+    if (!communityPeopleId) return;
     snoozeMutation.mutate({
-      communityPeopleId: member_id || "",
+      communityPeopleId,
       duration,
       note: snoozeNote.trim() || undefined,
     });
@@ -388,11 +510,11 @@ export function FollowupDetailContent({
   };
 
   const handleConvertFollowup = async (newType: "call" | "text" | "followed_up") => {
-    if (!convertEntry || !member_id) return;
+    if (!convertEntry || !communityPeopleId) return;
     setIsConvertingFollowup(true);
     try {
       await convertFollowupTypeMut({
-        communityPeopleId: member_id as Id<"communityPeople">,
+        communityPeopleId,
         followupId: convertEntry.id as Id<"memberFollowups">,
         newType,
       });
@@ -458,7 +580,7 @@ export function FollowupDetailContent({
       case "attendance_all_groups_pct":
         return `${rawValue}%`;
       case "consecutive_missed":
-        return `${rawValue} missed`;
+        return rawValue === 1 ? "1 week" : `${rawValue} weeks`;
       case "days_since_last_followup":
       case "days_since_last_text":
       case "days_since_last_call":
@@ -622,10 +744,39 @@ export function FollowupDetailContent({
           <Ionicons name={onClose ? "close" : "arrow-back"} size={24} color={colors.text} />
         </TouchableOpacity>
         <Text style={[styles.headerTitle, { color: colors.text }]}>{history?.toolDisplayName ?? "People"}</Text>
-        <View style={styles.headerSpacer} />
+        {/* Community admins reach the member-management controls (change role,
+            transfer primary admin, remove) from here — those live on the admin
+            person screen, which this check-in detail links out to. The member
+            id passed to that route is the Convex user id the backend returns on
+            the history member record. */}
+        {user?.is_admin && historyData?.member?.odUserId ? (
+          <TouchableOpacity
+            style={styles.backButton}
+            onPress={() =>
+              router.push(
+                `/(user)/admin/person/${historyData.member.odUserId}` as any,
+              )
+            }
+            accessibilityLabel="Manage member"
+          >
+            <Ionicons name="settings-outline" size={22} color={colors.text} />
+          </TouchableOpacity>
+        ) : (
+          <View style={styles.headerSpacer} />
+        )}
       </View>
 
-      <ScrollView ref={scrollViewRef} style={styles.content}>
+      <KeyboardAvoidingView
+        style={styles.flex1}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        keyboardVerticalOffset={Platform.OS === "ios" ? (onClose ? 56 : insets.top + 56) : 0}
+      >
+      <ScrollView
+        ref={scrollViewRef}
+        style={styles.content}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
+      >
         {/* Profile Section */}
         <View style={[styles.profileSection, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
           <TouchableOpacity
@@ -799,17 +950,54 @@ export function FollowupDetailContent({
               onPress={handleMarkFollowedUp}
               disabled={addFollowupMutation.isPending}
             >
-              <Ionicons name="checkmark-circle" size={24} color={colors.success} />
-              <Text style={[styles.quickActionText, { color: colors.text }]}>Done</Text>
+              <Ionicons name="hand-left" size={24} color={colors.success} />
+              <Text style={[styles.quickActionText, { color: colors.text }]}>In-person</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
               style={styles.quickAction}
-              onPress={() => setShowSnoozeModal(true)}
+              onPress={() => {
+                setLogPastType("followed_up");
+                setLogPastDate(new Date());
+                setLogPastNote("");
+                setShowLogPastModal(true);
+              }}
+              disabled={addFollowupMutation.isPending}
             >
-              <Ionicons name="time" size={24} color={colors.warning} />
-              <Text style={[styles.quickActionText, { color: colors.text }]}>Snooze</Text>
+              <Ionicons name="time-outline" size={24} color={colors.warning} />
+              <Text style={[styles.quickActionText, { color: colors.text }]}>Log past</Text>
             </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.quickAction}
+              onPress={handleToggleArchive}
+              disabled={isTogglingArchive}
+            >
+              <Ionicons
+                name={isArchived ? "archive" : "archive-outline"}
+                size={24}
+                color={isArchived ? colors.success : colors.iconSecondary}
+              />
+              <Text style={[styles.quickActionText, { color: colors.text }]}>
+                {isArchived ? "Unarchive" : "Archive"}
+              </Text>
+            </TouchableOpacity>
+
+            {/*
+              SNOOZE — temporarily hidden from the UI per UX feedback 2026-05-28.
+              All wiring is preserved (`handleSnooze`, `snoozeMutation`,
+              `showSnoozeModal` state, snooze Modal further down in this file,
+              and the `snooze` mutation in apps/convex/functions/communityPeople.ts).
+              To re-enable: paste the TouchableOpacity below back into this row.
+
+              <TouchableOpacity
+                style={styles.quickAction}
+                onPress={() => setShowSnoozeModal(true)}
+              >
+                <Ionicons name="time" size={24} color={colors.warning} />
+                <Text style={[styles.quickActionText, { color: colors.text }]}>Skip for…</Text>
+              </TouchableOpacity>
+            */}
           </View>
         </View>
 
@@ -818,10 +1006,26 @@ export function FollowupDetailContent({
           <View style={[styles.section, { backgroundColor: colors.surface }]}>
             <Text style={[styles.sectionTitle, { color: colors.text }]}>Contact</Text>
             {member.phone && (
-              <Text style={[styles.contactText, { color: colors.textSecondary }]}>{member.phone}</Text>
+              <TouchableOpacity
+                onPress={async () => {
+                  await Clipboard.setStringAsync(member.phone!);
+                  Alert.alert("Copied", `${member.phone} copied to clipboard.`);
+                }}
+                activeOpacity={0.6}
+              >
+                <Text style={[styles.contactText, { color: colors.textSecondary }]}>{member.phone}</Text>
+              </TouchableOpacity>
             )}
             {member.email && (
-              <Text style={[styles.contactText, { color: colors.textSecondary }]}>{member.email}</Text>
+              <TouchableOpacity
+                onPress={async () => {
+                  await Clipboard.setStringAsync(member.email!);
+                  Alert.alert("Copied", `${member.email} copied to clipboard.`);
+                }}
+                activeOpacity={0.6}
+              >
+                <Text style={[styles.contactText, { color: colors.textSecondary }]}>{member.email}</Text>
+              </TouchableOpacity>
             )}
           </View>
         )}
@@ -1182,6 +1386,7 @@ export function FollowupDetailContent({
 
         <View style={{ height: 100 }} />
       </ScrollView>
+      </KeyboardAvoidingView>
 
       {/* Convert history entry (e.g. note → text/call/in-person) */}
       <Modal
@@ -1263,6 +1468,237 @@ export function FollowupDetailContent({
             </TouchableOpacity>
           </Pressable>
         </Pressable>
+      </Modal>
+
+      {/* Quick-Action Note Modal — captures an optional note before logging
+          an in-person / call / text follow-up triggered from Quick Actions
+          (or the post-call/text "Did you ___?" confirmation flow). */}
+      <Modal
+        visible={quickActionType !== null}
+        transparent
+        animationType="fade"
+        onRequestClose={() => !addFollowupMutation.isPending && setQuickActionType(null)}
+      >
+        <Pressable
+          style={[styles.modalOverlay, { backgroundColor: colors.overlay }]}
+          onPress={() => !addFollowupMutation.isPending && setQuickActionType(null)}
+        >
+          <Pressable
+            style={[styles.modalContent, { backgroundColor: colors.modalBackground }]}
+            onPress={(e) => e.stopPropagation()}
+          >
+            <Text style={[styles.modalTitle, { color: colors.text }]}>
+              {quickActionType === "followed_up"
+                ? "Log in-person follow-up"
+                : quickActionType === "call"
+                  ? "Log call"
+                  : "Log text"}
+            </Text>
+            <Text style={[styles.modalSubtitle, { color: colors.textSecondary }]}>
+              Add a quick note if you want — what came of it, what they shared, anything to remember.
+            </Text>
+
+            <Text style={[styles.logPastFieldLabel, { color: colors.textSecondary }]}>Note (optional)</Text>
+            <TextInput
+              style={[styles.logPastNoteInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
+              placeholder={
+                quickActionType === "followed_up"
+                  ? "e.g. Caught up after service, talked through their week"
+                  : quickActionType === "call"
+                    ? "e.g. Chatted for 15 min, they're settling in fine"
+                    : "e.g. Sent a check-in, waiting to hear back"
+              }
+              placeholderTextColor={colors.inputPlaceholder}
+              value={quickActionNote}
+              onChangeText={setQuickActionNote}
+              multiline
+              numberOfLines={3}
+              textAlignVertical="top"
+              autoFocus
+            />
+
+            <TouchableOpacity
+              style={[
+                styles.logPastSubmitButton,
+                { backgroundColor: primaryColor },
+                addFollowupMutation.isPending && { opacity: 0.6 },
+              ]}
+              onPress={handleSubmitQuickAction}
+              disabled={addFollowupMutation.isPending}
+            >
+              {addFollowupMutation.isPending ? (
+                <ActivityIndicator size="small" color={colors.textInverse} />
+              ) : (
+                <Text style={[styles.logPastSubmitText, { color: colors.textInverse }]}>Log follow-up</Text>
+              )}
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.modalCancelButton}
+              onPress={() => setQuickActionType(null)}
+              disabled={addFollowupMutation.isPending}
+            >
+              <Text style={[styles.modalCancelText, { color: colors.textSecondary }]}>Cancel</Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Log Past Contact Modal */}
+      <Modal
+        visible={showLogPastModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => !addFollowupMutation.isPending && setShowLogPastModal(false)}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          style={{ flex: 1 }}
+        >
+        <Pressable
+          style={[styles.modalOverlay, { backgroundColor: colors.overlay }]}
+          onPress={() => !addFollowupMutation.isPending && setShowLogPastModal(false)}
+        >
+          <Pressable
+            style={[styles.modalContent, { backgroundColor: colors.modalBackground }]}
+            onPress={(e) => e.stopPropagation()}
+          >
+            <Text style={[styles.modalTitle, { color: colors.text }]}>Log Past Contact</Text>
+            <Text style={[styles.modalSubtitle, { color: colors.textSecondary }]}>
+              Record a call, text, or in-person contact that already happened.
+              Add a note so you remember what came of it.
+            </Text>
+
+            <Text style={[styles.logPastFieldLabel, { color: colors.textSecondary }]}>Type</Text>
+            <View style={styles.logPastTypeRow}>
+              {[
+                { value: "followed_up" as const, label: "In-person", icon: "checkmark-circle-outline" },
+                { value: "call" as const, label: "Call", icon: "call-outline" },
+                { value: "text" as const, label: "Text", icon: "chatbubble-outline" },
+              ].map((option) => {
+                const selected = logPastType === option.value;
+                return (
+                  <TouchableOpacity
+                    key={option.value}
+                    style={[
+                      styles.logPastTypeOption,
+                      {
+                        backgroundColor: selected ? primaryColor : colors.surfaceSecondary,
+                        borderColor: selected ? primaryColor : colors.border,
+                      },
+                    ]}
+                    onPress={() => setLogPastType(option.value)}
+                    disabled={addFollowupMutation.isPending}
+                  >
+                    <Ionicons
+                      name={option.icon as any}
+                      size={18}
+                      color={selected ? colors.textInverse : colors.text}
+                    />
+                    <Text
+                      style={[
+                        styles.logPastTypeText,
+                        { color: selected ? colors.textInverse : colors.text },
+                      ]}
+                    >
+                      {option.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            <Text style={[styles.logPastFieldLabel, { color: colors.textSecondary }]}>When</Text>
+            {Platform.OS === "ios" ? (
+              // Compact picker is itself the tappable date — pops a native
+              // calendar overlay so we don't have to embed (and theme) one
+              // inside this modal.
+              <View style={styles.logPastDateRow}>
+                <DateTimePicker
+                  value={logPastDate}
+                  mode="date"
+                  display="compact"
+                  themeVariant="light"
+                  maximumDate={new Date()}
+                  minimumDate={new Date(Date.now() - 365 * 24 * 60 * 60 * 1000)}
+                  onChange={(event, selected) => {
+                    if (event.type === "dismissed") return;
+                    if (selected) setLogPastDate(selected);
+                  }}
+                />
+              </View>
+            ) : (
+              <>
+                <TouchableOpacity
+                  style={[styles.logPastDateButton, { borderColor: colors.inputBorder, backgroundColor: colors.inputBackground }]}
+                  onPress={() => setShowLogPastDatePicker(true)}
+                  disabled={addFollowupMutation.isPending}
+                >
+                  <Ionicons name="calendar-outline" size={18} color={colors.textSecondary} />
+                  <Text style={[styles.logPastDateText, { color: colors.text }]}>
+                    {logPastDate.toLocaleDateString("en-US", {
+                      weekday: "short",
+                      month: "short",
+                      day: "numeric",
+                      year: "numeric",
+                    })}
+                  </Text>
+                </TouchableOpacity>
+                {showLogPastDatePicker && (
+                  <DateTimePicker
+                    value={logPastDate}
+                    mode="date"
+                    display="default"
+                    maximumDate={new Date()}
+                    minimumDate={new Date(Date.now() - 365 * 24 * 60 * 60 * 1000)}
+                    onChange={(event, selected) => {
+                      setShowLogPastDatePicker(false);
+                      if (event.type === "dismissed") return;
+                      if (selected) setLogPastDate(selected);
+                    }}
+                  />
+                )}
+              </>
+            )}
+
+            <Text style={[styles.logPastFieldLabel, { color: colors.textSecondary }]}>Note (optional)</Text>
+            <TextInput
+              style={[styles.logPastNoteInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
+              placeholder="e.g. Texted a while back, didn't get back to me — will try again later"
+              placeholderTextColor={colors.inputPlaceholder}
+              value={logPastNote}
+              onChangeText={setLogPastNote}
+              multiline
+              numberOfLines={3}
+              textAlignVertical="top"
+            />
+
+            <TouchableOpacity
+              style={[
+                styles.logPastSubmitButton,
+                { backgroundColor: primaryColor },
+                addFollowupMutation.isPending && { opacity: 0.6 },
+              ]}
+              onPress={handleSubmitLogPast}
+              disabled={addFollowupMutation.isPending}
+            >
+              {addFollowupMutation.isPending ? (
+                <ActivityIndicator size="small" color={colors.textInverse} />
+              ) : (
+                <Text style={[styles.logPastSubmitText, { color: colors.textInverse }]}>
+                  Log Contact
+                </Text>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.modalCancelButton}
+              onPress={() => !addFollowupMutation.isPending && setShowLogPastModal(false)}
+            >
+              <Text style={[styles.modalCancelText, { color: colors.textSecondary }]}>Cancel</Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* Snooze Modal */}
@@ -1549,7 +1985,11 @@ export function FollowupDetailContent({
 /**
  * Full-screen route wrapper — adds DragHandle.
  */
-export function FollowupDetailScreen() {
+export function FollowupDetailScreen({
+  memberIdKind,
+}: {
+  memberIdKind?: "communityPeople" | "groupMember";
+} = {}) {
   const { colors } = useTheme();
   const { group_id, member_id, cross_group } = useLocalSearchParams<{
     group_id: string;
@@ -1563,6 +2003,7 @@ export function FollowupDetailScreen() {
       <FollowupDetailContent
         groupId={group_id || ""}
         memberId={member_id || ""}
+        memberIdKind={memberIdKind}
       />
     </>
   );
@@ -1570,6 +2011,9 @@ export function FollowupDetailScreen() {
 
 const styles = StyleSheet.create({
   container: {
+    flex: 1,
+  },
+  flex1: {
     flex: 1,
   },
   loadingContainer: {
@@ -1705,6 +2149,69 @@ const styles = StyleSheet.create({
   },
   quickActionTextDisabled: {
     opacity: 0.5,
+  },
+  logPastFieldLabel: {
+    fontSize: 12,
+    fontWeight: "600",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginTop: 12,
+    marginBottom: 6,
+  },
+  logPastTypeRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginBottom: 4,
+  },
+  logPastTypeOption: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  logPastTypeText: {
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  logPastDateButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  logPastDateText: {
+    fontSize: 14,
+  },
+  logPastDateRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 4,
+  },
+  logPastNoteInput: {
+    minHeight: 72,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  logPastSubmitButton: {
+    marginTop: 16,
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: "center",
+  },
+  logPastSubmitText: {
+    fontSize: 15,
+    fontWeight: "700",
   },
   contactText: {
     fontSize: 14,

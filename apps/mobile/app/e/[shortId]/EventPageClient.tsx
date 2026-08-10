@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -60,10 +60,15 @@ function TextWithLinks({ text, style }: { text: string; style?: any }) {
   );
 }
 
-import { Ionicons } from "@expo/vector-icons";
+import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import { AppImage } from "@components/ui";
+import { AppImage, Avatar } from "@components/ui";
 import { getMediaUrl } from "@/utils/media";
+import {
+  formatHostLine,
+  hostDisplayName,
+  type HostRow,
+} from "@/features/events/utils/hostAttribution";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 import { useTheme } from "@hooks/useTheme";
 import {
@@ -83,6 +88,9 @@ import { AttendanceConfirmationModal } from "@/features/events/components/Attend
 import { DOMAIN_CONFIG } from "@togather/shared";
 import * as Clipboard from "expo-clipboard";
 import { EventBlastSheet } from "@/features/leader-tools/components/EventBlastSheet";
+import { InviteGroupMembersSheet } from "@/features/leader-tools/components/InviteGroupMembersSheet";
+import { EventInvitesLog } from "@/features/leader-tools/components/EventInvitesLog";
+import { resolveAttendanceEntry } from "@/features/leader-tools/utils/checkIn";
 import { EventActivity } from "./EventActivity";
 
 /**
@@ -137,6 +145,9 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
   const router = useRouter();
   const segments = useSegments();
   const insets = useSafeAreaInsets();
+  // Outer scroll container ref — passed to EventActivity so tapping a thread
+  // "ghost" pointer can scroll the page up to the real original comment.
+  const scrollRef = useRef<ScrollView>(null);
   const { isAuthenticated, refreshUser, setCommunity, community, user } = useAuth();
 
   // Get user's timezone (default to America/New_York if not set)
@@ -152,6 +163,7 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
   const [isJoiningCommunity, setIsJoiningCommunity] = useState(false);
   const [showAttendanceModal, setShowAttendanceModal] = useState(false);
   const [showBlastSheet, setShowBlastSheet] = useState(false);
+  const [showInviteSheet, setShowInviteSheet] = useState(false);
   const [authToken, setAuthToken] = useState<string | null>(null);
 
   // Load auth token from AsyncStorage for RSVP mutations
@@ -288,7 +300,18 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
     const hosts = ((eventData as any)?.hosts as Array<{ id: string }> | undefined) ?? [];
     return hosts.some((h) => String(h.id) === String(user.id));
   })();
-  const canEdit = isLeader || isHost;
+  // Community admins of the event's community also pass canEditMeeting on
+  // the server. Check against the event's communityId (not the user's
+  // currently selected community) so admins viewing a cross-community share
+  // link still get the host UI.
+  const isEventCommunityAdmin =
+    !!(eventData as any)?.communityId &&
+    (userData?.community_memberships?.some(
+      (m: { role: number; community_id: number | string }) =>
+        m.role >= 3 &&
+        String(m.community_id) === String((eventData as any).communityId),
+    ) ?? false);
+  const canEdit = isLeader || isHost || isEventCommunityAdmin;
 
   // ============================================================================
   // Event Chat Mutations
@@ -430,10 +453,9 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
         guestCount: 0,
       });
       // Navigate to success screen with animation (use replace to avoid duplicate event screens in stack)
-      const selectedOption = rsvpOptions.find((o) => o.id === optionId);
       router.replace({
         pathname: `/e/${shortId}/rsvp/success`,
-        params: { optionLabel: selectedOption?.label || "Going" },
+        params: { optionId: String(optionId) },
       });
     } finally {
       setLoadingOptionId(null);
@@ -454,10 +476,9 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
       // Only navigate to success screen if the option actually changed.
       // Guest-count-only edits should stay on the event page.
       if (optionId !== myRsvp?.optionId) {
-        const selectedOption = rsvpOptions.find((o) => o.id === optionId);
         router.replace({
           pathname: `/e/${shortId}/rsvp/success`,
-          params: { optionLabel: selectedOption?.label || "Going" },
+          params: { optionId: String(optionId) },
         });
       }
     } finally {
@@ -579,6 +600,26 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
   const isRsvpClosed = eventDate
     ? eventDate.getTime() < Date.now() - PAST_EVENT_BUFFER_MS
     : false;
+
+  // One manager-only attendance slot whose label + destination follow the
+  // event's lifecycle: "Check in" (live) before the grace window closes,
+  // "Take attendance" (batch editor) after. Both write the same record.
+  // Suppressed for cancelled events — there is no attendance to take for an
+  // event that didn't happen, and the check-in/attendance mutations don't
+  // themselves reject cancelled meetings.
+  const attendanceEntry =
+    eventData.status !== 'cancelled' &&
+    eventData.id &&
+    eventData.groupId &&
+    eventData.scheduledAt
+      ? resolveAttendanceEntry({
+          isRsvpClosed,
+          groupId: eventData.groupId,
+          meetingId: eventData.id as string,
+          scheduledAt: eventData.scheduledAt,
+        })
+      : null;
+
   const maxGuestsPerRsvp =
     ((eventData as any)?.maxGuestsPerRsvp as number | undefined) ??
     DEFAULT_MAX_GUESTS_PER_RSVP;
@@ -757,6 +798,7 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
       </View>
 
       <ScrollView
+        ref={scrollRef}
         style={styles.scroll}
         contentContainerStyle={[
           styles.scrollContent,
@@ -780,26 +822,25 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
         />
 
         <View style={styles.content}>
-          {/* Host Attribution. Shows "Hosted by {primary host} + N others"
-              when the event has explicit hosts; otherwise attributes to the
+          {/* Host Attribution. Shows the host/cohost names alongside a
+              horizontal, tappable row of host avatars (each badged with a
+              crown). Tapping an avatar opens that host's profile. When the
+              event has no explicit hosts it falls back to attributing the
               group. Creator is never surfaced — hosts are the canonical
               owner per the host-decoupling change. */}
           <View style={[styles.organizerRow, { borderBottomColor: colors.surfaceSecondary }]}>
             {(() => {
-              type HostRow = {
-                id: string;
-                firstName: string | null;
-                lastName: string | null;
-                profilePhoto: string | null;
-              };
               const hosts =
                 ((eventData as any).hosts as HostRow[] | undefined) ?? [];
-              const primary = hosts[0];
-              const extraHostCount = Math.max(0, hosts.length - 1);
 
-              if (!primary) {
+              const groupSubtitle = (eventData as any).isAnnouncementGroup
+                ? eventData.communityName
+                : `${eventData.groupName}${eventData.communityName ? ' · ' + eventData.communityName : ''}`;
+
+              // No explicit hosts: attribute the event to the group.
+              if (hosts.length === 0) {
                 return (
-                  <>
+                  <View style={styles.organizerHeader}>
                     <AppImage
                       source={eventData.groupImage}
                       style={styles.groupAvatar}
@@ -812,38 +853,82 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
                       <Text style={[styles.organizerName, { color: colors.text }]}>{eventData.groupName}</Text>
                       <Text style={[styles.communityName, { color: colors.textSecondary }]}>{eventData.communityName}</Text>
                     </View>
-                  </>
+                  </View>
                 );
               }
 
-              const firstName = primary.firstName || "";
-              const lastInitial = primary.lastName?.[0] ? `${primary.lastName[0]}.` : "";
-              const display = [firstName, lastInitial].filter(Boolean).join(" ").trim();
-              const hostLine = display
-                ? extraHostCount > 0
-                  ? `Hosted by ${display} + ${extraHostCount} other${extraHostCount === 1 ? "" : "s"}`
-                  : `Hosted by ${display}`
-                : "Hosted";
+              // Name up to two hosts (host + cohost) before collapsing the
+              // rest into "+ N others"; see formatHostLine for the rules.
+              const hostLine = formatHostLine(hosts);
+
+              // The profile route scopes to the viewer's *active* community and
+              // skips entirely without an auth token, so tapping a host only
+              // resolves correctly for an authenticated viewer whose active
+              // community is this event's community. On public share pages and
+              // cross-community views we still show the avatars (photo + crown)
+              // but leave them non-interactive rather than route to a broken
+              // "Profile unavailable" / wrong-community screen.
+              const canViewHostProfiles =
+                isAuthenticated &&
+                !!community?.id &&
+                String(community.id) === String((eventData as any).communityId);
 
               return (
-                <>
-                  <AppImage
-                    source={primary.profilePhoto ?? undefined}
-                    style={styles.groupAvatar}
-                    placeholder={{
-                      type: 'initials',
-                      name: display || (eventData.groupName ?? undefined),
-                    }}
-                  />
-                  <View style={styles.organizerInfo}>
-                    <Text style={[styles.organizerName, { color: colors.text }]}>{hostLine}</Text>
-                    <Text style={[styles.communityName, { color: colors.textSecondary }]}>
-                      {(eventData as any).isAnnouncementGroup
-                        ? eventData.communityName
-                        : `${eventData.groupName}${eventData.communityName ? ' · ' + eventData.communityName : ''}`}
-                    </Text>
+                <View style={styles.organizerColumn}>
+                  <View style={styles.organizerHeader}>
+                    <MaterialCommunityIcons name="crown" size={20} color={colors.text} />
+                    <View style={styles.organizerInfo}>
+                      <Text style={[styles.organizerName, { color: colors.text }]}>{hostLine}</Text>
+                      <Text style={[styles.communityName, { color: colors.textSecondary }]}>
+                        {groupSubtitle}
+                      </Text>
+                    </View>
                   </View>
-                </>
+
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.hostAvatarRow}
+                  >
+                    {hosts.map((host) => {
+                      const name = hostDisplayName(host);
+                      const avatar = (
+                        <>
+                          <Avatar imageUrl={host.profilePhoto} name={name} size={56} />
+                          <View
+                            style={[
+                              styles.hostCrownBadge,
+                              { backgroundColor: colors.text, borderColor: colors.surface },
+                            ]}
+                          >
+                            <MaterialCommunityIcons name="crown" size={11} color={colors.surface} />
+                          </View>
+                        </>
+                      );
+
+                      if (!canViewHostProfiles) {
+                        return (
+                          <View key={host.id} style={styles.hostAvatarItem}>
+                            {avatar}
+                          </View>
+                        );
+                      }
+
+                      return (
+                        <TouchableOpacity
+                          key={host.id}
+                          style={styles.hostAvatarItem}
+                          activeOpacity={0.7}
+                          onPress={() => router.push(`/(user)/profile/${host.id}`)}
+                          accessibilityRole="button"
+                          accessibilityLabel={`View ${name || "host"}'s profile`}
+                        >
+                          {avatar}
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </ScrollView>
+                </View>
               );
             })()}
           </View>
@@ -935,7 +1020,6 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
           {showGuestListPreview && !isLoadingRsvp && rsvpData && (
             <GuestListPreview
               rsvpData={rsvpData as RsvpData}
-              rsvpOptions={rsvpOptions}
               onViewAll={handleViewGuestList}
               hideRsvpCount={(eventData as any)?.hideRsvpCount === true}
               canSeeCount={canEdit}
@@ -963,24 +1047,25 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
                 isChatEnabled={isChatEnabled}
                 channelId={resolvedChannelId}
                 authToken={authToken}
+                outerScrollRef={scrollRef}
               />
             )}
 
-          {/* Leader: jump into the attendance recorder for past events */}
-          {isLeader && isPastEvent && eventData.id && eventData.groupId && eventData.scheduledAt && (
+          {/* Manager: time-aware attendance entry point. Before the grace
+              window closes it's live "Check in" against the Going list;
+              afterward it becomes "Take attendance" and opens the post-event
+              attendance editor. Gated by canEdit (leader / host / community
+              admin) to match the check-in screen's own server gate. */}
+          {canEdit && attendanceEntry && (
             <TouchableOpacity
               style={[styles.messageAttendeesButton, { backgroundColor: colors.surfaceSecondary }]}
               onPress={() => {
-                const encodedDate = encodeURIComponent(eventData.scheduledAt!);
-                const meetingIdParam = encodeURIComponent(eventData.id as string);
-                router.push(
-                  `/(user)/leader-tools/${eventData.groupId}/attendance/edit?eventDate=${encodedDate}&meetingId=${meetingIdParam}`
-                );
+                router.push(attendanceEntry.href);
               }}
             >
               <Ionicons name="checkmark-done-outline" size={20} color={DEFAULT_PRIMARY_COLOR} />
               <Text style={[styles.messageAttendeesText, { color: DEFAULT_PRIMARY_COLOR }]}>
-                Record Attendance
+                {attendanceEntry.label}
               </Text>
             </TouchableOpacity>
           )}
@@ -1005,9 +1090,19 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
             </View>
           )}
 
-          {/* Host actions: Message Attendees + Blast History. ADR-022 extends
-              this surface to creators — they're the host, so they should be
-              able to reach out to RSVPed guests. Backend is authoritative. */}
+          {/* Host actions: Invite members + Text Blast. Both gated by
+              canEditMeeting server-side; this just shows the CTAs. */}
+          {canEdit && (
+            <TouchableOpacity
+              style={[styles.messageAttendeesButton, { backgroundColor: colors.surfaceSecondary }]}
+              onPress={() => setShowInviteSheet(true)}
+            >
+              <Ionicons name="mail-outline" size={20} color={DEFAULT_PRIMARY_COLOR} />
+              <Text style={[styles.messageAttendeesText, { color: DEFAULT_PRIMARY_COLOR }]}>
+                Invite members
+              </Text>
+            </TouchableOpacity>
+          )}
           {canEdit && (
             <TouchableOpacity
               style={[styles.messageAttendeesButton, { backgroundColor: colors.surfaceSecondary }]}
@@ -1018,6 +1113,10 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
                 Text Blast
               </Text>
             </TouchableOpacity>
+          )}
+
+          {canEdit && eventData.id && (
+            <EventInvitesLog meetingId={eventData.id as string} />
           )}
         </View>
       </ScrollView>
@@ -1116,14 +1215,37 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
         groupName={eventData?.groupName}
       />
 
-      {/* Event Blast Sheet */}
-      {isLeader && (
+      {/* Event Blast Sheet — gate matches the CTA's canEdit predicate so
+          community admins (canEdit but !isLeader) get a working sheet, not
+          a no-op button. Server still authoritative. */}
+      {canEdit && (
         <EventBlastSheet
           visible={showBlastSheet}
           meetingId={eventData.id as string}
           eventTitle={eventData.title || "Event"}
           onClose={() => setShowBlastSheet(false)}
           onSent={() => setShowBlastSheet(false)}
+        />
+      )}
+
+      {/* Invite Group Members Sheet */}
+      {canEdit && (
+        <InviteGroupMembersSheet
+          visible={showInviteSheet}
+          meetingId={eventData.id as string}
+          eventTitle={eventData.title || "Event"}
+          eventScheduledAt={
+            // getByShortId returns scheduledAt as an ISO string; the live
+            // Convex meeting doc returns it as a ms timestamp. Handle both
+            // so the SMS preview always renders the date/time.
+            typeof eventData.scheduledAt === "number"
+              ? eventData.scheduledAt
+              : typeof eventData.scheduledAt === "string"
+                ? Date.parse(eventData.scheduledAt) || undefined
+                : undefined
+          }
+          eventShortId={eventData.shortId ?? null}
+          onClose={() => setShowInviteSheet(false)}
         />
       )}
 
@@ -1199,12 +1321,17 @@ const styles = StyleSheet.create({
 
   // Organizer
   organizerRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
     marginBottom: 20,
     paddingBottom: 20,
     borderBottomWidth: 1,
+  },
+  organizerColumn: {
+    gap: 12,
+  },
+  organizerHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
   },
   groupAvatar: {
     width: 40,
@@ -1213,6 +1340,26 @@ const styles = StyleSheet.create({
   },
   organizerInfo: {
     flex: 1,
+  },
+  hostAvatarRow: {
+    flexDirection: "row",
+    gap: 12,
+    paddingVertical: 2,
+  },
+  hostAvatarItem: {
+    width: 56,
+    height: 56,
+  },
+  hostCrownBadge: {
+    position: "absolute",
+    right: -2,
+    bottom: -2,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 2,
+    alignItems: "center",
+    justifyContent: "center",
   },
   organizerName: {
     fontSize: 16,

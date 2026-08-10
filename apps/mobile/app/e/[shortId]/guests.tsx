@@ -14,9 +14,9 @@ import { useQuery, api } from "@services/api/convex";
 import { useAuth } from "@/providers/AuthProvider";
 import { Avatar } from "@components/ui/Avatar";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
-import { BlurView } from "expo-blur";
+import { SafeBlurView } from "@components/ui/SafeBlurView";
 import {
-  getEmojiForLabel,
+  getEmojiForOption,
   getCleanLabel,
 } from "@/features/events/components/EventRsvpSection";
 
@@ -106,7 +106,7 @@ export default function GuestListScreen() {
         const option = rsvpOptions.find(
           (opt) => opt.id === rsvpGroup.option.id
         );
-        const emoji = option ? getEmojiForLabel(option.label) : "";
+        const emoji = option ? getEmojiForOption(option) : "";
         const label = option ? getCleanLabel(option.label) : rsvpGroup.option.label;
 
         return (
@@ -177,12 +177,15 @@ export default function GuestListScreen() {
 
       {/* Content Area */}
       <View style={styles.contentWrapper}>
-        {/* Guest List */}
-        {renderGuestList()}
+        {/* Guest list is only rendered for RSVP'd users. The restricted-access
+            overlay is a scrim, not a guaranteed blur (blur is disabled on the
+            native New Architecture and is inspectable in the web DOM), so we
+            must not render guest data at all until the user has access. */}
+        {hasRsvpd && renderGuestList()}
 
         {/* Restricted Access Overlay - covers full content area */}
         {!hasRsvpd && (
-          <BlurView
+          <SafeBlurView
             intensity={50}
             tint="dark"
             style={styles.blurOverlay}
@@ -210,7 +213,7 @@ export default function GuestListScreen() {
                 </Text>
               </View>
             </View>
-          </BlurView>
+          </SafeBlurView>
         )}
       </View>
     </SafeAreaView>

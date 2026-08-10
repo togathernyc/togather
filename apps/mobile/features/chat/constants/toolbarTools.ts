@@ -10,6 +10,13 @@ export interface ToolDefinition {
   icon: string;
   label: string;
   requiresPco?: boolean;
+  /**
+   * For a `requiresPco` tool, also surface it when the group has a native
+   * run sheet (an event plan with ≥1 item) even without PCO channels. Lets
+   * the Run Sheet tool appear for native-only groups while keeping other
+   * PCO-only tools (e.g. "sync") gated on PCO.
+   */
+  showsWithRunSheet?: boolean;
   defaultVisibility?: "leaders" | "everyone"; // Controls who can see this tool
 }
 
@@ -19,11 +26,6 @@ export interface ToolDefinition {
  */
 export const TOOLBAR_TOOLS = {
   attendance: { id: "attendance", icon: "checkmark", label: "Attendance" },
-  followup: {
-    id: "followup",
-    icon: "chatbubble-ellipses-outline",
-    label: "People",
-  },
   tasks: {
     id: "tasks",
     icon: "checkmark-done-outline",
@@ -45,6 +47,7 @@ export const TOOLBAR_TOOLS = {
     icon: "list-outline",
     label: "Run Sheet",
     requiresPco: true,
+    showsWithRunSheet: true,
     defaultVisibility: "everyone",
   },
 } as const satisfies Record<string, ToolDefinition>;
@@ -65,7 +68,7 @@ export const ALL_TOOL_IDS = Object.keys(TOOLBAR_TOOLS) as ToolId[];
  * - "tasks" is NOT included by default - group leaders must explicitly enable it.
  * - "sync" is NOT included by default - must be explicitly enabled.
  */
-export const DEFAULT_TOOLS = ["attendance", "followup"];
+export const DEFAULT_TOOLS = ["attendance"];
 
 /**
  * Resource tool ID helpers.

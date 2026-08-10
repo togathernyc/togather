@@ -1,0 +1,890 @@
+/**
+ * ImageViewer (Web) — mouse-friendly zoom/pan.
+ *
+ * The native viewer (ImageViewer.tsx) zooms with react-native-gesture-handler
+ * pinch/pan/double-tap gestures, which a mouse can't produce: on desktop web a
+ * plan image opens and there is no way to magnify it. Metro/webpack resolve
+ * this `.web.tsx` sibling on web only, so the native file stays untouched.
+ *
+ * Same props as the native viewer, so `providers/ImageViewerProvider.tsx`
+ * needs no change. Visual language (colors, header/footer, arrows, dots) is
+ * copied from the native viewer so it reads as the same component.
+ *
+ * Pointer plumbing is deliberately DOM-level: react-native-web does not
+ * forward `onWheel`/`onMouseDown` from <View>, and a wheel listener must be
+ * registered with `{ passive: false }` for `preventDefault()` to stop the page
+ * from scrolling. Move/up listeners live on `window` so a drag that leaves the
+ * viewport still ends cleanly.
+ */
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  Modal,
+  TouchableOpacity,
+  Animated,
+  Image,
+  ActivityIndicator,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
+import { saveImageToLibrary } from '@/utils/saveImage';
+import { ToastManager } from './Toast';
+import { useTheme } from '@hooks/useTheme';
+
+// Reserved vertical space (added to safe-area insets) so the contained image
+// stays clear of the header toolbar and the Done/Save footer buttons.
+const HEADER_HEIGHT = 60;
+const FOOTER_HEIGHT = 80;
+
+// Zoom limits match the native viewer's MIN_SCALE / MAX_SCALE / DOUBLE_TAP_SCALE.
+const MIN_SCALE = 1;
+const MAX_SCALE = 5;
+const DOUBLE_CLICK_SCALE = 2.5;
+// Multiplier for the −/+ toolbar buttons.
+const BUTTON_ZOOM_STEP = 1.25;
+// Wheel delta → zoom factor. Tuned so one trackpad flick is ~1 step.
+const WHEEL_SENSITIVITY = 0.0015;
+// Assumed pixels per line for wheels that report deltaMode = DOM_DELTA_LINE.
+const WHEEL_LINE_HEIGHT_PX = 16;
+// A press that moves less than this is a click (close), not a pan.
+const DRAG_SLOP_PX = 4;
+// Horizontal drag distance at fit scale that pages to the next/previous image.
+const SWIPE_THRESHOLD_PX = 48;
+// `mouseup` fires before `dblclick`, so closing on the first click of a
+// double-click would tear the viewer down before it could zoom. Defer the
+// backdrop close by this window and cancel it when a second press arrives.
+// Matches the native viewer's `Gesture.Tap().maxDelay(250)`.
+const DOUBLE_CLICK_WINDOW_MS = 250;
+
+interface Transform {
+  scale: number;
+  x: number;
+  y: number;
+}
+
+const FIT: Transform = { scale: 1, x: 0, y: 0 };
+
+interface Size {
+  width: number;
+  height: number;
+}
+
+/**
+ * Size the image actually occupies at scale 1. `resizeMode="contain"`
+ * letterboxes it inside the stage, so for an aspect ratio that differs from
+ * the stage the rendered image is *smaller* than the stage in one axis —
+ * clamping against the stage would let that axis be dragged out of view.
+ * Falls back to the stage box until the natural size is known.
+ */
+function renderedSize(stage: Size, natural: Size | null): Size {
+  if (!natural || natural.width <= 0 || natural.height <= 0) return stage;
+  const fit = Math.min(stage.width / natural.width, stage.height / natural.height);
+  return { width: natural.width * fit, height: natural.height * fit };
+}
+
+/**
+ * Keep the image from being dragged out of view: at scale `s` its overflow
+ * past the stage in each axis is `rendered * s - stage`, so half of that is
+ * the furthest the center may travel before an edge crosses the stage edge.
+ */
+function clampTransform(next: Transform, stage: Size, natural: Size | null): Transform {
+  const rendered = renderedSize(stage, natural);
+  const maxX = Math.max(0, (rendered.width * next.scale - stage.width) / 2);
+  const maxY = Math.max(0, (rendered.height * next.scale - stage.height) / 2);
+  return {
+    scale: next.scale,
+    x: Math.min(Math.max(next.x, -maxX), maxX),
+    y: Math.min(Math.max(next.y, -maxY), maxY),
+  };
+}
+
+/**
+ * Zoom to `targetScale` while keeping the image point under (`px`, `py`) —
+ * coordinates relative to the stage center — pinned under the cursor.
+ *
+ * The rendered position of an image point `u` is `p = u * s + t`, so holding
+ * `p` fixed across a scale change gives `t' = p - (p - t) * s' / s`.
+ */
+function zoomAt(
+  current: Transform,
+  targetScale: number,
+  px: number,
+  py: number,
+  stage: Size,
+  natural: Size | null,
+): Transform {
+  const scale = Math.min(Math.max(targetScale, MIN_SCALE), MAX_SCALE);
+  if (scale === MIN_SCALE) return FIT;
+  const ratio = scale / current.scale;
+  return clampTransform(
+    {
+      scale,
+      x: px - (px - current.x) * ratio,
+      y: py - (py - current.y) * ratio,
+    },
+    stage,
+    natural,
+  );
+}
+
+interface ImageViewerProps {
+  visible: boolean;
+  images: string[];
+  initialIndex: number;
+  onClose: () => void;
+}
+
+export function ImageViewer({
+  visible,
+  images,
+  initialIndex,
+  onClose,
+}: ImageViewerProps) {
+  const { colors } = useTheme();
+  const insets = useSafeAreaInsets();
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const scaleAnim = useRef(new Animated.Value(0.9)).current;
+
+  const [currentIndex, setCurrentIndex] = useState(initialIndex);
+  const [isSaving, setIsSaving] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const [transform, setTransform] = useState<Transform>(FIT);
+  // Stage DOM node kept in state (not a ref) so listener effects re-run when
+  // the node appears — the Modal mounts its children lazily.
+  const [stageNode, setStageNode] = useState<HTMLElement | null>(null);
+
+  // Mirror of `transform` for DOM handlers, which close over a stale render.
+  const transformRef = useRef<Transform>(FIT);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  const pendingCloseRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Intrinsic size of the current image, once the browser reports it — needed
+  // to clamp panning against the letterboxed rectangle rather than the stage.
+  const naturalSizeRef = useRef<Size | null>(null);
+  // Vertical space the chrome reserves, mirrored for the DOM handlers.
+  const reserveRef = useRef({ top: 0, bottom: 0 });
+
+  const cancelPendingClose = useCallback(() => {
+    if (pendingCloseRef.current !== null) {
+      clearTimeout(pendingCloseRef.current);
+      pendingCloseRef.current = null;
+    }
+  }, []);
+
+  const applyTransform = useCallback((next: Transform) => {
+    transformRef.current = next;
+    setTransform(next);
+  }, []);
+
+  const resetZoom = useCallback(() => {
+    applyTransform(FIT);
+  }, [applyTransform]);
+
+  const stepSlide = useCallback(
+    (delta: number) => {
+      setCurrentIndex((index) => Math.min(Math.max(index + delta, 0), images.length - 1));
+    },
+    [images.length],
+  );
+
+  const handleStageRef = useCallback((node: View | null) => {
+    setStageNode((node as unknown as HTMLElement) ?? null);
+  }, []);
+
+  const imageUrl = images[currentIndex];
+
+  // The image is transformed inside the stage's *content* box — the stage's
+  // padding reserves room for the header and footer chrome — so both pan
+  // clamping and pointer-anchored zoom work in content-box coordinates.
+  const stageGeometry = useCallback(() => {
+    const rect = stageNode?.getBoundingClientRect();
+    const { top, bottom } = reserveRef.current;
+    const stage: Size = {
+      width: rect?.width ?? 0,
+      height: Math.max(0, (rect?.height ?? 0) - top - bottom),
+    };
+    return {
+      stage,
+      centerX: (rect?.left ?? 0) + stage.width / 2,
+      centerY: (rect?.top ?? 0) + top + stage.height / 2,
+    };
+  }, [stageNode]);
+
+  // Zoom from the toolbar buttons: centered on the stage, not the pointer.
+  const zoomByStep = useCallback(
+    (factor: number) => {
+      const { stage } = stageGeometry();
+      applyTransform(
+        zoomAt(
+          transformRef.current,
+          transformRef.current.scale * factor,
+          0,
+          0,
+          stage,
+          naturalSizeRef.current,
+        ),
+      );
+    },
+    [applyTransform, stageGeometry],
+  );
+
+  // Re-apply the pan limits to the current transform. Needed whenever the
+  // bounds themselves change rather than the transform: the stage resizes, or
+  // the intrinsic image size arrives after the user has already zoomed.
+  const reclamp = useCallback(() => {
+    applyTransform(
+      clampTransform(transformRef.current, stageGeometry().stage, naturalSizeRef.current),
+    );
+  }, [applyTransform, stageGeometry]);
+
+  useEffect(() => {
+    if (!stageNode) return;
+    window.addEventListener('resize', reclamp);
+    return () => window.removeEventListener('resize', reclamp);
+  }, [stageNode, reclamp]);
+
+  // Reset zoom and load state whenever the displayed image changes — a slide
+  // change, or the same index now pointing at a different URL — so nothing is
+  // inherited from the previous one, and learn its intrinsic size for clamping.
+  useEffect(() => {
+    applyTransform(FIT);
+    naturalSizeRef.current = null;
+    setLoading(true);
+    setError(false);
+    if (!imageUrl) return;
+
+    let cancelled = false;
+    Image.getSize(
+      imageUrl,
+      (width, height) => {
+        if (cancelled) return;
+        naturalSizeRef.current = { width, height };
+        // Anything zoomed or panned before this arrived was clamped against
+        // the stage box — tighten it now that the real bounds are known.
+        reclamp();
+      },
+      // Size unknown: clamping falls back to the stage box.
+      () => {},
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [imageUrl, applyTransform, reclamp]);
+
+  useEffect(() => {
+    if (visible) {
+      setCurrentIndex(initialIndex);
+      applyTransform(FIT);
+      // Reopening on the same index doesn't re-run the effect above, so a
+      // transient load failure would otherwise never be retried.
+      setLoading(true);
+      setError(false);
+
+      fadeAnim.setValue(0);
+      scaleAnim.setValue(0.9);
+
+      Animated.parallel([
+        Animated.timing(fadeAnim, { toValue: 1, duration: 300, useNativeDriver: true }),
+        Animated.timing(scaleAnim, { toValue: 1, duration: 300, useNativeDriver: true }),
+      ]).start();
+    } else {
+      Animated.parallel([
+        Animated.timing(fadeAnim, { toValue: 0, duration: 300, useNativeDriver: true }),
+        Animated.timing(scaleAnim, { toValue: 0.9, duration: 300, useNativeDriver: true }),
+      ]).start();
+    }
+  }, [visible, initialIndex, fadeAnim, scaleAnim, applyTransform]);
+
+  // Wheel / trackpad zoom, centered on the pointer.
+  useEffect(() => {
+    if (!stageNode) return;
+
+    const handleWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      const { stage, centerX, centerY } = stageGeometry();
+      // Firefox and some mice report deltas in lines or pages, not pixels;
+      // WHEEL_SENSITIVITY is tuned for pixels, so normalize first or a single
+      // notch either does nothing or slams into the zoom limit.
+      const deltaPx =
+        event.deltaMode === WheelEvent.DOM_DELTA_LINE
+          ? event.deltaY * WHEEL_LINE_HEIGHT_PX
+          : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
+            ? event.deltaY * stage.height
+            : event.deltaY;
+      const factor = Math.exp(-deltaPx * WHEEL_SENSITIVITY);
+      applyTransform(
+        zoomAt(
+          transformRef.current,
+          transformRef.current.scale * factor,
+          event.clientX - centerX,
+          event.clientY - centerY,
+          stage,
+          naturalSizeRef.current,
+        ),
+      );
+    };
+
+    // passive: false — a passive listener may not call preventDefault(), and
+    // without it the browser scrolls the page behind the viewer.
+    stageNode.addEventListener('wheel', handleWheel, { passive: false });
+    return () => stageNode.removeEventListener('wheel', handleWheel);
+  }, [stageNode, applyTransform, stageGeometry]);
+
+  // Drag to pan while zoomed; a press that never moves is a backdrop click and
+  // closes the viewer, matching the native TouchableWithoutFeedback backdrop.
+  //
+  // Pointer events, not mouse events: this `.web.tsx` is bundled for mobile
+  // browsers too, where a mouse-only implementation would strip the touch
+  // panning and swipe-to-change-slide that the native gesture path provided.
+  useEffect(() => {
+    if (!stageNode) return;
+
+    // Set while a drag is in flight so an unmount mid-drag still detaches the
+    // window listeners.
+    let detachDrag: (() => void) | null = null;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      // Ignore right/middle buttons and any secondary touch (no pinch here —
+      // touch users zoom with the −/+/fit toolbar).
+      if (!event.isPrimary) return;
+      if (event.pointerType === 'mouse' && event.button !== 0) return;
+      // Suppress the browser's native image-drag ghost and text selection.
+      // Mouse only: preventDefault on a touch pointerdown also suppresses the
+      // synthesized click/dblclick that double-tap-to-zoom relies on.
+      if (event.pointerType === 'mouse') event.preventDefault();
+      // Second press of a double-click: drop the close the first one queued.
+      cancelPendingClose();
+      // Never stack drags: if a previous one somehow never ended, drop it.
+      detachDrag?.();
+
+      const { stage } = stageGeometry();
+      const start = transformRef.current;
+      const startX = event.clientX;
+      const startY = event.clientY;
+      const pointerId = event.pointerId;
+      let moved = false;
+      let lastX = startX;
+      let lastY = startY;
+
+      const handlePointerMove = (moveEvent: PointerEvent) => {
+        if (moveEvent.pointerId !== pointerId) return;
+        // Safety net for a mouse released outside the browser viewport: the
+        // pointerup never reaches us, but the first move back inside reports
+        // no pressed button. End the drag there instead of resuming it.
+        if (moveEvent.pointerType === 'mouse' && moveEvent.buttons === 0) {
+          handlePointerUp(moveEvent);
+          return;
+        }
+        lastX = moveEvent.clientX;
+        lastY = moveEvent.clientY;
+        const dx = lastX - startX;
+        const dy = lastY - startY;
+        if (!moved && Math.abs(dx) + Math.abs(dy) > DRAG_SLOP_PX) moved = true;
+        if (!moved || transformRef.current.scale <= MIN_SCALE) return;
+        applyTransform(
+          clampTransform(
+            { scale: start.scale, x: start.x + dx, y: start.y + dy },
+            stage,
+            naturalSizeRef.current,
+          ),
+        );
+      };
+
+      const handlePointerUp = (upEvent: PointerEvent) => {
+        if (upEvent.pointerId !== pointerId) return;
+        detachDrag?.();
+        if (transformRef.current.scale > MIN_SCALE) return;
+        if (!moved) {
+          // Deferred, not immediate — see DOUBLE_CLICK_WINDOW_MS.
+          pendingCloseRef.current = setTimeout(() => {
+            pendingCloseRef.current = null;
+            onCloseRef.current();
+          }, DOUBLE_CLICK_WINDOW_MS);
+          return;
+        }
+        // At fit, a horizontal drag pages between images — the touch
+        // equivalent of the arrow buttons, replacing the native FlatList swipe.
+        const dx = lastX - startX;
+        const dy = lastY - startY;
+        if (Math.abs(dx) > SWIPE_THRESHOLD_PX && Math.abs(dx) > Math.abs(dy)) {
+          stepSlide(dx < 0 ? 1 : -1);
+        }
+      };
+
+      // Drag abandoned (window lost focus): stop tracking, keep the transform.
+      const handleWindowBlur = () => detachDrag?.();
+
+      detachDrag = () => {
+        window.removeEventListener('pointermove', handlePointerMove);
+        window.removeEventListener('pointerup', handlePointerUp);
+        window.removeEventListener('pointercancel', handlePointerUp);
+        window.removeEventListener('blur', handleWindowBlur);
+        // Capture may already be gone (implicitly released on pointerup).
+        if (stageNode.hasPointerCapture?.(pointerId)) {
+          stageNode.releasePointerCapture(pointerId);
+        }
+        detachDrag = null;
+      };
+      // Pointer capture keeps move/up events coming while the cursor is
+      // outside the stage — and lets the browser deliver the release.
+      stageNode.setPointerCapture?.(pointerId);
+      window.addEventListener('pointermove', handlePointerMove);
+      window.addEventListener('pointerup', handlePointerUp);
+      window.addEventListener('pointercancel', handlePointerUp);
+      // Alt-tabbing away mid-drag: end the drag rather than leave it live.
+      window.addEventListener('blur', handleWindowBlur);
+    };
+
+    const handleDoubleClick = (event: MouseEvent) => {
+      cancelPendingClose();
+      if (transformRef.current.scale > MIN_SCALE) {
+        applyTransform(FIT);
+        return;
+      }
+      const { stage, centerX, centerY } = stageGeometry();
+      applyTransform(
+        zoomAt(
+          transformRef.current,
+          DOUBLE_CLICK_SCALE,
+          event.clientX - centerX,
+          event.clientY - centerY,
+          stage,
+          naturalSizeRef.current,
+        ),
+      );
+    };
+
+    stageNode.addEventListener('pointerdown', handlePointerDown);
+    stageNode.addEventListener('dblclick', handleDoubleClick);
+    return () => {
+      stageNode.removeEventListener('pointerdown', handlePointerDown);
+      stageNode.removeEventListener('dblclick', handleDoubleClick);
+      detachDrag?.();
+      cancelPendingClose();
+    };
+  }, [stageNode, applyTransform, cancelPendingClose, stepSlide, stageGeometry]);
+
+  // Affordance: grab cursor only when there is something to pan. touchAction
+  // none keeps the browser from claiming a touch drag as a page scroll (which
+  // would fire pointercancel mid-pan).
+  useEffect(() => {
+    if (!stageNode) return;
+    stageNode.style.cursor = transform.scale > MIN_SCALE ? 'grab' : 'default';
+    stageNode.style.touchAction = 'none';
+    stageNode.style.userSelect = 'none';
+  }, [stageNode, transform.scale]);
+
+  const handleSave = async () => {
+    if (isSaving || !images[currentIndex]) return;
+
+    setIsSaving(true);
+    const result = await saveImageToLibrary(images[currentIndex]);
+    setIsSaving(false);
+
+    if (result.success) {
+      ToastManager.success('Image saved to your library');
+    } else {
+      ToastManager.error('Failed to save image');
+    }
+  };
+
+  const goToPrevious = () => stepSlide(-1);
+  const goToNext = () => stepSlide(1);
+
+  // Reserve space so the contained image doesn't render behind the header
+  // toolbar or the Done/Save buttons (same reasoning as the native viewer).
+  const topReserve = insets.top + HEADER_HEIGHT;
+  const bottomReserve = insets.bottom + FOOTER_HEIGHT;
+  // Mirrored for the DOM handlers, which measure the stage's content box.
+  reserveRef.current = { top: topReserve, bottom: bottomReserve };
+  const zoomPercent = Math.round(transform.scale * 100);
+
+  return (
+    <Modal visible={visible} transparent animationType="none" onRequestClose={onClose}>
+      <Animated.View style={[styles.container, { opacity: fadeAnim }]}>
+        {/* Dark Backdrop */}
+        <View style={styles.backdrop} />
+
+        <Animated.View
+          style={[styles.content, { transform: [{ scale: scaleAnim }] }]}
+          pointerEvents="box-none"
+        >
+          {/* Stage — owns wheel/drag/double-click; sits under the chrome. */}
+          <View
+            ref={handleStageRef}
+            style={[styles.stage, { paddingTop: topReserve, paddingBottom: bottomReserve }]}
+          >
+            {loading && !error && (
+              <View style={styles.loadingContainer} pointerEvents="none">
+                <ActivityIndicator size="large" color="#fff" />
+              </View>
+            )}
+            {error ? (
+              <View style={styles.errorContainer} pointerEvents="none">
+                <Ionicons name="image-outline" size={64} color={colors.textSecondary} />
+                <Text style={[styles.errorText, { color: colors.textSecondary }]}>
+                  Failed to load image
+                </Text>
+              </View>
+            ) : (
+              // pointerEvents none: every mouse event belongs to the stage, so
+              // a drag started on the image is handled by one listener set.
+              <View
+                pointerEvents="none"
+                style={[
+                  styles.imageWrap,
+                  {
+                    transform: [
+                      { translateX: transform.x },
+                      { translateY: transform.y },
+                      { scale: transform.scale },
+                    ],
+                  },
+                ]}
+              >
+                <Image
+                  source={{ uri: imageUrl }}
+                  style={styles.image}
+                  resizeMode="contain"
+                  onLoadStart={() => setLoading(true)}
+                  onLoadEnd={() => setLoading(false)}
+                  onError={() => {
+                    setLoading(false);
+                    setError(true);
+                  }}
+                />
+              </View>
+            )}
+          </View>
+
+          {/* Header: close · zoom toolbar · counter */}
+          <View style={[styles.header, { paddingTop: insets.top + 16 }]} pointerEvents="box-none">
+            <View style={styles.headerSide}>
+              <TouchableOpacity
+                onPress={onClose}
+                style={styles.closeButton}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <Ionicons name="close" size={32} color="#fff" />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.zoomToolbar}>
+              <TouchableOpacity
+                onPress={() => zoomByStep(1 / BUTTON_ZOOM_STEP)}
+                style={styles.zoomButton}
+                disabled={transform.scale <= MIN_SCALE}
+                accessibilityLabel="Zoom out"
+              >
+                <Ionicons
+                  name="remove"
+                  size={20}
+                  color={transform.scale <= MIN_SCALE ? 'rgba(255, 255, 255, 0.4)' : '#fff'}
+                />
+              </TouchableOpacity>
+
+              <Text style={styles.zoomLabel}>{zoomPercent}%</Text>
+
+              <TouchableOpacity
+                onPress={() => zoomByStep(BUTTON_ZOOM_STEP)}
+                style={styles.zoomButton}
+                disabled={transform.scale >= MAX_SCALE}
+                accessibilityLabel="Zoom in"
+              >
+                <Ionicons
+                  name="add"
+                  size={20}
+                  color={transform.scale >= MAX_SCALE ? 'rgba(255, 255, 255, 0.4)' : '#fff'}
+                />
+              </TouchableOpacity>
+
+              <View style={styles.zoomDivider} />
+
+              <TouchableOpacity
+                onPress={resetZoom}
+                style={styles.zoomButton}
+                accessibilityLabel="Fit image"
+              >
+                <Ionicons name="scan-outline" size={18} color="#fff" />
+              </TouchableOpacity>
+            </View>
+
+            <View style={[styles.headerSide, styles.headerSideRight]}>
+              {images.length > 1 && (
+                <View style={styles.counterContainer}>
+                  <Text style={styles.counterText}>
+                    {currentIndex + 1} of {images.length}
+                  </Text>
+                </View>
+              )}
+            </View>
+          </View>
+
+          {/* Navigation Arrows */}
+          {images.length > 1 && (
+            <>
+              {currentIndex > 0 && (
+                <TouchableOpacity
+                  style={[styles.arrowButton, styles.leftArrow]}
+                  onPress={goToPrevious}
+                  hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
+                >
+                  <View style={styles.arrowCircle}>
+                    <Ionicons name="chevron-back" size={28} color="#fff" />
+                  </View>
+                </TouchableOpacity>
+              )}
+
+              {currentIndex < images.length - 1 && (
+                <TouchableOpacity
+                  style={[styles.arrowButton, styles.rightArrow]}
+                  onPress={goToNext}
+                  hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
+                >
+                  <View style={styles.arrowCircle}>
+                    <Ionicons name="chevron-forward" size={28} color="#fff" />
+                  </View>
+                </TouchableOpacity>
+              )}
+            </>
+          )}
+
+          {/* Dot Indicators */}
+          {images.length > 1 && (
+            <View style={styles.dotContainer} pointerEvents="none">
+              {images.map((_, index) => (
+                <View
+                  key={`${images[index]}-${index}`}
+                  style={[
+                    styles.dot,
+                    index === currentIndex
+                      ? styles.dotActive
+                      : { opacity: 0.3, transform: [{ scale: 0.8 }] },
+                  ]}
+                />
+              ))}
+            </View>
+          )}
+
+          <Text style={styles.hintText} pointerEvents="none">
+            Scroll to zoom · drag to pan · double-click to toggle
+          </Text>
+
+          {/* Footer */}
+          <View
+            style={[styles.footer, { paddingBottom: insets.bottom + 16 }]}
+            pointerEvents="box-none"
+          >
+            <TouchableOpacity onPress={onClose} style={[styles.button, styles.doneButton]}>
+              <Text style={styles.buttonText}>Done</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={handleSave}
+              style={[styles.button, styles.saveButton, { backgroundColor: colors.link }]}
+              disabled={isSaving}
+            >
+              {isSaving ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Text style={styles.buttonText}>Save</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </Animated.View>
+      </Animated.View>
+    </Modal>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+  },
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.9)',
+  },
+  content: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  stage: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'center',
+    alignItems: 'center',
+    overflow: 'hidden',
+  },
+  header: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 10,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+  },
+  headerSide: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  headerSideRight: {
+    justifyContent: 'flex-end',
+  },
+  closeButton: {
+    width: 44,
+    height: 44,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  zoomToolbar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+    borderRadius: 20,
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+    gap: 4,
+  },
+  zoomButton: {
+    width: 32,
+    height: 32,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  zoomLabel: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '600',
+    minWidth: 48,
+    textAlign: 'center',
+  },
+  zoomDivider: {
+    width: 1,
+    height: 20,
+    backgroundColor: 'rgba(255, 255, 255, 0.3)',
+  },
+  counterContainer: {
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+  },
+  counterText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  imageWrap: {
+    width: '100%',
+    height: '100%',
+  },
+  image: {
+    width: '100%',
+    height: '100%',
+  },
+  loadingContainer: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  errorContainer: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  errorText: {
+    fontSize: 16,
+    marginTop: 12,
+  },
+  dotContainer: {
+    position: 'absolute',
+    bottom: 140,
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 8,
+  },
+  dot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#fff',
+  },
+  dotActive: {
+    opacity: 1,
+    transform: [{ scale: 1.2 }],
+  },
+  hintText: {
+    position: 'absolute',
+    bottom: 104,
+    left: 0,
+    right: 0,
+    textAlign: 'center',
+    color: 'rgba(255, 255, 255, 0.6)',
+    fontSize: 12,
+  },
+  arrowButton: {
+    position: 'absolute',
+    top: '50%',
+    marginTop: -24,
+    zIndex: 10,
+  },
+  leftArrow: {
+    left: 16,
+  },
+  rightArrow: {
+    right: 16,
+  },
+  arrowCircle: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+  },
+  footer: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+    gap: 12,
+    zIndex: 10,
+  },
+  button: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 48,
+  },
+  doneButton: {
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+  },
+  saveButton: {
+    // backgroundColor applied inline via colors.link
+  },
+  buttonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+});

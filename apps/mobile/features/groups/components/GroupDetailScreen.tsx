@@ -16,6 +16,8 @@ import {
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import * as Clipboard from "expo-clipboard";
+import { useAuthenticatedQuery, api } from "@services/api/convex";
+import type { Id } from "@services/api/convex";
 import { DOMAIN_CONFIG } from "@togather/shared";
 import { useTheme } from "@hooks/useTheme";
 import { GroupDetailSkeleton } from "./GroupDetailSkeleton";
@@ -40,6 +42,7 @@ import { HighlightsGrid } from "./HighlightsGrid";
 import { GroupNonMemberView } from "./GroupNonMemberView";
 import { ChannelsSection } from "./ChannelsSection";
 import { UpcomingEventsSection } from "./UpcomingEventsSection";
+import { RosteringSection } from "./RosteringSection";
 import { GroupBotsSection } from "./GroupBotsSection";
 import { sectionStyles } from "./sectionStyles";
 import { Group } from "../types";
@@ -125,6 +128,47 @@ export function GroupDetailScreen() {
     );
   }, [group, user?.id, user?.is_admin]);
   const canArchiveGroup = isAdmin && !group?.is_announcement_group;
+
+  // Pending join requests the current user may review (0 for non-reviewers, so
+  // this both gates the "Requests" row and badges it). Populated for leaders
+  // when the group's approval mode is "leaders", and for community admins.
+  const pendingRequestCount = useAuthenticatedQuery(
+    api.functions.groupMembers.countGroupJoinRequests,
+    group?._id ? { groupId: group._id as Id<"groups"> } : "skip",
+  ) as number | undefined;
+  const hasPendingRequests = (pendingRequestCount ?? 0) > 0;
+
+  // Whether the group has ever had an event plan (past OR upcoming). Rostering
+  // keeps its inline position only once plans exist; before that it drops to a
+  // bottom group action so the tile order stays focused on the common path.
+  // `includePast: true` so a group that ran events but has none scheduled ahead
+  // still counts as "has plans" (matches the "has there been a plan before?"
+  // intent rather than "is one coming up?").
+  const eventPlans = useAuthenticatedQuery(
+    api.functions.scheduling.events.listEvents,
+    group?._id && isLeader
+      ? { groupId: group._id as Id<"groups">, includePast: true }
+      : "skip",
+  ) as unknown[] | undefined;
+  const hasEventPlans = Array.isArray(eventPlans) && eventPlans.length > 0;
+
+  // GIVING (ADR-032) — member-facing transparency tile, not leader-gated:
+  // every member can give and see the fund's activity. Deliberately queries
+  // the lightweight `getGivingContext` (not `getFundOverview`, which pulls
+  // ledger activity) just to learn whether a fund exists for this group; the
+  // tile shows no balance, so the heavier query only runs once the member
+  // taps through to the fund screen.
+  //
+  // Gated on `isMember` for the same reason as GroupInfoScreen's copy of this
+  // query: non-members land here from a share link / Explore and get
+  // GroupNonMemberView, so the subscription is waste — and until
+  // `getGivingContext` was made to fail open, its throw came back through
+  // Convex during render and crashed them into the root ErrorBoundary.
+  const givingContext = useAuthenticatedQuery(
+    api.functions.finance.giving.getGivingContext,
+    group?._id && isMember ? { groupId: group._id as Id<"groups"> } : "skip",
+  );
+  const hasGivingFund = !!givingContext;
 
   const handleMembersPress = () => {
     if (!group?._id) return;
@@ -469,6 +513,49 @@ export function GroupDetailScreen() {
           </View>
         )}
 
+        {/* REQUESTS — the group-page review surface for the "leaders approve"
+            handoff. Shown only when the group hands approval to leaders and
+            there are pending requests the viewer may review (its leaders, plus
+            community admins). In the default "admins" mode requests live in the
+            admin dashboard instead, so this row stays hidden. Taps into the
+            full review page (also the target of the incoming-request push). */}
+        {group._id &&
+          (group as any).join_approval_mode === "leaders" &&
+          hasPendingRequests && (
+          <View style={{ paddingHorizontal: 12, marginTop: 4 }}>
+            <TouchableOpacity
+              onPress={() =>
+                router.push(`/groups/${group._id}/requests` as any)
+              }
+              activeOpacity={0.7}
+              style={[
+                styles.addPeopleTile,
+                { backgroundColor: colors.surfaceSecondary },
+              ]}
+            >
+              <View
+                style={[
+                  styles.addPeopleIcon,
+                  { backgroundColor: colors.warning + "1A" },
+                ]}
+              >
+                <Ionicons name="person-add-outline" size={18} color={colors.warning} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.actionLabel, { color: colors.text }]}>
+                  Requests
+                </Text>
+                <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 2 }}>
+                  {pendingRequestCount}{" "}
+                  {pendingRequestCount === 1 ? "person wants" : "people want"} to
+                  join
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
+            </TouchableOpacity>
+          </View>
+        )}
+
         {/* Add people — leader/admin only. Mirrors the DM chat-info pattern:
             a standalone tile sitting just under the members card.
             Hidden on announcement groups (membership is implicit/community-wide). */}
@@ -497,9 +584,81 @@ export function GroupDetailScreen() {
           </View>
         )}
 
-        {/* UPCOMING EVENTS — horizontal scroll, sits between Members and
-            Channels per product design. Hidden when there are no upcoming
-            events. */}
+        {/* Check-in — leader/admin entry point into the people health +
+            follow-up tool. Shown for both regular groups and the announcement
+            (community-wide) group. */}
+        {(isLeader || isAdmin) && group._id && (
+          <View style={{ paddingHorizontal: 12, marginTop: 4 }}>
+            <TouchableOpacity
+              onPress={() =>
+                router.push(`/(user)/leader-tools/${group._id}/followup` as any)
+              }
+              activeOpacity={0.7}
+              style={[
+                styles.addPeopleTile,
+                { backgroundColor: colors.surfaceSecondary },
+              ]}
+            >
+              <View
+                style={[
+                  styles.addPeopleIcon,
+                  { backgroundColor: colors.success + "1A" },
+                ]}
+              >
+                <Ionicons name="pulse" size={18} color={colors.success} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.actionLabel, { color: colors.text }]}>
+                  Check-in
+                </Text>
+                <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 2 }}>
+                  Member health & follow-up
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* GIVING — every member's entry point into the fund's transparency
+            screen (balance, activity, reimbursements); NOT leader-gated
+            (ADR-032 §4: "Give; see transparency summary" is a member-level
+            capability). Hidden entirely until a fund exists for this group. */}
+        {group._id && hasGivingFund && (
+          <View style={{ paddingHorizontal: 12, marginTop: 4 }}>
+            <TouchableOpacity
+              onPress={() => router.push(`/groups/${group._id}/fund` as any)}
+              activeOpacity={0.7}
+              style={[
+                styles.addPeopleTile,
+                { backgroundColor: colors.surfaceSecondary },
+              ]}
+            >
+              <View
+                style={[
+                  styles.addPeopleIcon,
+                  { backgroundColor: colors.success + "1A" },
+                ]}
+              >
+                <Ionicons name="cash-outline" size={18} color={colors.success} />
+              </View>
+              <Text style={[styles.actionLabel, { color: colors.text, flex: 1 }]}>
+                Giving
+              </Text>
+              <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* ROSTERING — leader-only entry row into the rostering hub. Keeps this
+            inline position only once the group has event plans; before that it
+            drops to a bottom group action (see GROUP ACTIONS below). */}
+        {group._id && isLeader && hasEventPlans && (
+          <RosteringSection groupId={group._id} />
+        )}
+
+        {/* UPCOMING EVENTS — horizontal scroll. Hidden when there are no
+            upcoming events. */}
         {group._id && <UpcomingEventsSection groupId={group._id} />}
 
         {/* CHANNELS */}
@@ -640,6 +799,20 @@ export function GroupDetailScreen() {
                 icon="options-outline"
                 label="Toolbar Settings"
                 onPress={handleToolbarSettings}
+                color={colors.text}
+                iconColor={colors.icon}
+                topBorder
+                borderColor={colors.border}
+              />
+            )}
+            {/* Rostering lives here as a group action until the group has its
+                first event plan; after that it graduates to an inline section
+                above (with a live status summary). */}
+            {isLeader && eventPlans !== undefined && !hasEventPlans && (
+              <ActionRow
+                icon="calendar-outline"
+                label="Rostering"
+                onPress={() => router.push(`/rostering/${group._id}` as any)}
                 color={colors.text}
                 iconColor={colors.icon}
                 topBorder

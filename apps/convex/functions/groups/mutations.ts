@@ -22,7 +22,10 @@ import {
   DEFAULT_RSVP_OPTIONS,
 } from "../../lib/meetingConfig";
 import { syncUserChannelMembershipsLogic } from "../sync/memberships";
-import { ensureChannelsForGroupLogic } from "../messaging/channels";
+import {
+  ensureChannelsForGroupLogic,
+  restoreOwnAnnouncementsChannelLogic,
+} from "../messaging/channels";
 import { MutationCtx } from "../../_generated/server";
 import { buildMeetingSearchText } from "../../lib/meetingSearchText";
 
@@ -355,6 +358,18 @@ export const update = mutation({
     if (args.isArchived === true) {
       const timestamp = now();
 
+      // Freeze the group's giving fund, if giving is enabled for it (ADR-032
+      // §3 "Group archive" — freeze half only; the bank-side sweep is a
+      // deferred Phase-2 admin mutation, see functions/finance/
+      // ARCHITECTURE.md's "Known Seams & TODOs"). Scheduled rather than
+      // inline so a missing/errored finance setup never blocks the (much
+      // more common) plain group archive.
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.finance.onboarding.freezeFundForArchivedGroup,
+        { groupId },
+      );
+
       // --- Primary group cascade ---
       // Archive all channels owned by this group
       const ownedChannels = await ctx.db
@@ -385,6 +400,30 @@ export const update = mutation({
 
         for (const member of activeMembers) {
           await ctx.db.patch(member._id, { leftAt: timestamp });
+        }
+
+        // Archiving the OWNER of a shared announcements channel ends the
+        // share: every accepted secondary whose own announcements channel was
+        // disabled by accepting gets it re-enabled and repopulated.
+        if (channel.channelType === "announcements") {
+          for (const sg of channel.sharedGroups ?? []) {
+            if (
+              sg.status === "accepted" &&
+              sg.previousAnnouncementsChannelEnabled === true
+            ) {
+              await restoreOwnAnnouncementsChannelLogic(ctx, sg.groupId, userId);
+            }
+          }
+
+          // The share itself ends too — clear the entries so unarchiving the
+          // group and re-enabling the channel doesn't resurrect the share
+          // from stale accepted entries.
+          if ((channel.sharedGroups?.length ?? 0) > 0) {
+            await ctx.db.patch(channel._id, {
+              sharedGroups: [],
+              isShared: false,
+            });
+          }
         }
       }
 
@@ -848,6 +887,7 @@ export const updateRunSheetConfig = mutation({
     token: v.string(),
     groupId: v.id("groups"),
     runSheetConfig: v.object({
+      source: v.optional(v.union(v.literal("pco"), v.literal("native"))),
       defaultServiceTypeIds: v.optional(v.array(v.string())),
       defaultView: v.optional(v.string()),
       chipConfig: v.optional(
@@ -1110,6 +1150,43 @@ export const setHiddenFromDiscovery = mutation({
     });
 
     return { success: true, hiddenFromDiscovery: args.hidden };
+  },
+});
+
+/**
+ * Set who approves join requests for a group.
+ *
+ *   "admins"  -> community admins approve via the admin dashboard (default)
+ *   "leaders" -> group leaders approve via the group-page Requests section;
+ *                requests are handed off (removed from the admin dashboard) and
+ *                leaders receive the incoming-request push notification.
+ *
+ * Community admins only — leaders must not be able to grant themselves (or
+ * revoke) approval authority for their own group.
+ */
+export const setJoinApprovalMode = mutation({
+  args: {
+    token: v.string(),
+    groupId: v.id("groups"),
+    mode: v.union(v.literal("admins"), v.literal("leaders")),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+
+    const group = await ctx.db.get(args.groupId);
+    if (!group) {
+      throw new Error("Group not found");
+    }
+
+    // Community-admin-only gate
+    await requireCommunityAdmin(ctx, group.communityId, userId);
+
+    await ctx.db.patch(args.groupId, {
+      joinApprovalMode: args.mode,
+      updatedAt: now(),
+    });
+
+    return { success: true, joinApprovalMode: args.mode };
   },
 });
 

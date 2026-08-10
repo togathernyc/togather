@@ -16,6 +16,7 @@ import {
   Alert,
   Share,
   Platform,
+  Linking,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuthenticatedQuery, useAuthenticatedMutation, api } from "@services/api/convex";
@@ -25,6 +26,7 @@ import { DOMAIN_CONFIG } from "@togather/shared";
 import * as Clipboard from "expo-clipboard";
 import { useCallback } from "react";
 import { ResourceSection } from "@components/ui";
+import { ResourceIcon } from "@components/ui/ResourceIcon";
 import { DragHandle } from "@components/ui/DragHandle";
 import { useTheme } from "@hooks/useTheme";
 
@@ -124,6 +126,14 @@ export default function ResourcePage() {
     (a, b) => a.order - b.order
   );
 
+  const handleOpenLink = () => {
+    if (!resource.linkUrl) return;
+    Linking.openURL(resource.linkUrl).catch((err) => {
+      console.error("[ResourcePage] Failed to open link:", err);
+      Alert.alert("Error", "Couldn't open this link.");
+    });
+  };
+
   return (
     <View style={[styles.container, { backgroundColor: colors.surface }]}>
       <DragHandle />
@@ -134,11 +144,7 @@ export default function ResourcePage() {
         <View style={styles.header}>
           <View style={styles.headerLeft}>
             {resource.icon && (
-              <Ionicons
-                name={resource.icon as keyof typeof Ionicons.glyphMap}
-                size={28}
-                color={colors.text}
-              />
+              <ResourceIcon name={resource.icon} size={28} color={colors.text} />
             )}
             <Text style={[styles.title, { color: colors.text }]}>{resource.title}</Text>
           </View>
@@ -150,13 +156,24 @@ export default function ResourcePage() {
           </TouchableOpacity>
         </View>
 
+        {/* Link redirect — for link-only resources reached directly */}
+        {resource.linkUrl && (
+          <TouchableOpacity
+            style={[styles.openLinkButton, { backgroundColor: colors.link }]}
+            onPress={handleOpenLink}
+          >
+            <Ionicons name="open-outline" size={18} color="#fff" />
+            <Text style={styles.openLinkButtonText}>Open Link</Text>
+          </TouchableOpacity>
+        )}
+
         {/* Sections */}
         {sortedSections.map((section) => (
           <ResourceSection key={section.id} section={section} />
         ))}
 
-        {/* Empty state */}
-        {sortedSections.length === 0 && (
+        {/* Empty state — only when there's no content and no link */}
+        {sortedSections.length === 0 && !resource.linkUrl && (
           <View style={styles.emptyContainer}>
             <Ionicons name="document-text-outline" size={48} color={colors.iconSecondary} />
             <Text style={[styles.emptyText, { color: colors.textTertiary }]}>No content yet</Text>
@@ -219,6 +236,20 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: "bold",
     flex: 1,
+  },
+  openLinkButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingVertical: 14,
+    borderRadius: 12,
+    marginBottom: 16,
+  },
+  openLinkButtonText: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "600",
   },
   emptyContainer: {
     alignItems: "center",

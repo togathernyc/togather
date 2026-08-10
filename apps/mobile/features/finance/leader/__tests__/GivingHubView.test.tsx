@@ -1,0 +1,371 @@
+import React from "react";
+import { render, screen, fireEvent } from "@testing-library/react-native";
+import { GivingHubView } from "../GivingHubView";
+import type { FundCard, GivingExpense, GivingHubBalanceSummary } from "../types";
+
+function makeExpense(overrides: Partial<GivingExpense> = {}): GivingExpense {
+  return {
+    id: "expense-1",
+    amountCents: 4250,
+    kind: "reimbursement",
+    description: "Snacks for small group",
+    status: "pending",
+    receiptUrl: null,
+    approverId: null,
+    secondApproverId: null,
+    increaseTransferId: null,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    submitter: {
+      id: "user-1",
+      firstName: "Jamie",
+      lastName: "Lee",
+      displayName: "Jamie Lee",
+      profileImage: null,
+    },
+    ...overrides,
+  };
+}
+
+function makeCard(overrides: Partial<FundCard> = {}): FundCard {
+  return {
+    id: "card-1",
+    name: "Groceries & supplies",
+    holderUserId: "user-2",
+    holderName: "Carol Williams",
+    last4: "4921",
+    status: "active",
+    spendLimitCents: 25000,
+    limitPeriod: "week",
+    managedLimit: false,
+    manualCapCents: null,
+    createdAt: Date.now(),
+    ...overrides,
+  };
+}
+
+const balance: GivingHubBalanceSummary = {
+  fundName: "Just the 2 of us",
+  balanceCents: 128450,
+  monthDonationsCents: 64000,
+  monthDonationCount: 12,
+  monthSpentCents: 21238,
+  monthFeesCents: 1886,
+};
+
+const baseProps = {
+  state: "ready" as const,
+  groupName: "Young Adults",
+  givingLive: true,
+  balance,
+  cards: [] as FundCard[],
+  isLoadingCards: false,
+  canManageCards: true,
+  expenses: [] as GivingExpense[],
+  isLoadingExpenses: false,
+  canApprove: true,
+  currentUserId: "leader-1",
+  processingExpenseId: null,
+  onApprove: jest.fn(),
+  onDeny: jest.fn(),
+  onEnableGiving: jest.fn(),
+  isEnablingGiving: false,
+  onViewRoles: jest.fn(),
+  onCreateCardPress: jest.fn(),
+  onSharePress: jest.fn(),
+  onViewCard: jest.fn(),
+  onViewAllActivity: jest.fn(),
+};
+
+describe("GivingHubView", () => {
+  afterEach(() => {
+    jest.clearAllMocks();
+  });
+
+  describe("hero", () => {
+    it("renders the fund name, balance, and 'Giving is live' chip", () => {
+      render(<GivingHubView {...baseProps} />);
+
+      expect(screen.getByText("Just the 2 of us")).toBeTruthy();
+      expect(screen.getByText("$1,284.50")).toBeTruthy();
+      expect(screen.getByText("Giving is live")).toBeTruthy();
+    });
+
+    it("hides the 'Giving is live' chip when givingLive is false", () => {
+      render(<GivingHubView {...baseProps} givingLive={false} />);
+
+      expect(screen.queryByText("Giving is live")).toBeNull();
+    });
+  });
+
+  describe("section structure", () => {
+    // The approved WA mock's four labelled cards, in order. Asserted here
+    // because a section quietly dropped in a future edit is invisible to
+    // every other test in this file.
+    it("renders the four WA section labels", () => {
+      render(<GivingHubView {...baseProps} />);
+
+      expect(screen.getByText("Needs your approval")).toBeTruthy();
+      expect(screen.getByText("Cards")).toBeTruthy();
+      expect(screen.getByText("People")).toBeTruthy();
+      expect(screen.getByText("Activity")).toBeTruthy();
+    });
+
+    // The pre-restyle cells were hand-rolled TouchableOpacitys with an
+    // explicit accessibilityRole; the WaCells that replaced them must keep
+    // announcing as buttons, or the whole hub reads as plain text to
+    // VoiceOver/TalkBack.
+    it("exposes every tappable cell as a button to screen readers", () => {
+      render(<GivingHubView {...baseProps} canManageCards cards={[makeCard()]} />);
+
+      for (const testID of [
+        "giving-hub-roles-link",
+        "giving-hub-action-share",
+        "giving-hub-create-card",
+        "giving-hub-see-all-transactions",
+        "giving-hub-card-card-1",
+      ]) {
+        expect(screen.getByTestId(testID).props.accessibilityRole).toBe("button");
+      }
+    });
+  });
+
+  describe("people", () => {
+    it("renders the Fund roles cell and calls onViewRoles", () => {
+      const onViewRoles = jest.fn();
+      render(<GivingHubView {...baseProps} onViewRoles={onViewRoles} />);
+
+      expect(screen.getByText("Fund roles")).toBeTruthy();
+      expect(screen.getByText("Who can manage, approve, spend")).toBeTruthy();
+
+      fireEvent.press(screen.getByTestId("giving-hub-roles-link"));
+      expect(onViewRoles).toHaveBeenCalled();
+    });
+
+    it("renders the Share fund cell and calls onSharePress", () => {
+      const onSharePress = jest.fn();
+      render(<GivingHubView {...baseProps} onSharePress={onSharePress} />);
+
+      expect(screen.getByText("Invite people to give")).toBeTruthy();
+
+      fireEvent.press(screen.getByTestId("giving-hub-action-share"));
+      expect(onSharePress).toHaveBeenCalled();
+    });
+
+    it("hides Share fund when onSharePress is undefined", () => {
+      render(<GivingHubView {...baseProps} onSharePress={undefined} />);
+
+      expect(screen.queryByTestId("giving-hub-action-share")).toBeNull();
+    });
+  });
+
+  describe("activity", () => {
+    it("calls onViewAllActivity from the View all transactions cell", () => {
+      const onViewAllActivity = jest.fn();
+      render(<GivingHubView {...baseProps} onViewAllActivity={onViewAllActivity} />);
+
+      expect(screen.getByText("View all transactions")).toBeTruthy();
+
+      fireEvent.press(screen.getByTestId("giving-hub-see-all-transactions"));
+      expect(onViewAllActivity).toHaveBeenCalled();
+    });
+  });
+
+  describe("cards", () => {
+    it("renders card rows with holder, limit, and status badge", () => {
+      render(<GivingHubView {...baseProps} cards={[makeCard()]} />);
+
+      expect(screen.getByText("Groceries & supplies ·· 4921")).toBeTruthy();
+      expect(screen.getByText("Carol Williams · $250.00 / week")).toBeTruthy();
+      expect(screen.getByText("Active")).toBeTruthy();
+    });
+
+    // A managed card has an amount and NO period; the pre-ADR-033 formatter
+    // rendered that as "$400.00 / undefined".
+    it("renders a managed card's limit as what's left, not as a window", () => {
+      render(
+        <GivingHubView
+          {...baseProps}
+          cards={[makeCard({ managedLimit: true, limitPeriod: null, spendLimitCents: 40000 })]}
+        />,
+      );
+
+      expect(
+        screen.getByText("Carol Williams · $400.00 left — follows the fund balance"),
+      ).toBeTruthy();
+      expect(screen.queryByText(/undefined/)).toBeNull();
+      expect(screen.getByText("Active")).toBeTruthy();
+    });
+
+    it("shows a Frozen badge for a disabled card", () => {
+      render(<GivingHubView {...baseProps} cards={[makeCard({ status: "disabled" })]} />);
+
+      expect(screen.getByText("Frozen")).toBeTruthy();
+    });
+
+    it("calls onViewCard when a card row is pressed", () => {
+      const onViewCard = jest.fn();
+      render(<GivingHubView {...baseProps} cards={[makeCard()]} onViewCard={onViewCard} />);
+
+      fireEvent.press(screen.getByTestId("giving-hub-card-card-1"));
+      expect(onViewCard).toHaveBeenCalledWith("card-1");
+    });
+
+    // A card swipe has no approval gate at all: nothing surfaces a
+    // card_charge for approval and canPay refuses the kind, so the only
+    // control is the bank-enforced limit. Assert the CLAIM is absent, not one
+    // historical sentence — the previous version of this test matched an
+    // exact string, so a reworded "Anything over $200 needs a second
+    // approver" shipped straight past it.
+    it("claims no approval control over card spend — only the bank-enforced limit", () => {
+      render(<GivingHubView {...baseProps} />);
+
+      expect(screen.queryByText(/second approver/i)).toBeNull();
+      expect(screen.queryByText(/\$200/)).toBeNull();
+      expect(screen.queryByText(/sign-off/i)).toBeNull();
+      expect(screen.getByText(/bank declines anything over a card's/i)).toBeTruthy();
+      expect(screen.getByText(/as soon as it settles/i)).toBeTruthy();
+    });
+
+    it("shows the 'Create a card' action cell when canManageCards is true", () => {
+      render(<GivingHubView {...baseProps} canManageCards />);
+
+      expect(screen.getByTestId("giving-hub-create-card")).toBeTruthy();
+      expect(screen.getByText("Create a card")).toBeTruthy();
+    });
+
+    it("hides the create-card affordance when canManageCards is false", () => {
+      render(<GivingHubView {...baseProps} canManageCards={false} cards={[]} />);
+
+      expect(screen.queryByTestId("giving-hub-create-card")).toBeNull();
+      expect(screen.getByText("No cards yet")).toBeTruthy();
+    });
+
+    it("calls onCreateCardPress when the create-card row is pressed", () => {
+      const onCreateCardPress = jest.fn();
+      render(<GivingHubView {...baseProps} onCreateCardPress={onCreateCardPress} />);
+
+      fireEvent.press(screen.getByTestId("giving-hub-create-card"));
+      expect(onCreateCardPress).toHaveBeenCalled();
+    });
+  });
+
+  describe("approvals", () => {
+    it("shows the two-approver state for an expense with one approval already recorded", () => {
+      const expense = makeExpense({ approverId: "manager-1", status: "pending" });
+      render(<GivingHubView {...baseProps} expenses={[expense]} />);
+
+      expect(screen.getByText("1 of 2 approvals")).toBeTruthy();
+    });
+
+    it("does not show the two-approver badge when no approval has been recorded yet", () => {
+      const expense = makeExpense({ approverId: null, status: "pending" });
+      render(<GivingHubView {...baseProps} expenses={[expense]} />);
+
+      expect(screen.queryByText("1 of 2 approvals")).toBeNull();
+    });
+
+    it("hides Approve/Deny controls when the viewer cannot approve", () => {
+      const expense = makeExpense();
+      render(<GivingHubView {...baseProps} expenses={[expense]} canApprove={false} />);
+
+      expect(screen.queryByText("Approve")).toBeNull();
+      expect(screen.queryByText("Deny")).toBeNull();
+    });
+
+    it("hides Approve/Deny controls and shows a note for the submitter's own request", () => {
+      const expense = makeExpense({ submitter: { ...makeExpense().submitter, id: "leader-1" } });
+      render(<GivingHubView {...baseProps} expenses={[expense]} currentUserId="leader-1" />);
+
+      expect(screen.queryByText("Approve")).toBeNull();
+      expect(screen.getByText("You can't approve your own request.")).toBeTruthy();
+    });
+
+    it("calls onApprove with the expense id when Approve is pressed", () => {
+      const onApprove = jest.fn();
+      const expense = makeExpense();
+      render(<GivingHubView {...baseProps} expenses={[expense]} onApprove={onApprove} />);
+
+      fireEvent.press(screen.getByText("Approve"));
+      expect(onApprove).toHaveBeenCalledWith("expense-1");
+    });
+
+    it("flags a card charge missing a receipt", () => {
+      const expense = makeExpense({ kind: "card_charge", receiptUrl: null, description: "TRADER JOE'S #552" });
+      render(<GivingHubView {...baseProps} expenses={[expense]} />);
+
+      expect(screen.getByText("receipt missing")).toBeTruthy();
+    });
+
+    it("shows 'No pending approvals' when there are no pending expenses", () => {
+      render(<GivingHubView {...baseProps} expenses={[]} />);
+
+      expect(screen.getByText("No pending approvals")).toBeTruthy();
+    });
+  });
+
+  /**
+   * The no-fund states are the ones the founder hit on staging: a finance
+   * holder was shown the non-holder's "ask a community admin" copy, which is a
+   * dead end pointing at a screen they were already entitled to use. These
+   * pin BOTH viewer classes — the action for the holder, the honest referral
+   * for everyone else.
+   */
+  describe("top-level states", () => {
+    it("renders the enable-giving CTA for finance holders when no fund exists", () => {
+      const onEnableGiving = jest.fn();
+      render(
+        <GivingHubView
+          {...baseProps}
+          state="no-fund-admin"
+          expenses={[]}
+          onEnableGiving={onEnableGiving}
+        />,
+      );
+
+      fireEvent.press(screen.getByText("Enable giving for this group"));
+      expect(onEnableGiving).toHaveBeenCalled();
+    });
+
+    it("links a finance holder to the Finance home from the empty state", () => {
+      const onOpenCommunityFinance = jest.fn();
+      render(
+        <GivingHubView
+          {...baseProps}
+          state="no-fund-admin"
+          expenses={[]}
+          onOpenCommunityFinance={onOpenCommunityFinance}
+        />,
+      );
+
+      fireEvent.press(screen.getByTestId("giving-hub-open-community-finance"));
+      expect(onOpenCommunityFinance).toHaveBeenCalled();
+    });
+
+    // Same precondition text the Finance home's per-group rows use.
+    it("states the precondition instead of a button that could only fail", () => {
+      render(
+        <GivingHubView
+          {...baseProps}
+          state="no-fund-admin"
+          expenses={[]}
+          enableGivingBlockedReason="Your community's giving setup isn't finished yet — finish verification first, then enable groups."
+        />,
+      );
+
+      expect(screen.getByText(/isn't finished yet/i)).toBeTruthy();
+      expect(screen.queryByText("Enable giving for this group")).toBeNull();
+    });
+
+    it("renders an explainer (no CTA) for non-holders when no fund exists", () => {
+      render(<GivingHubView {...baseProps} state="no-fund-member" expenses={[]} />);
+
+      expect(screen.queryByText("Enable giving for this group")).toBeNull();
+      expect(screen.queryByTestId("giving-hub-open-community-finance")).toBeNull();
+      // Names the surface accurately: the referral has to point somewhere the
+      // reader can actually be sent.
+      expect(screen.getByText(/financial controls/i)).toBeTruthy();
+      expect(screen.getByText(/Community settings › Finance/)).toBeTruthy();
+    });
+  });
+});

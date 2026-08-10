@@ -10,7 +10,7 @@ import { internalAction } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import { Id } from "../../_generated/dataModel";
 import { joinRequestApprovedEmail } from "../../lib/notifications/emailTemplates";
-import { eventCreatedByMember, eventRsvpReceived } from "../../lib/notifications/definitions";
+import { availabilityUpdated, eventCreatedByMember, eventRsvpReceived } from "../../lib/notifications/definitions";
 import type { ExtractNotificationData, FormatterContext } from "../../lib/notifications/types";
 
 type NotificationGroupInfo = {
@@ -20,6 +20,7 @@ type NotificationGroupInfo = {
   groupPhotoUrl?: string;
   communityLogoUrl?: string;
   groupAvatarUrl?: string;
+  joinApprovalMode?: "admins" | "leaders";
 };
 
 function getSenderNotificationImage(groupInfo: NotificationGroupInfo): string | undefined {
@@ -33,8 +34,15 @@ function getSenderNotificationImage(groupInfo: NotificationGroupInfo): string | 
 // ============================================================================
 
 /**
- * Notify community admins when a join request is received
- * Called from createJoinRequest mutation
+ * Notify the appropriate reviewers when a join request is received.
+ *
+ * Recipients depend on the group's approval mode:
+ *   - "leaders" -> the group's leaders; the push deep-links to the group's
+ *     Requests page (/groups/{id}/requests).
+ *   - "admins" (default) -> the community admins; the push opens the admin
+ *     dashboard (default routing for the `join_request_received` type).
+ *
+ * Called from createJoinRequest mutation.
  */
 export const notifyJoinRequestReceived = internalAction({
   args: {
@@ -57,19 +65,29 @@ export const notifyJoinRequestReceived = internalAction({
         userId: args.requesterId,
       });
 
-      // Get community admins
-      const adminIds: Id<"users">[] = await ctx.runQuery(internal.functions.notifications.internal.getCommunityAdmins, {
-        communityId: groupInfo.communityId as Id<"communities">,
-      });
+      // Route to leaders when the group has handed approval off to leaders,
+      // otherwise to community admins (the default).
+      const leadersApprove = groupInfo.joinApprovalMode === "leaders";
 
-      if (adminIds.length === 0) {
-        console.log("[NotifyJoinRequest] No community admins found");
+      const recipientIds: Id<"users">[] = leadersApprove
+        ? await ctx.runQuery(internal.functions.notifications.internal.getGroupMembersForNotification, {
+            groupId: args.groupId,
+            filter: "leaders",
+          })
+        : await ctx.runQuery(internal.functions.notifications.internal.getCommunityAdmins, {
+            communityId: groupInfo.communityId as Id<"communities">,
+          });
+
+      if (recipientIds.length === 0) {
+        console.log(
+          `[NotifyJoinRequest] No ${leadersApprove ? "leaders" : "community admins"} found`,
+        );
         return { success: true, sent: 0 };
       }
 
-      // Get push tokens for all admins
+      // Get push tokens for all recipients
       const tokenResults: Array<{ userId: string; tokens: string[] }> = await ctx.runQuery(internal.functions.notifications.tokens.getActiveTokensForUsers, {
-        userIds: adminIds,
+        userIds: recipientIds,
       });
 
       // Build notifications
@@ -84,13 +102,18 @@ export const notifyJoinRequestReceived = internalAction({
             groupId: args.groupId,
             communityId: groupInfo.communityId,
             groupAvatarUrl: notificationImageUrl,
+            // Leaders deep-link straight to the group's Requests page; admins
+            // fall through to the default admin-dashboard route.
+            ...(leadersApprove
+              ? { url: `/groups/${args.groupId}/requests` }
+              : {}),
           },
           imageUrl: notificationImageUrl,
         }))
       );
 
       if (notifications.length === 0) {
-        console.log("[NotifyJoinRequest] No push tokens found for admins");
+        console.log("[NotifyJoinRequest] No push tokens found for recipients");
         return { success: true, sent: 0 };
       }
 
@@ -519,6 +542,131 @@ export const notifyRsvpReceived = internalAction({
 });
 
 // ============================================================================
+// Notification Action for Availability Updates (debounced)
+// ============================================================================
+
+/**
+ * Notify a group's leaders that a member filled out or updated their serving
+ * availability. Fired by the debounced scheduler in scheduling/availability.ts
+ * (`queueAvailabilityLeaderNotice`), so this runs ~5 min after the member's
+ * last change — one notification per burst, not per tap. Clears the debounce
+ * row when done so the next change starts a fresh window.
+ */
+export const notifyAvailabilityUpdated = internalAction({
+  args: {
+    groupId: v.id("groups"),
+    userId: v.id("users"),
+    nonce: v.string(),
+  },
+  handler: async (ctx, args): Promise<{ success: boolean; error?: string; sent?: number }> => {
+    try {
+      // Claim the debounce row by nonce. If this job was superseded by a later
+      // edit (the row was rescheduled), the claim fails and we bail without
+      // sending — the newer job will fire and notify once the window settles.
+      const claimed: boolean = await ctx.runMutation(
+        internal.functions.scheduling.availability.claimAvailabilityDebounce,
+        { groupId: args.groupId, userId: args.userId, nonce: args.nonce },
+      );
+      if (!claimed) {
+        return { success: true, sent: 0 };
+      }
+
+      const groupInfo: NotificationGroupInfo | null = await ctx.runQuery(
+        internal.functions.notifications.internal.getGroupInfo,
+        { groupId: args.groupId },
+      );
+      if (!groupInfo) {
+        return { success: false, error: "Group not found" };
+      }
+
+      const memberName: string = await ctx.runQuery(
+        internal.functions.notifications.internal.getUserDisplayName,
+        { userId: args.userId },
+      );
+
+      const leaderIds: Id<"users">[] = await ctx.runQuery(
+        internal.functions.notifications.internal.getGroupMembersForNotification,
+        { groupId: args.groupId, filter: "leaders" },
+      );
+      const recipientSet = new Set<string>(leaderIds.map((id) => String(id)));
+      // Never notify the member about their own update.
+      recipientSet.delete(String(args.userId));
+      const recipientIds = [...recipientSet] as Id<"users">[];
+      if (recipientIds.length === 0) {
+        return { success: true, sent: 0 };
+      }
+
+      const tokenResults: Array<{ userId: string; tokens: string[] }> = await ctx.runQuery(
+        internal.functions.notifications.tokens.getActiveTokensForUsers,
+        { userIds: recipientIds },
+      );
+
+      const pushFormatter = availabilityUpdated.formatters.push;
+      if (!pushFormatter) {
+        return { success: false, error: "Missing push formatter" };
+      }
+      type AvailabilityPushData = ExtractNotificationData<typeof availabilityUpdated>;
+      const formatterCtx: FormatterContext<AvailabilityPushData> = {
+        data: {
+          memberName,
+          groupName: groupInfo.name,
+          groupId: args.groupId,
+          communityId: groupInfo.communityId,
+        },
+        userId: args.userId,
+      };
+      const { title, body, data: pushData } = pushFormatter(formatterCtx);
+
+      const notificationImageUrl = getSenderNotificationImage(groupInfo);
+      const notifications = tokenResults.flatMap((result) =>
+        result.tokens.map((token) => ({
+          token,
+          title,
+          body,
+          data: { ...pushData, groupAvatarUrl: notificationImageUrl },
+          imageUrl: notificationImageUrl,
+        })),
+      );
+
+      let success = true;
+      if (notifications.length > 0) {
+        const result = await ctx.runAction(
+          internal.functions.notifications.internal.sendBatchPushNotifications,
+          { notifications },
+        );
+        success = result.success;
+      }
+
+      // In-app inbox records for every leader (even those without a push token).
+      const notificationRecords = recipientIds.map((leaderId) => ({
+        userId: leaderId,
+        communityId: groupInfo.communityId as Id<"communities">,
+        groupId: args.groupId,
+        notificationType: "availability_updated",
+        title,
+        body,
+        data: {
+          groupId: args.groupId,
+          communityId: groupInfo.communityId,
+          url: `/rostering/${args.groupId}/grid`,
+          groupAvatarUrl: notificationImageUrl,
+        },
+        status: success ? "sent" : "failed",
+      }));
+      await ctx.runMutation(
+        internal.functions.notifications.mutations.createNotificationsBatch,
+        { notifications: notificationRecords },
+      );
+
+      return { success, sent: notifications.length };
+    } catch (error) {
+      console.error("[NotifyAvailabilityUpdated] Error:", error);
+      return { success: false, error: String(error) };
+    }
+  },
+});
+
+// ============================================================================
 // Notification Action for Member-Created Events
 // ============================================================================
 
@@ -835,7 +983,9 @@ export const notifySharedChannelInvite = internalAction({
     invitedGroupId: v.id("groups"),
     primaryGroupId: v.id("groups"),
     inviterId: v.id("users"),
+    channelId: v.id("chatChannels"),
     channelName: v.string(),
+    channelSlug: v.string(),
   },
   handler: async (ctx, args): Promise<{ success: boolean; error?: string; sent?: number }> => {
     try {
@@ -892,6 +1042,8 @@ export const notifySharedChannelInvite = internalAction({
             type: "shared_channel_invite",
             groupId: args.invitedGroupId,
             primaryGroupId: args.primaryGroupId,
+            channelId: args.channelId,
+            channelSlug: args.channelSlug,
             communityId: primaryGroupInfo.communityId,
             groupAvatarUrl: notificationImageUrl,
           },
@@ -920,6 +1072,8 @@ export const notifySharedChannelInvite = internalAction({
         data: {
           groupId: args.invitedGroupId,
           primaryGroupId: args.primaryGroupId,
+          channelId: args.channelId,
+          channelSlug: args.channelSlug,
           communityId: primaryGroupInfo.communityId,
           groupAvatarUrl: notificationImageUrl,
         },

@@ -17,6 +17,32 @@ import { COMMUNITY_ADMIN_THRESHOLD, PRIMARY_ADMIN_ROLE } from "./permissions";
 import { getUsersWithNotificationsDisabled } from "./notifications/enabledStatus";
 
 /**
+ * Upper bound on candidates returned when guaranteeing a group's FULL
+ * membership on empty search (roster #477 FR-1 / FR-9). Large enough to cover
+ * a very large church group (≥500 members) so the "Assign someone" sheet never
+ * search-gates the population, while still bounding the per-row lookups. If a
+ * single group ever exceeds this, the overflow falls back to recency order —
+ * an extreme edge no real serving roster hits today.
+ */
+const GROUP_COMPLETE_LIMIT = 1000;
+
+/**
+ * Cap on the wider-community "extra people not in the group" tail on the
+ * empty-search path. When `includeAllGroupMembersWhenEmpty` is set the group-
+ * member union ALREADY guarantees completeness (FR-1), so this recency tier
+ * only needs to surface a small set of community-only people the leader might
+ * want to add+assign — they can always type a name to reach anyone past it.
+ *
+ * Keeping this a small CONSTANT (rather than scaling with the 1000-row group
+ * ceiling) is what bounds the empty-search read count to O(group size) +
+ * O(constant): on an 85+ member real community the old `effectiveLimit * 3` =
+ * up to 3000 `userCommunities` rows — each followed by a `ctx.db.get` AND a
+ * membership re-check — blew past Convex's per-query read cap and the query
+ * threw, surfacing as a permanent infinite spinner (roster grid fix).
+ */
+const COMMUNITY_TAIL_LIMIT = 50;
+
+/**
  * Base member result returned by search
  */
 export interface MemberSearchResult {
@@ -34,6 +60,20 @@ export interface MemberSearchResult {
    * Truth source: `pushTokens` (see `lib/notifications/enabledStatus.ts`).
    */
   notificationsDisabled: boolean;
+  /**
+   * True when the user is already an active member of `annotateGroupId`
+   * (when that option is provided). Lets the UI gray-out / hide rows
+   * without having to do a second round-trip per candidate. Always false
+   * when `annotateGroupId` is not provided.
+   */
+  inGroup?: boolean;
+  /**
+   * True when the user is a leader-created placeholder (`users.isPlaceholder
+   * === true`) awaiting their first OTP sign-in. Lets pickers render them as
+   * "Invited" rather than as a normal candidate. Always false / absent for
+   * real signed-in users.
+   */
+  isPlaceholder?: boolean;
 }
 
 /**
@@ -58,9 +98,36 @@ export interface MemberSearchOptions {
   groupIds?: Id<"groups">[];
   /** Exclude users who are already active members of this group */
   excludeGroupId?: Id<"groups">;
+  /**
+   * If provided, each returned row carries `inGroup: boolean` indicating
+   * whether that user is already an active member of this group. Use this
+   * instead of `excludeGroupId` when the UI wants to render but de-emphasize
+   * already-in-group people rather than hide them entirely.
+   */
+  annotateGroupId?: Id<"groups">;
   limit?: number;
   /** Include admin-only fields (isPrimaryAdmin, role, lastLogin) */
   includeAdminFields?: boolean;
+  /**
+   * When true and `search` is empty, fall back to the most recently active
+   * community members instead of returning `[]`. Lets group "Add people"
+   * UIs surface a sensible default list before the leader types anything.
+   */
+  fallbackToRecentWhenEmpty?: boolean;
+  /**
+   * When set and `search` is empty, guarantee that EVERY active member of this
+   * group is in the returned candidate set — not just a recency-bounded slice
+   * (roster #477 FR-1). The rostering "Assign someone" sheet relies on this:
+   * a leader must see every assignable group member on open, including
+   * volunteers who haven't logged in recently. Group members are unioned with
+   * the recency-surfaced community members (`fallbackToRecentWhenEmpty`); the
+   * group set is exhaustive, the wider-community set stays recency-bounded
+   * (you can always type to find more community-only people).
+   *
+   * Has no effect when `search` is non-empty — typing narrows the set via the
+   * search index, which already covers every indexed member.
+   */
+  includeAllGroupMembersWhenEmpty?: Id<"groups">;
 }
 
 /**
@@ -184,64 +251,163 @@ export async function searchCommunityMembersInternal(
     groupId,
     groupIds,
     excludeGroupId,
-    limit = 50,
+    annotateGroupId,
+    limit = 30,
     includeAdminFields = false,
+    fallbackToRecentWhenEmpty = false,
+    includeAllGroupMembersWhenEmpty,
   } = options;
 
+  // Hard cap regardless of caller — protects the per-row notif-disabled /
+  // membership lookups from quadratic blow-ups.
+  //
+  // When `includeAllGroupMembersWhenEmpty` is in play we must NOT truncate the
+  // group's membership away (roster #477 FR-1 / FR-9: every assignable group
+  // member must be reachable on open, even for a ≥500-member group). We raise
+  // the ceiling to GROUP_COMPLETE_LIMIT for that case so the full group set
+  // survives the final filter loop; the per-row lookups still scale with the
+  // group size, not the whole community, so this stays bounded.
+  const searchIsEmptyForGroup =
+    !!includeAllGroupMembersWhenEmpty && !(search?.trim());
+  const effectiveLimit = searchIsEmptyForGroup
+    ? Math.max(1, Math.min(limit, GROUP_COMPLETE_LIMIT))
+    : Math.max(1, Math.min(limit, 100));
   const excludeIds = new Set(excludeUserIds);
   const searchQuery = search?.trim() || "";
 
-  if (!searchQuery) {
-    return [];
-  }
-
-  // Parse comma-separated search terms for multiple searches
-  const searchTerms = searchQuery.split(",").map((t) => t.trim()).filter(Boolean);
-
-  // Use full-text search index to find matching users
-  // For comma-separated terms, search for each term and merge results
+  // ---------------------------------------------------------------------------
+  // Candidate gathering
+  // ---------------------------------------------------------------------------
+  // Use the `search_users` full-text index for the keyword case (O(matches),
+  // not O(community)). When the search is empty AND the caller opted into the
+  // recent-members fallback, use `userCommunities.by_community_lastLogin` to
+  // surface the most recently-active people without scanning every user.
   const allMatchingUsers: Map<Id<"users">, Doc<"users">> = new Map();
+  // Users sourced from `includeAllGroupMembersWhenEmpty`'s active membership.
+  // These are already known-active members of the group (and therefore of the
+  // community), so we skip the per-row `userCommunities` membership re-check
+  // for them below — only the (now small, bounded) community tail needs it.
+  const knownGroupMemberIds = new Set<Id<"users">>();
 
-  for (const term of searchTerms) {
-    if (!term) continue;
-
-    // Full-text search on searchText field
-    const matchingUsers = await ctx.db
-      .query("users")
-      .withSearchIndex("search_users", (q) => q.search("searchText", term))
-      .take(limit * 3); // Fetch extra to account for filtering
-
-    for (const user of matchingUsers) {
-      if (!allMatchingUsers.has(user._id)) {
-        allMatchingUsers.set(user._id, user);
+  if (searchQuery) {
+    // Build the set of terms to issue against the search index. Comma-
+    // separated terms run as separate searches (so `"john, jane"` finds
+    // either). We also push a digits-only variant of each term so phone-
+    // formatted queries like `(555) 123-4567` still hit users whose stored
+    // `searchText` contains `+15551234567` — the digit substring is in the
+    // indexed text. Important: we DO NOT scan every community member as a
+    // fallback (was the previous hot-path), since that's O(community-size)
+    // per keystroke (codex review #475).
+    const rawTerms = searchQuery.split(",").map((t) => t.trim()).filter(Boolean);
+    const termSet = new Set<string>();
+    for (const term of rawTerms) {
+      termSet.add(term);
+      const digits = normalizePhone(term).replace(/\D/g, "");
+      if (digits.length >= 4 && digits !== term) {
+        termSet.add(digits);
       }
     }
-  }
 
-  // Also handle phone number search with normalization
-  // Full-text search doesn't handle formatted phone numbers well
-  const normalizedPhone = normalizePhone(searchQuery).replace(/\D/g, "");
-  if (normalizedPhone.length >= 4) {
-    // Get community members and check for phone matches
-    const communityMemberships = await ctx.db
-      .query("userCommunities")
-      .withIndex("by_community", (q) => q.eq("communityId", communityId))
-      .filter((q) => q.eq(q.field("status"), 1)) // Active only
-      .take(2000);
+    for (const term of termSet) {
+      const matchingUsers = await ctx.db
+        .query("users")
+        .withSearchIndex("search_users", (q) => q.search("searchText", term))
+        .take(500); // Same cap as admin People search — narrow further below.
 
-    const phoneMatchPromises = communityMemberships.map(async (m) => {
-      const user = await ctx.db.get(m.userId);
-      if (user?.phone?.includes(normalizedPhone)) {
-        return user;
-      }
-      return null;
-    });
-    const phoneMatches = await Promise.all(phoneMatchPromises);
-    for (const user of phoneMatches) {
-      if (user && !allMatchingUsers.has(user._id)) {
-        allMatchingUsers.set(user._id, user);
+      for (const user of matchingUsers) {
+        if (!allMatchingUsers.has(user._id)) {
+          allMatchingUsers.set(user._id, user);
+        }
       }
     }
+  } else if (includeAllGroupMembersWhenEmpty || fallbackToRecentWhenEmpty) {
+    // --- Empty search ---------------------------------------------------------
+    // Two complementary sources, unioned:
+    //
+    //   1. The FULL active membership of `includeAllGroupMembersWhenEmpty`
+    //      (roster #477 FR-1). This is the completeness guarantee — every
+    //      assignable group member must appear on open, even one who never
+    //      logs in. Read off the `groupMembers.by_group` index, bounded by the
+    //      group's size (not the community's). No recency cap here.
+    //
+    //   2. The most recently-active COMMUNITY members
+    //      (`fallbackToRecentWhenEmpty`), so the leader can also see wider-
+    //      community people to add+assign. This tier stays recency-bounded —
+    //      the leader types a name to reach anyone past the cap.
+    //
+    // Order matters: gather group members first so they always survive the
+    // `effectiveLimit` truncation below; community-only recency fills the rest.
+    if (includeAllGroupMembersWhenEmpty) {
+      const groupMemberships = await ctx.db
+        .query("groupMembers")
+        .withIndex("by_group", (q) =>
+          q.eq("groupId", includeAllGroupMembersWhenEmpty),
+        )
+        .filter((q) =>
+          q.and(
+            q.eq(q.field("leftAt"), undefined),
+            q.or(
+              q.eq(q.field("requestStatus"), undefined),
+              q.eq(q.field("requestStatus"), null),
+              q.eq(q.field("requestStatus"), "accepted"),
+            ),
+          ),
+        )
+        .collect();
+      const groupUsers = await Promise.all(
+        groupMemberships.map((m) => ctx.db.get(m.userId)),
+      );
+      for (const user of groupUsers) {
+        if (user) {
+          knownGroupMemberIds.add(user._id);
+          if (!allMatchingUsers.has(user._id)) {
+            allMatchingUsers.set(user._id, user);
+          }
+        }
+      }
+    }
+
+    if (fallbackToRecentWhenEmpty) {
+      // Pull the most recently-active community members directly off the
+      // descending `by_community_lastLogin` index.
+      //
+      // When `includeAllGroupMembersWhenEmpty` is also set, the group-member
+      // union above ALREADY guarantees completeness, so this tier only needs a
+      // small constant slice of community-only "extras" — NOT a slice that
+      // scales with the (up to 1000) group ceiling. We bound the take to a
+      // small CONSTANT (`COMMUNITY_TAIL_LIMIT`) in that case so the total
+      // empty-search read count stays O(group size) + O(constant) instead of
+      // O(3000), which previously blew past Convex's per-query read cap on
+      // larger communities and threw (infinite spinner).
+      //
+      // For the plain recency fallback (no group completeness guarantee) we
+      // keep the prior `effectiveLimit * 3` over-fetch — `effectiveLimit` is
+      // capped at 100 there, so it's already bounded.
+      const recencyTake = includeAllGroupMembersWhenEmpty
+        ? COMMUNITY_TAIL_LIMIT
+        : effectiveLimit * 3;
+      const recentMemberships = await ctx.db
+        .query("userCommunities")
+        .withIndex("by_community_lastLogin", (q) =>
+          q.eq("communityId", communityId),
+        )
+        .order("desc")
+        .filter((q) => q.eq(q.field("status"), 1))
+        .take(recencyTake);
+
+      const recentUsers = await Promise.all(
+        recentMemberships.map((m) => ctx.db.get(m.userId)),
+      );
+      for (const user of recentUsers) {
+        if (user && !allMatchingUsers.has(user._id)) {
+          allMatchingUsers.set(user._id, user);
+        }
+      }
+    }
+  } else {
+    // No search and no fallback opted in — return empty so the UI can show
+    // a "search to find people" empty state.
+    return [];
   }
 
   if (allMatchingUsers.size === 0) {
@@ -310,85 +476,127 @@ export async function searchCommunityMembersInternal(
     excludedGroupUserIds = new Set(groupMemberships.map((gm) => gm.userId));
   }
 
-  // Check which users are active members of this community
-  const membershipPromises = Array.from(allMatchingUsers.values()).map((user) =>
-    ctx.db
+  // If asked to annotate group membership instead of excluding, look up the
+  // group's active members so each row can carry `inGroup`. When the caller
+  // passes the same id to both `excludeGroupId` and `annotateGroupId` we
+  // reuse the set rather than re-querying.
+  let annotateGroupUserIds: Set<Id<"users">> | null = null;
+  if (annotateGroupId) {
+    if (excludedGroupUserIds && excludeGroupId === annotateGroupId) {
+      annotateGroupUserIds = excludedGroupUserIds;
+    } else {
+      const groupMemberships = await ctx.db
+        .query("groupMembers")
+        .withIndex("by_group", (q) => q.eq("groupId", annotateGroupId))
+        .filter((q) =>
+          q.and(
+            q.eq(q.field("leftAt"), undefined),
+            q.or(
+              q.eq(q.field("requestStatus"), undefined),
+              q.eq(q.field("requestStatus"), null),
+              q.eq(q.field("requestStatus"), "accepted")
+            )
+          )
+        )
+        .collect();
+      annotateGroupUserIds = new Set(groupMemberships.map((gm) => gm.userId));
+    }
+  }
+
+  // Check which users are active members of this community. One lookup per
+  // candidate via the `by_user_community` compound index — read count scales
+  // with the number of search-index matches, not community size.
+  //
+  // EXCEPTION: users sourced from `includeAllGroupMembersWhenEmpty`'s active
+  // membership (`knownGroupMemberIds`) are already known-active members of the
+  // group — and you cannot be an active group member without being an active
+  // community member — so we SKIP the per-row `userCommunities` re-check for
+  // them (it's redundant) and still fetch the doc only to surface their
+  // role/lastLogin. The (now bounded) community tail is the only set that
+  // genuinely needs a membership *check*. This keeps the empty-search read
+  // count O(group size) + O(constant) rather than scaling the re-check across
+  // a 3000-row over-fetch (roster grid fix).
+  const usersArray = Array.from(allMatchingUsers.values());
+  const membershipPromises = usersArray.map(async (user) => {
+    // Skip the redundant membership read for known-active group members: a
+    // synthetic active membership stands in (roles default to 0 — the assign
+    // sheet doesn't surface admin badges for in-group rows). Only the
+    // community tail and the search path actually need a membership check.
+    if (knownGroupMemberIds.has(user._id)) {
+      return { status: 1, roles: 0 } as Doc<"userCommunities">;
+    }
+    return ctx.db
       .query("userCommunities")
       .withIndex("by_user_community", (q) =>
         q.eq("userId", user._id).eq("communityId", communityId)
       )
       .filter((q) => q.eq(q.field("status"), 1)) // Active status
-      .first()
-  );
+      .first();
+  });
   const memberships = await Promise.all(membershipPromises);
 
-  // Pre-compute the candidate set so we can batch the notif-disabled
-  // lookup once for the whole result. The loop below filters again with
-  // the limit, but the extra IDs collected here are negligible.
-  const candidateUserIds: Id<"users">[] = [];
-  const usersArray = Array.from(allMatchingUsers.values());
+  // Apply all filters once up front so we know exactly which rows survive
+  // and which user IDs need a notif-disabled lookup. Drops:
+  //  - non-members of this community
+  //  - explicitly-excluded users (callers always pass the current user here)
+  //  - inactive users that aren't leader-created placeholders (placeholders
+  //    must remain visible so leaders see "already invited" entries)
+  //  - members of the excluded group (when `excludeGroupId` is set)
+  //  - non-members of any of the `groupIds` allowlist (when set)
+  const filtered: Array<{
+    user: Doc<"users">;
+    membership: Doc<"userCommunities">;
+  }> = [];
   for (let i = 0; i < usersArray.length; i++) {
     const user = usersArray[i];
     const membership = memberships[i];
     if (!membership) continue;
     if (excludeIds.has(user._id)) continue;
+    if (user.isActive === false && user.isPlaceholder !== true) continue;
     if (excludedGroupUserIds?.has(user._id)) continue;
     if (targetUserIds && !targetUserIds.has(user._id)) continue;
-    candidateUserIds.push(user._id);
-    if (candidateUserIds.length >= limit) break;
+    filtered.push({ user, membership });
+    if (filtered.length >= effectiveLimit) break;
   }
+
+  // Batch notif-disabled lookup ONCE for the final slice — pushTokens reads
+  // shouldn't scale with the 500-row search-index window (codex review #372).
   const notifsDisabled = await getUsersWithNotificationsDisabled(
     ctx,
-    candidateUserIds,
+    filtered.map((f) => f.user._id),
   );
 
-  // Build results for users who are community members
-  const results: (MemberSearchResult | AdminMemberSearchResult)[] = [];
-
-  for (let i = 0; i < usersArray.length; i++) {
-    if (results.length >= limit) break;
-
-    const user = usersArray[i];
-    const membership = memberships[i];
-
-    // Skip if not an active community member
-    if (!membership) continue;
-
-    // Skip if in exclude list
-    if (excludeIds.has(user._id)) continue;
-
-    // Skip if this user is already an active member of the excluded group
-    if (excludedGroupUserIds?.has(user._id)) continue;
-
-    // Skip if filtering by group and user is not in that group
-    if (targetUserIds && !targetUserIds.has(user._id)) continue;
-
-    const isAdmin = (membership.roles ?? 0) >= COMMUNITY_ADMIN_THRESHOLD;
-
-    const baseResult: MemberSearchResult = {
-      id: user._id,
-      firstName: user.firstName || "",
-      lastName: user.lastName || "",
-      email: user.email || "",
-      phone: user.phone || null,
-      profilePhoto: getMediaUrl(user.profilePhoto) ?? null,
-      isAdmin,
-      notificationsDisabled: notifsDisabled.has(user._id),
-    };
-
-    if (includeAdminFields) {
-      const adminResult: AdminMemberSearchResult = {
-        ...baseResult,
-        isPrimaryAdmin: membership.roles === PRIMARY_ADMIN_ROLE,
-        role: membership.roles ?? 0,
-        lastLogin: membership.lastLogin || null,
-        groupsCount: 0, // Not computed for search results; shown in member details
+  const results: (MemberSearchResult | AdminMemberSearchResult)[] = filtered.map(
+    ({ user, membership }) => {
+      const isAdmin = (membership.roles ?? 0) >= COMMUNITY_ADMIN_THRESHOLD;
+      const baseResult: MemberSearchResult = {
+        id: user._id,
+        firstName: user.firstName || "",
+        lastName: user.lastName || "",
+        email: user.email || "",
+        phone: user.phone || null,
+        profilePhoto: getMediaUrl(user.profilePhoto) ?? null,
+        isAdmin,
+        notificationsDisabled: notifsDisabled.has(user._id),
+        isPlaceholder: user.isPlaceholder === true,
+        ...(annotateGroupUserIds
+          ? { inGroup: annotateGroupUserIds.has(user._id) }
+          : {}),
       };
-      results.push(adminResult);
-    } else {
-      results.push(baseResult);
-    }
-  }
+
+      if (includeAdminFields) {
+        const adminResult: AdminMemberSearchResult = {
+          ...baseResult,
+          isPrimaryAdmin: membership.roles === PRIMARY_ADMIN_ROLE,
+          role: membership.roles ?? 0,
+          lastLogin: membership.lastLogin || null,
+          groupsCount: 0, // Not computed for search results; shown in member details
+        };
+        return adminResult;
+      }
+      return baseResult;
+    },
+  );
 
   return results;
 }

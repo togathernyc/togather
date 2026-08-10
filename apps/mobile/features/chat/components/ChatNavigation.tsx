@@ -2,21 +2,32 @@
  * Chat Navigation Component
  * Contains TabBar (dynamic channel tabs) and Toolbar (quick actions).
  */
-import React, { memo, useMemo } from "react";
+import React, { memo, useMemo, useRef, useState, useEffect, useCallback } from "react";
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
   ScrollView,
+  Linking,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { ResourceIcon } from "@components/ui/ResourceIcon";
 import { useRouter } from "expo-router";
 import { useQuery, api, useStoredAuthToken } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 import { getExternalChatInfo } from "../utils/externalChat";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useTheme } from "@hooks/useTheme";
+import { useWhatsappShell } from "@hooks/useWhatsappShell";
+import {
+  WA_CHAT_CHROME_LIGHT,
+  WA_CHAT_CHROME_DARK,
+  WA_TAB_ACTIVE_LIGHT,
+  WA_TAB_ACTIVE_DARK,
+  WA_TAB_TRACK_LIGHT,
+  WA_TAB_TRACK_DARK,
+} from "../waChatChrome";
 import {
   TOOLBAR_TOOLS,
   DEFAULT_TOOLS,
@@ -24,6 +35,13 @@ import {
   getResourceIdFromToolId,
   type ToolId,
 } from "../constants/toolbarTools";
+
+/**
+ * Text/icon color for the active (filled) tab. The active tab background is the
+ * community primary color, so its label/icons render in white for contrast —
+ * the same pairing used by primary buttons across the app.
+ */
+const ACTIVE_TAB_CONTENT_COLOR = "#ffffff";
 
 /**
  * Represents a channel tab that can be displayed in the tab bar.
@@ -61,8 +79,37 @@ export const ChatTabBar = memo(function ChatTabBar({
   onExternalChatPress,
 }: ChatTabBarProps) {
   const { primaryColor } = useCommunityTheme();
-  const { colors: themeColors } = useTheme();
+  const { colors: themeColors, isDark } = useTheme();
+  // WA-VISUAL-DELTAS §2.3: the channel tab strip is an intentional divergence
+  // from WhatsApp, but flag-on it must be *neutral* — a white active pill on a
+  // light-gray track, never the green/brand fill (§S5 color discipline).
+  const whatsappShellEnabled = useWhatsappShell();
+  const waTrackColor = isDark ? WA_TAB_TRACK_DARK : WA_TAB_TRACK_LIGHT;
+  const waActiveColor = isDark ? WA_TAB_ACTIVE_DARK : WA_TAB_ACTIVE_LIGHT;
   const externalChatInfo = externalChatLink ? getExternalChatInfo(externalChatLink) : null;
+
+  // Keep the ACTIVE channel tab visible in the horizontal bar no matter how the
+  // room was opened (inbox, notification, deep link, tab tap). We remember each
+  // tab's measured x/width and the viewport width, then scroll the active tab to
+  // center whenever the active slug changes (or its layout first arrives).
+  const scrollRef = useRef<ScrollView>(null);
+  const tabLayoutsRef = useRef<Record<string, { x: number; width: number }>>({});
+  const [viewportW, setViewportW] = useState(0);
+
+  const scrollActiveIntoView = useCallback(
+    (animated: boolean) => {
+      const layout = tabLayoutsRef.current[activeSlug];
+      if (!layout || viewportW === 0) return;
+      // Center it; RN clamps the offset to the scrollable range for us.
+      const x = layout.x - (viewportW - layout.width) / 2;
+      scrollRef.current?.scrollTo({ x: Math.max(0, x), animated });
+    },
+    [activeSlug, viewportW],
+  );
+
+  useEffect(() => {
+    scrollActiveIntoView(true);
+  }, [scrollActiveIntoView]);
 
   // Helper to get display name for a channel
   const getDisplayName = (channel: ChannelTab): string => {
@@ -74,11 +121,26 @@ export const ChatTabBar = memo(function ChatTabBar({
   };
 
   return (
-    <View style={[styles.tabBar, { backgroundColor: themeColors.surface, borderBottomColor: themeColors.border }]}>
+    <View
+      style={[
+        styles.tabBar,
+        { backgroundColor: themeColors.surface, borderBottomColor: themeColors.border },
+        whatsappShellEnabled && styles.waTabBar,
+        whatsappShellEnabled && {
+          backgroundColor: isDark ? WA_CHAT_CHROME_DARK : WA_CHAT_CHROME_LIGHT,
+        },
+      ]}
+    >
       <ScrollView
+        ref={scrollRef}
         horizontal
         showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.tabBarScrollContent}
+        contentContainerStyle={[
+          styles.tabBarScrollContent,
+          whatsappShellEnabled && styles.waTabBarScrollContent,
+          whatsappShellEnabled && { backgroundColor: waTrackColor },
+        ]}
+        onLayout={(e) => setViewportW(e.nativeEvent.layout.width)}
       >
         {channels.map((channel) => {
           const isActive = channel.slug === activeSlug;
@@ -89,24 +151,54 @@ export const ChatTabBar = memo(function ChatTabBar({
           // most of a phone-width tab bar. Accessibility label still reads
           // the channel name for screen readers.
           const isAnnouncements = channel.channelType === "announcements";
-          const tabColor = isActive ? primaryColor : themeColors.textSecondary;
+          // Active tab is a filled rectangle (primary color background) so it
+          // stands out clearly from inactive tabs even when many teams are
+          // listed. Content sits on the brand color, so it switches to white —
+          // matching how primary buttons render their label elsewhere.
+          const tabColor = whatsappShellEnabled
+            ? isActive
+              ? themeColors.text
+              : themeColors.textSecondary
+            : isActive
+              ? ACTIVE_TAB_CONTENT_COLOR
+              : themeColors.textSecondary;
 
           return (
             <TouchableOpacity
               key={channel.slug}
-              style={[styles.tab, isActive && { borderBottomColor: primaryColor }]}
+              style={[
+                styles.tab,
+                !whatsappShellEnabled && isActive && { backgroundColor: primaryColor },
+                whatsappShellEnabled && styles.waTab,
+                whatsappShellEnabled && isActive && styles.waTabActive,
+                whatsappShellEnabled && isActive && { backgroundColor: waActiveColor },
+              ]}
               onPress={() => onTabChange(channel.slug)}
               onLongPress={() => onTabLongPress?.(channel)}
               delayLongPress={300}
               activeOpacity={0.7}
               accessibilityLabel={displayName}
+              onLayout={(e) => {
+                const { x, width } = e.nativeEvent.layout;
+                tabLayoutsRef.current[channel.slug] = { x, width };
+                // First time the active tab is measured, snap it into view.
+                if (channel.slug === activeSlug) scrollActiveIntoView(false);
+              }}
             >
               <View style={styles.tabContent}>
                 {channel.isShared && (
                   <Ionicons
                     name="link"
                     size={12}
-                    color={isActive ? primaryColor : "#8B5CF6"}
+                    // §S5 color discipline: flag-on the shared-channel link
+                    // glyph joins the neutral scale instead of staying purple.
+                    color={
+                      whatsappShellEnabled
+                        ? tabColor
+                        : isActive
+                          ? ACTIVE_TAB_CONTENT_COLOR
+                          : "#8B5CF6"
+                    }
                     style={styles.sharedTabIcon}
                   />
                 )}
@@ -118,7 +210,11 @@ export const ChatTabBar = memo(function ChatTabBar({
                   />
                 ) : (
                   <Text
-                    style={[styles.tabText, { color: themeColors.textSecondary }, isActive && { color: primaryColor }]}
+                    style={[
+                      styles.tabText,
+                      whatsappShellEnabled && styles.waTabText,
+                      { color: tabColor },
+                    ]}
                     numberOfLines={1}
                   >
                     {displayName}
@@ -154,6 +250,7 @@ type ChatToolbarProps = {
   showLeaderTools: boolean;
   tools?: string[];           // Ordered list of tool IDs (undefined = default)
   hasPcoChannels?: boolean;   // Filter out "sync" if no PCO channels
+  hasNativeRunSheet?: boolean; // Surface "runsheet" for native-only groups
   toolVisibility?: Record<string, string>;  // Per-tool visibility settings
   toolDisplayNames?: Record<string, string>; // Custom display names for tools
   userRole?: "admin" | "leader" | "member"; // Current user's role in the group
@@ -170,12 +267,15 @@ type ToolbarItem = {
   label: string;
   isResource: boolean;
   resourceId?: string;
+  /** When set, tapping the resource opens this URL instead of its detail page. */
+  linkUrl?: string;
 };
 
 export const ChatToolbar = memo(function ChatToolbar({
   showLeaderTools,
   tools,
   hasPcoChannels,
+  hasNativeRunSheet,
   toolVisibility,
   toolDisplayNames,
   userRole,
@@ -184,7 +284,8 @@ export const ChatToolbar = memo(function ChatToolbar({
 }: ChatToolbarProps) {
   const router = useRouter();
   const token = useStoredAuthToken();
-  const { colors: themeColors } = useTheme();
+  const { colors: themeColors, isDark } = useTheme();
+  const whatsappShellEnabled = useWhatsappShell();
 
   // Check if user is a group leader.
   const isLeaderOrAdmin = userRole === "leader";
@@ -230,6 +331,7 @@ export const ChatToolbar = memo(function ChatToolbar({
             label: resource.title,
             isResource: true,
             resourceId: resource._id,
+            linkUrl: resource.linkUrl || undefined,
           };
         }
 
@@ -241,11 +343,19 @@ export const ChatToolbar = memo(function ChatToolbar({
           icon: string;
           label: string;
           requiresPco?: boolean;
+          showsWithRunSheet?: boolean;
           defaultVisibility?: "leaders" | "everyone";
         };
 
-        // Filter out PCO-required tools if hasPcoChannels is false
-        if (tool.requiresPco && !hasPcoChannels) return null;
+        // Hide PCO-required tools when the group has no PCO channels — unless
+        // the tool opts into native run sheets and the group has one.
+        if (
+          tool.requiresPco &&
+          !hasPcoChannels &&
+          !(tool.showsWithRunSheet && hasNativeRunSheet)
+        ) {
+          return null;
+        }
 
         const label = toolDisplayNames?.[toolId] || tool.label;
 
@@ -279,12 +389,20 @@ export const ChatToolbar = memo(function ChatToolbar({
     resources,
     isLeaderOrAdmin,
     hasPcoChannels,
+    hasNativeRunSheet,
     toolVisibility,
     toolDisplayNames,
   ]);
 
-  // Handle tool press - navigate to resource page or call onToolPress
+  // Handle tool press - open a link redirect, navigate to the resource page,
+  // or call onToolPress for built-in tools.
   const handleToolPress = (item: ToolbarItem) => {
+    if (item.isResource && item.linkUrl) {
+      Linking.openURL(item.linkUrl).catch((err) => {
+        console.error("[ChatToolbar] Failed to open resource link:", err);
+      });
+      return;
+    }
     if (item.isResource && item.resourceId) {
       router.push(`/(user)/group/${groupId}/resource/${item.resourceId}`);
     } else {
@@ -296,7 +414,19 @@ export const ChatToolbar = memo(function ChatToolbar({
   if (!showLeaderTools || allToolItems.length === 0) return null;
 
   return (
-    <View style={[styles.toolbarContainer, { backgroundColor: themeColors.surface, borderBottomColor: themeColors.borderLight }]}>
+    <View
+      style={[
+        styles.toolbarContainer,
+        { backgroundColor: themeColors.surface, borderBottomColor: themeColors.borderLight },
+        // §2.4: keep the leader-tool pills (an intentional divergence) but
+        // flag-on make them neutral white pills on the translucent chrome
+        // bar rather than bordered chips on an opaque strip.
+        whatsappShellEnabled && styles.waToolbarContainer,
+        whatsappShellEnabled && {
+          backgroundColor: isDark ? WA_CHAT_CHROME_DARK : WA_CHAT_CHROME_LIGHT,
+        },
+      ]}
+    >
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
@@ -306,11 +436,18 @@ export const ChatToolbar = memo(function ChatToolbar({
         {allToolItems.map((item) => (
           <TouchableOpacity
             key={item.id}
-            style={[styles.toolbarItem, { borderColor: themeColors.border, backgroundColor: themeColors.surface }]}
+            style={[
+              styles.toolbarItem,
+              { borderColor: themeColors.border, backgroundColor: themeColors.surface },
+              whatsappShellEnabled && styles.waToolbarItem,
+              whatsappShellEnabled && {
+                backgroundColor: isDark ? WA_TAB_ACTIVE_DARK : WA_TAB_ACTIVE_LIGHT,
+              },
+            ]}
             onPress={() => handleToolPress(item)}
           >
-            <Ionicons
-              name={item.icon as keyof typeof Ionicons.glyphMap}
+            <ResourceIcon
+              name={item.icon}
               size={18}
               color={themeColors.text}
             />
@@ -352,6 +489,8 @@ type ChatNavigationProps = {
   tools?: string[];
   /** Whether the group has PCO channels (filters out "sync" if false) */
   hasPcoChannels?: boolean;
+  /** Whether the group has a native run sheet (surfaces "runsheet" without PCO) */
+  hasNativeRunSheet?: boolean;
   /** Per-tool visibility settings */
   toolVisibility?: Record<string, string>;
   /** Custom display names for tools */
@@ -374,6 +513,7 @@ export const ChatNavigation = memo(function ChatNavigation({
   onExternalChatPress,
   tools,
   hasPcoChannels,
+  hasNativeRunSheet,
   toolVisibility,
   toolDisplayNames,
   userRole,
@@ -394,6 +534,7 @@ export const ChatNavigation = memo(function ChatNavigation({
         showLeaderTools={showLeaderTools}
         tools={tools}
         hasPcoChannels={hasPcoChannels}
+        hasNativeRunSheet={hasNativeRunSheet}
         toolVisibility={toolVisibility}
         toolDisplayNames={toolDisplayNames}
         userRole={userRole}
@@ -417,11 +558,11 @@ const styles = StyleSheet.create({
     flexGrow: 1,
   },
   tab: {
-    paddingVertical: 12,
-    paddingHorizontal: 20,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
     marginRight: 8,
-    borderBottomWidth: 2,
-    borderBottomColor: "transparent",
+    // Sharp rectangular highlight (no rounding) for the active tab.
+    borderRadius: 0,
   },
   tabContent: {
     flexDirection: "row",
@@ -483,5 +624,53 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     justifyContent: "center",
     alignItems: "center",
+  },
+  // --- WhatsApp-shell chat-room chrome (flag-gated, §2.3/§2.4) --------------
+  // Additive-only: layered on top of the flag-off styles above, which are
+  // never edited.
+  /** Translucent bar over the wallpaper — the hairline divider goes away with
+   *  the opaque fill. */
+  waTabBar: {
+    borderBottomWidth: 0,
+    paddingHorizontal: 12,
+    // Calibrated pixel pass (2026-07-29): 6 here plus 6 on each pill stacked
+    // into 24pt of vertical chrome around a 13pt label. 4+4 matches WA.
+    paddingVertical: 4,
+  },
+  /** Light-gray segmented track the active pill sits in. */
+  waTabBarScrollContent: {
+    borderRadius: 16,
+    padding: 3,
+  },
+  waTab: {
+    paddingVertical: 4,
+    paddingHorizontal: 14,
+    marginRight: 2,
+    borderRadius: 13,
+  },
+  /** §S7: flag-on channel tab labels are 13pt (flag-off keeps the 14pt
+   *  `tabText`, which the "Join" external-chat pill also shares). */
+  waTabText: {
+    fontSize: 13,
+  },
+  /** White (light) / slate (dark) active pill — NEVER the brand/green fill. */
+  waTabActive: {
+    shadowColor: "#000",
+    shadowOpacity: 0.1,
+    shadowRadius: 1.5,
+    shadowOffset: { width: 0, height: 1 },
+    elevation: 1,
+  },
+  waToolbarContainer: {
+    borderBottomWidth: 0,
+  },
+  /** Neutral white pill: the border comes off, a soft shadow takes its place. */
+  waToolbarItem: {
+    borderWidth: 0,
+    shadowColor: "#000",
+    shadowOpacity: 0.08,
+    shadowRadius: 1.5,
+    shadowOffset: { width: 0, height: 1 },
+    elevation: 1,
   },
 });

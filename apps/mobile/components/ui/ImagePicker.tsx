@@ -34,6 +34,8 @@ interface ImagePickerProps {
   buttonText?: string;
   style?: any;
   isUploading?: boolean; // Show loading overlay while uploading
+  /** Applied to the preview image (AppImage also derives `${testID}-placeholder`). */
+  testID?: string;
 }
 
 export function ImagePickerComponent({
@@ -48,6 +50,7 @@ export function ImagePickerComponent({
   buttonText = 'Select Image',
   style,
   isUploading = false,
+  testID,
 }: ImagePickerProps) {
   const { primaryColor } = useCommunityTheme();
   const { colors } = useTheme();
@@ -181,6 +184,7 @@ export function ImagePickerComponent({
             style={styles.image}
             optimizedWidth={600}
             placeholder={{ type: 'icon', icon: 'image-outline' }}
+            testID={testID}
           />
           {isUploading && (
             <View style={styles.uploadingOverlay}>

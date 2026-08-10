@@ -1,16 +1,29 @@
 import React from "react";
-import { View, ActivityIndicator } from "react-native";
+import { View, ActivityIndicator, Platform } from "react-native";
 import { useLocalSearchParams, usePathname } from "expo-router";
-import { useIsDesktopWeb } from "@hooks/useIsDesktopWeb";
-import { useAuthenticatedQuery, api } from "@services/api/convex";
+import { useAuthenticatedQuery, api, Id } from "@services/api/convex";
 import { useAuth } from "@providers/AuthProvider";
 import { FollowupDesktopTable } from "@features/leader-tools/components/FollowupDesktopTable";
-import { FollowupMobileGrid } from "@features/leader-tools/components/FollowupMobileGrid";
+import { FollowupMobileCards } from "@features/leader-tools/components/FollowupMobileCards";
 
-export function PeopleTabScreen() {
-  const isDesktop = useIsDesktopWeb();
-  const { user } = useAuth();
+export function PeopleTabScreen({
+  showAllMembers = false,
+  embedded = false,
+}: {
+  // Leader-tools People tab (default) pins the roster to the current leader's
+  // assigned members. The admin "People" surface passes showAllMembers so
+  // admins see the whole community roster (this is the merged Admin → People
+  // view — the same check-in roster, unfiltered).
+  showAllMembers?: boolean;
+  // True when rendered inside the Admin screen, which already applies the top
+  // safe-area inset via its header. Forwarded to the native card list so it
+  // doesn't add the inset a second time.
+  embedded?: boolean;
+} = {}) {
+  const { user, community } = useAuth();
   const currentUserId = user?.id;
+  const communityId = community?.id as Id<"communities"> | undefined;
+  const enforcedAssigneeUserId = showAllMembers ? undefined : currentUserId;
   const params = useLocalSearchParams<{ returnTo?: string }>();
   const pathname = usePathname();
   const returnToParam =
@@ -21,7 +34,7 @@ export function PeopleTabScreen() {
 
   const crossGroupConfig = useAuthenticatedQuery(
     api.functions.memberFollowups.getCrossGroupConfig,
-    {},
+    communityId ? { communityId } : "skip",
   );
   const announcementGroupId = crossGroupConfig?.announcementGroupId ?? "";
 
@@ -33,13 +46,25 @@ export function PeopleTabScreen() {
     );
   }
 
+  // Fixed per platform (no in-app toggle): web shows the list/table, native
+  // shows the tile/card view.
+  if (Platform.OS === "web") {
+    return (
+      <FollowupDesktopTable
+        groupId={announcementGroupId}
+        enforcedAssigneeUserId={enforcedAssigneeUserId}
+        returnTo={returnTo}
+      />
+    );
+  }
+
   return (
-    <>
-      {isDesktop ? (
-        <FollowupDesktopTable groupId={announcementGroupId} enforcedAssigneeUserId={currentUserId} returnTo={returnTo} />
-      ) : (
-        <FollowupMobileGrid groupId={announcementGroupId} enforcedAssigneeUserId={currentUserId} returnTo={returnTo} />
-      )}
-    </>
+    <FollowupMobileCards
+      groupId={announcementGroupId}
+      enforcedAssigneeUserId={enforcedAssigneeUserId}
+      returnTo={returnTo}
+      hideHeader
+      embedded={embedded}
+    />
   );
 }

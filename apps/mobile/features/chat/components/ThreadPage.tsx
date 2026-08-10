@@ -26,11 +26,11 @@ import type { Id } from "@services/api/convex";
 import { useAuth } from "@providers/AuthProvider";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useTheme } from "@hooks/useTheme";
-import { useMutation, api, useStoredAuthToken } from "@services/api/convex";
+import { useMutation, useQuery, api, useStoredAuthToken } from "@services/api/convex";
 import { useParentMessage } from "../hooks/useParentMessage";
 import { useThreadReplies } from "../hooks/useThreadReplies";
 import { useGroupDetails } from "../../groups/hooks/useGroupDetails";
-import { ThreadHeader } from "./ThreadHeader";
+import { ThreadHeader, type ThreadNotificationState } from "./ThreadHeader";
 import { MessageItem } from "./MessageItem";
 import { MessageInput } from "./MessageInput";
 import { MessageActionsOverlay } from "./MessageActionsOverlay";
@@ -80,6 +80,64 @@ export function ThreadPage({
   const deleteMessageMutation = useMutation(api.functions.messaging.messages.deleteMessage);
   const flagMessageMutation = useMutation(api.functions.messaging.flagging.flagMessage);
 
+  // Per-thread notification preference (bell control in the header).
+  const setThreadSubscriptionMutation = useMutation(
+    api.functions.messaging.threadSubscriptions.setThreadSubscription,
+  );
+  // Thread replies. Resolved FIRST because its response also tells us which
+  // message the thread really is (see `rootMessageId`) — everything else on
+  // this page keys off that, not off whatever id the caller navigated with.
+  const {
+    replies,
+    isLoading: repliesLoading,
+    rootMessageId,
+  } = useThreadReplies(messageId);
+  /**
+   * The canonical id for this page.
+   *
+   * `messageId` is only a POINTER into the conversation. The pill and the
+   * ghost always point at a root, but inbox search opens a hit's immediate
+   * parent, which can itself be a reply — and then the header rendered that
+   * reply while the folded reply list rendered it again. Adopting the resolved
+   * root makes the header, the subscription and the composer agree, whichever
+   * door the user came through. Falls back to `messageId` until the query
+   * resolves, which is also the steady state for the pill/ghost entry points
+   * where the two are the same message.
+   */
+  const threadRootId = rootMessageId ?? messageId;
+
+  const threadSubscription = useQuery(
+    api.functions.messaging.threadSubscriptions.getThreadSubscription,
+    token ? { token, threadId: threadRootId } : "skip",
+  );
+  // The query's return type widens `state` to `string` over the wire; the
+  // backend constrains it to the ThreadNotificationState union.
+  const notificationState =
+    (threadSubscription?.state as ThreadNotificationState | undefined) ??
+    "default";
+
+  // DM replies notify by default, so the bell is a simple on/off there. Group
+  // threads cycle: mentions-only (default) → all replies → muted → default.
+  const isDm = !!dmChannelId;
+  const handleToggleNotifications = useCallback(async () => {
+    if (!token) return;
+    const next: ThreadNotificationState = isDm
+      ? notificationState === "none"
+        ? "default"
+        : "none"
+      : notificationState === "default"
+        ? "all"
+        : notificationState === "all"
+          ? "none"
+          : "default";
+    try {
+      await setThreadSubscriptionMutation({ token, threadId: threadRootId, state: next });
+    } catch (error) {
+      console.error("[ThreadPage] Failed to update thread notifications:", error);
+      Alert.alert("Error", "Failed to update notification settings.");
+    }
+  }, [token, notificationState, threadRootId, isDm, setThreadSubscriptionMutation]);
+
   // Message actions overlay state
   const [overlayVisible, setOverlayVisible] = useState(false);
   const [selectedMessageId, setSelectedMessageId] = useState<Id<"chatMessages"> | null>(null);
@@ -89,11 +147,10 @@ export function ThreadPage({
   const [selectedMessageSenderPhoto, setSelectedMessageSenderPhoto] = useState<string | undefined>();
   const [selectedMessageAttachments, setSelectedMessageAttachments] = useState<Array<{ type: string; url: string }> | undefined>();
 
-  // Fetch parent message
-  const { message: parentMessage, isLoading: parentLoading } = useParentMessage(messageId);
-
-  // Fetch thread replies
-  const { replies, isLoading: repliesLoading } = useThreadReplies(messageId);
+  // The message at the top of the page — the thread's root, not the pointer
+  // we were navigated with.
+  const { message: parentMessage, isLoading: parentLoading } =
+    useParentMessage(threadRootId);
 
   // Track reply count to auto-scroll on new replies
   const lastReplyCountRef = useRef(replies.length);
@@ -247,7 +304,13 @@ export function ThreadPage({
       behavior={Platform.OS === "ios" ? "padding" : undefined}
       keyboardVerticalOffset={0}
     >
-      <ThreadHeader channelName={channelName} onBack={handleBack} />
+      <ThreadHeader
+        channelName={channelName}
+        onBack={handleBack}
+        notificationState={notificationState}
+        onToggleNotifications={handleToggleNotifications}
+        isDm={isDm}
+      />
 
       <View style={[styles.content, { backgroundColor: colors.surfaceSecondary }]}>
         <FlashList
@@ -276,6 +339,10 @@ export function ThreadPage({
                       senderName: item.data.senderName,
                       senderProfilePhoto: item.data.senderProfilePhoto,
                       senderNotificationsDisabled: item.data.senderNotificationsDisabled,
+                      pollId: item.data.pollId,
+                      availabilityRequestId: item.data.availabilityRequestId,
+                      taskId: item.data.taskId,
+                      bugId: item.data.bugId,
                     }}
                     currentUserId={currentUserId}
                     onLongPress={handleLongPressMessage}
@@ -315,6 +382,10 @@ export function ThreadPage({
                     senderName: item.data.senderName,
                     senderProfilePhoto: item.data.senderProfilePhoto,
                     senderNotificationsDisabled: item.data.senderNotificationsDisabled,
+                    pollId: item.data.pollId,
+                    availabilityRequestId: item.data.availabilityRequestId,
+                    taskId: item.data.taskId,
+                    bugId: item.data.bugId,
                   }}
                   currentUserId={currentUserId}
                   onLongPress={handleLongPressMessage}

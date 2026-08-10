@@ -11,7 +11,7 @@ import { v } from "convex/values";
 import { query, mutation } from "../../_generated/server";
 import { now, getMediaUrl } from "../../lib/utils";
 import { requireAuth } from "../../lib/auth";
-import { requireCommunityAdmin } from "./auth";
+import { requireCommunityAdmin, requirePrimaryAdmin } from "./auth";
 
 // ============================================================================
 // Community Settings
@@ -49,7 +49,53 @@ export const getCommunitySettings = query({
       secondaryColor: community.secondaryColor,
       exploreDefaultGroupTypes: community.exploreDefaultGroupTypes,
       exploreDefaultMeetingType: community.exploreDefaultMeetingType || null,
+      churchFeatures: community.churchFeatures ?? {
+        prayerEnabled: false,
+        eventTasksEnabled: false,
+      },
+      isArchived: community.isArchived ?? false,
     };
+  },
+});
+
+/**
+ * Archive (close) a community.
+ *
+ * This is a one-way soft delete: it flags the community as archived so that no
+ * one can enter, switch into, or join it, and it disappears from search and
+ * discovery. Existing sessions are booted the next time their token refreshes.
+ *
+ * Only a Primary Admin may archive — reversing this is a manual DB action, so
+ * it is deliberately gated to the community's owners. A community may have
+ * several primary admins (see PRIMARY_ADMIN_ROLE); any one of them can archive.
+ */
+export const archiveCommunity = mutation({
+  args: {
+    token: v.string(),
+    communityId: v.id("communities"),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    await requirePrimaryAdmin(ctx, args.communityId, userId);
+
+    const community = await ctx.db.get(args.communityId);
+    if (!community) {
+      throw new Error("Community not found");
+    }
+
+    // Idempotent: archiving an already-archived community is a no-op.
+    if (community.isArchived) {
+      return community;
+    }
+
+    await ctx.db.patch(args.communityId, {
+      isArchived: true,
+      archivedAt: now(),
+      archivedById: userId,
+      updatedAt: now(),
+    });
+
+    return await ctx.db.get(args.communityId);
   },
 });
 
@@ -70,9 +116,21 @@ export const updateCommunitySettings = mutation({
     country: v.optional(v.string()),
     primaryColor: v.optional(v.string()),
     secondaryColor: v.optional(v.string()),
+    // Legacy no-op arg: Knicks mode moved to the app-wide "knicks-mode"
+    // feature flag (/admin/features). Still accepted (and ignored below) so
+    // old mobile bundles, whose admin toggle calls updateSettings({ knicksMode }),
+    // don't fail argument validation during the deploy/OTA window. Remove once
+    // old clients have aged out.
+    knicksMode: v.optional(v.boolean()),
     logo: v.optional(v.string()),
     exploreDefaultGroupTypes: v.optional(v.array(v.id("groupTypes"))),
     exploreDefaultMeetingType: v.optional(v.number()),
+    churchFeatures: v.optional(
+      v.object({
+        prayerEnabled: v.boolean(),
+        eventTasksEnabled: v.optional(v.boolean()),
+      }),
+    ),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
@@ -90,7 +148,10 @@ export const updateCommunitySettings = mutation({
       }
     }
 
-    const { communityId, token: _token, ...updates } = args;
+    // Drop the legacy `knicksMode` arg so it's never written to the community
+    // row — it's accepted only for old-client compat (see args above).
+    const { communityId, token: _token, knicksMode: _knicksMode, ...updates } =
+      args;
 
     // Filter out undefined values
     const cleanedUpdates = Object.fromEntries(

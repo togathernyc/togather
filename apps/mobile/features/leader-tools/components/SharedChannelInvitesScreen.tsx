@@ -110,7 +110,18 @@ export function SharedChannelInvitesScreen() {
                         { backgroundColor: primaryColor },
                       ]}
                       onPress={() =>
-                        handleRespond(invite.channelId, "accepted")
+                        handleRespond(invite.channelId, "accepted", {
+                          channelType: invite.channelType,
+                          primaryGroupName: invite.primaryGroupName,
+                          // Accepting a new announcements share auto-switches
+                          // away from the one this group already receives.
+                          switchFromGroupName:
+                            activeChannels?.find(
+                              (c) =>
+                                c.channelType === "announcements" &&
+                                c.channelId !== invite.channelId
+                            )?.primaryGroupName ?? null,
+                        })
                       }
                       disabled={respondingTo !== null}
                     >

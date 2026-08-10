@@ -6,10 +6,22 @@
 
 import { v } from "convex/values";
 import { query } from "../../_generated/server";
-import { requireAuth } from "../../lib/auth";
+import { getOptionalAuth, requireAuthWithArchivedStatus } from "../../lib/auth";
 
 /**
- * List notifications for a user with pagination and filtering
+ * Notification types that represent chat messages. These are deliberately
+ * excluded from the in-app notifications feed and its Inbox row — the user
+ * already finds these in the channels themselves, so surfacing them again
+ * here would just be noise.
+ */
+const CHAT_NOTIFICATION_TYPES = new Set(["new_message", "mention"]);
+
+const isFeedNotification = (n: { notificationType: string }): boolean =>
+  !CHAT_NOTIFICATION_TYPES.has(n.notificationType);
+
+/**
+ * List notifications for a user with pagination and filtering.
+ * Chat-message notifications are excluded — see CHAT_NOTIFICATION_TYPES.
  */
 export const list = query({
   args: {
@@ -19,7 +31,20 @@ export const list = query({
     unreadOnly: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
-    const userId = await requireAuth(ctx, args.token);
+    const { userId, isArchivedCommunity } = await requireAuthWithArchivedStatus(
+      ctx,
+      args.token,
+    );
+    // This query is mounted unconditionally at app boot (via the Inbox and
+    // notifications feed). The mobile AuthErrorBoundary now provides
+    // recovery UI for a COMMUNITY_ARCHIVED throw, but short-circuiting here
+    // is still intentional defense-in-depth to skip that crash-recovery
+    // churn on boot — see requireAuthWithArchivedStatus. New boot queries
+    // don't need to copy this pattern.
+    if (isArchivedCommunity) {
+      return { notifications: [], unreadCount: 0, totalCount: 0 };
+    }
+
     const limit = Math.min(args.limit ?? 50, 100);
     const offset = args.offset ?? 0;
 
@@ -29,8 +54,10 @@ export const list = query({
       .withIndex("by_user", (q) => q.eq("userId", userId))
       .order("desc");
 
-    // Apply unread filter if needed
-    let notifications = await notificationsQuery.collect();
+    // Drop chat-message notifications — they belong in the channels.
+    let notifications = (await notificationsQuery.collect()).filter(
+      isFeedNotification,
+    );
 
     if (args.unreadOnly) {
       notifications = notifications.filter((n) => !n.isRead);
@@ -62,14 +89,100 @@ export const list = query({
 });
 
 /**
- * Get unread notification count for a user
+ * Inbox summary for a user.
+ *
+ * Returns just what the Inbox "Notifications" row needs: the single most
+ * recent notification (for the preview line + a sort timestamp competing with
+ * channels' lastMessageAt) and the unread count. Returns `latest: null` when
+ * the user has no notifications so the Inbox can hide the row entirely.
  */
-export const unreadCount = query({
+export const inboxSummary = query({
   args: {
     token: v.string(),
   },
   handler: async (ctx, args) => {
-    const userId = await requireAuth(ctx, args.token);
+    const { userId, isArchivedCommunity } = await requireAuthWithArchivedStatus(
+      ctx,
+      args.token,
+    );
+    // Mounted unconditionally at app boot (Inbox row). AuthErrorBoundary
+    // could recover from a COMMUNITY_ARCHIVED throw here too, but returning
+    // benign data avoids that crash-recovery churn on boot — see
+    // requireAuthWithArchivedStatus and unreadCount below.
+    if (isArchivedCommunity) {
+      return { latest: null, unreadCount: 0 };
+    }
+
+    // Newest-first; exclude chat-message notifications (see
+    // CHAT_NOTIFICATION_TYPES) so the row mirrors the feed exactly.
+    const feed = (
+      await ctx.db
+        .query("notifications")
+        .withIndex("by_user", (q) => q.eq("userId", userId))
+        .order("desc")
+        .collect()
+    ).filter(isFeedNotification);
+
+    const latest = feed[0] ?? null;
+    const unread = feed.filter((n) => !n.isRead);
+
+    return {
+      latest: latest
+        ? {
+            id: latest._id,
+            notificationType: latest.notificationType,
+            title: latest.title,
+            body: latest.body,
+            createdAt: latest.createdAt,
+            isRead: latest.isRead,
+          }
+        : null,
+      unreadCount: unread.length,
+    };
+  },
+});
+
+/**
+ * Get unread notification count for a user.
+ *
+ * Deliberately unauthenticated-tolerant: NotificationProvider mounts this at
+ * app boot with whatever token is sitting in AsyncStorage, before the auth
+ * lifecycle has validated or refreshed it (a mobile-web cold boot — e.g.
+ * returning from a Stripe checkout redirect — hits exactly this window). A
+ * `requireAuth` throw there is re-thrown by `convex/react` during render, and
+ * AuthErrorBoundary only recovers COMMUNITY_ARCHIVED, so the app hard-crashes
+ * to the root "Something went wrong" screen. A badge count of 0 is the correct
+ * answer for a caller we can't authenticate.
+ */
+export const unreadCount = query({
+  args: {
+    // Optional so a caller with no token at all still gets 0 rather than an
+    // argument-validation error.
+    token: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const token = args.token;
+    // Lenient resolve first: missing, malformed, expired, revoked, or
+    // orphaned tokens all land here as null.
+    if (!token || !(await getOptionalAuth(ctx, token))) {
+      return { unreadCount: 0 };
+    }
+
+    // Safe: getOptionalAuth accepted this same token inside this same query
+    // transaction, so this cannot throw. Re-resolving keeps the
+    // archived-community rule owned by lib/auth instead of duplicated here.
+    const { userId, isArchivedCommunity } = await requireAuthWithArchivedStatus(
+      ctx,
+      token,
+    );
+    // Returning a benign 0 for an archived community is intentional
+    // defense-in-depth against AuthErrorBoundary crash-recovery churn on every
+    // boot — see requireAuthWithArchivedStatus. New boot queries don't need to
+    // copy this pattern.
+    if (isArchivedCommunity) {
+      return { unreadCount: 0 };
+    }
+
     const notifications = await ctx.db
       .query("notifications")
       .withIndex("by_user_read_created", (q) =>
@@ -77,6 +190,8 @@ export const unreadCount = query({
       )
       .collect();
 
-    return { unreadCount: notifications.length };
+    // Exclude chat-message notifications so the global badge matches the
+    // feed (and its Inbox row), which also drop them — see the feed query.
+    return { unreadCount: notifications.filter(isFeedNotification).length };
   },
 });

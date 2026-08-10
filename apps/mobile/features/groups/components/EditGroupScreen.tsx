@@ -130,6 +130,9 @@ export function EditGroupScreen() {
   const setHiddenFromDiscovery = useAuthenticatedMutation(
     api.functions.groups.index.setHiddenFromDiscovery,
   );
+  const setJoinApprovalMode = useAuthenticatedMutation(
+    api.functions.groups.index.setJoinApprovalMode,
+  );
   const [selectedImageUri, setSelectedImageUri] = useState<string | null>(null);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
 
@@ -138,10 +141,17 @@ export function EditGroupScreen() {
   const [hiddenFromDiscovery, setHiddenFromDiscoveryState] = useState(false);
   const [isSavingHidden, setIsSavingHidden] = useState(false);
 
+  // Local optimistic state for the admin-only "leaders approve requests" toggle.
+  const [leadersApprove, setLeadersApprove] = useState(false);
+  const [isSavingApproval, setIsSavingApproval] = useState(false);
+
   useEffect(() => {
     if (group) {
       setHiddenFromDiscoveryState(
         Boolean((group as any).hidden_from_discovery),
+      );
+      setLeadersApprove(
+        (group as any).join_approval_mode === "leaders",
       );
     }
   }, [group]);
@@ -362,6 +372,26 @@ export function EditGroupScreen() {
       );
     } finally {
       setIsSavingHidden(false);
+    }
+  };
+
+  const handleToggleLeadersApprove = async (next: boolean) => {
+    const previous = leadersApprove;
+    setLeadersApprove(next); // optimistic
+    setIsSavingApproval(true);
+    try {
+      await setJoinApprovalMode({
+        groupId: group_id as any,
+        mode: next ? "leaders" : "admins",
+      });
+    } catch (error) {
+      setLeadersApprove(previous); // revert
+      Alert.alert(
+        "Couldn't update approvals",
+        formatError(error, "Failed to update who approves requests"),
+      );
+    } finally {
+      setIsSavingApproval(false);
     }
   };
 
@@ -774,6 +804,28 @@ export function EditGroupScreen() {
                   value={hiddenFromDiscovery}
                   onValueChange={handleToggleHiddenFromDiscovery}
                   disabled={isSavingHidden}
+                />
+              </View>
+            </View>
+          )}
+
+          {/* Approvals Section — community admins only */}
+          {isCommunityAdmin && (
+            <View style={[styles.section, { backgroundColor: colors.surface }]}>
+              <Text style={[styles.sectionTitle, { color: colors.text }]}>Approvals</Text>
+              <View style={styles.toggleRow}>
+                <View style={styles.toggleTextWrap}>
+                  <Text style={[styles.toggleLabel, { color: colors.text }]}>Let group leaders approve requests</Text>
+                  <Text style={[styles.toggleDescription, { color: colors.textSecondary }]}>
+                    When off, community admins approve join requests. When on,
+                    the group's leaders approve them from a Requests section on
+                    the group page, and are notified of new requests.
+                  </Text>
+                </View>
+                <Switch
+                  value={leadersApprove}
+                  onValueChange={handleToggleLeadersApprove}
+                  disabled={isSavingApproval}
                 />
               </View>
             </View>

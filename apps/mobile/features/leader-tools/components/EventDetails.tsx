@@ -654,6 +654,51 @@ export function EventDetails({
               />
             )}
 
+            {/* Check-in entry point — interactive attendance from the RSVP
+                list. Managers only (hosts / leaders / community admins);
+                the screen and its actions are also gated server-side. */}
+            {canManageEvent && (
+              <TouchableOpacity
+                style={[styles.detailCard, { backgroundColor: colors.surface }]}
+                onPress={() => {
+                  const eventIdentifier = `id-${meetingId}|${encodeURIComponent(cleanEventDate)}`;
+                  router.push(
+                    `/(user)/leader-tools/${groupId}/events/${eventIdentifier}/checkin`
+                  );
+                }}
+                accessibilityRole="button"
+                accessibilityLabel="Check in attendees"
+              >
+                <View style={styles.detailRow}>
+                  <Ionicons
+                    name="checkmark-done-outline"
+                    size={20}
+                    color={colors.textSecondary}
+                  />
+                  <View style={[styles.detailContent, styles.toggleRow]}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.detailValue, { color: colors.text }]}>
+                        Check in
+                      </Text>
+                      <Text
+                        style={[
+                          styles.detailLabel,
+                          { color: colors.textSecondary },
+                        ]}
+                      >
+                        Take attendance as people arrive
+                      </Text>
+                    </View>
+                    <Ionicons
+                      name="chevron-forward"
+                      size={20}
+                      color={colors.textSecondary}
+                    />
+                  </View>
+                </View>
+              </TouchableOpacity>
+            )}
+
             {/* RSVP Responses Section - shows who responded */}
             {rsvpEnabled && rsvpOptions.length > 0 && !isPastEvent && rsvpData && (
               <>

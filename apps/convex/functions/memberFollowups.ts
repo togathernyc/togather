@@ -32,7 +32,7 @@ import { addUserToAnnouncementGroup } from "./communities";
 import { requireAuth } from "../lib/auth";
 import { parseDateOptional } from "../lib/validation";
 import { isCommunityAdmin } from "../lib/permissions";
-import { isActiveMembership, isLeaderRole } from "../lib/helpers";
+import { isActiveMembership, isArchivedUser, isLeaderRole } from "../lib/helpers";
 import { syncUserChannelMembershipsLogic } from "./sync/memberships";
 import {
   DEFAULT_SCORE_CONFIG,
@@ -44,6 +44,13 @@ import {
   type PcoServingData,
 } from "./followupScoring";
 import { VALID_CUSTOM_SLOTS } from "../lib/followupConstants";
+import {
+  nativeServingDays,
+  combineServingDayCount,
+  pcoServingDatesForUser,
+  nativeServingHistory,
+  mergeServingHistory,
+} from "../lib/nativeServing";
 
 // ============================================================================
 // Types and Constants
@@ -417,11 +424,23 @@ export const internalScoreBatch = internalQuery({
     const scoreConfig: ScoreConfig = group?.followupScoreConfig ?? DEFAULT_SCORE_CONFIG;
     const useCustomScoring = !!group?.followupScoreConfig;
 
-    // Build PCO serving map from group doc
-    const pcoServingMap = new Map<string, PcoServingData>();
+    // PCO serving DATES per user (for day-dedup) + the PCO serve COUNT per user
+    // (the floor used when servingDetails is absent/truncated so a valid count
+    // is never dropped). Serving is counted by DAY, combining these with native
+    // rostering (per member below); a day on either source counts once.
+    const pcoServingDatesMap = new Map<string, string[]>();
+    if (group?.pcoServingCounts?.servingDetails) {
+      for (const { userId, date } of group.pcoServingCounts.servingDetails) {
+        const key = userId.toString();
+        const arr = pcoServingDatesMap.get(key);
+        if (arr) arr.push(date);
+        else pcoServingDatesMap.set(key, [date]);
+      }
+    }
+    const pcoServingCountMap = new Map<string, number>();
     if (group?.pcoServingCounts?.counts) {
       for (const { userId, count } of group.pcoServingCounts.counts) {
-        pcoServingMap.set(userId.toString(), { servicesPast2Months: count });
+        pcoServingCountMap.set(userId.toString(), count);
       }
     }
 
@@ -456,14 +475,46 @@ export const internalScoreBatch = internalQuery({
           };
         });
 
-        // Fetch followups for this member
-        const followups = await ctx.db
+        // Fetch followups for this member. We take(20) for the active-snooze
+        // probe, then prepend any back-dated contact rows (call/text/in-person
+        // inserted with an older createdAt) so calculateFollowupPriority's
+        // `followups[0]` and history sweep still reflect them. Without this a
+        // logged-past contact would sit behind the top 20 and be ignored.
+        const recentFollowups = await ctx.db
           .query("memberFollowups")
           .withIndex("by_groupMember_createdAt", (q) =>
             q.eq("groupMemberId", member._id)
           )
           .order("desc")
           .take(20);
+
+        const findMostRecentOfType = async (
+          type: "followed_up" | "call" | "text",
+        ) =>
+          ctx.db
+            .query("memberFollowups")
+            .withIndex("by_groupMember_type_createdAt", (q) =>
+              q.eq("groupMemberId", member._id).eq("type", type),
+            )
+            .order("desc")
+            .first();
+
+        const [lastInPerson, lastCall, lastText] = await Promise.all([
+          findMostRecentOfType("followed_up"),
+          findMostRecentOfType("call"),
+          findMostRecentOfType("text"),
+        ]);
+
+        // Merge: keep recent batch, union with type-specific most-recents,
+        // de-dupe by _id, re-sort desc by createdAt.
+        const merged = new Map<string, typeof recentFollowups[number]>();
+        for (const f of recentFollowups) merged.set(f._id.toString(), f);
+        for (const f of [lastInPerson, lastCall, lastText]) {
+          if (f) merged.set(f._id.toString(), f);
+        }
+        const followups = [...merged.values()].sort(
+          (a, b) => b.createdAt - a.createdAt,
+        );
 
         const followupData: FollowupAction[] = followups.map((f) => ({
           type: f.type,
@@ -493,6 +544,32 @@ export const internalScoreBatch = internalQuery({
           ? (args.crossGroupAttendanceMap?.[member.userId.toString()] as number | undefined)
           : undefined;
 
+        // Serving = distinct calendar DAYS served across native rostering and
+        // PCO in the past ~60 days (feeds the custom score AND the displayed
+        // pcoServingCount). A day on either source — or on several plans —
+        // counts once. Computed once for both scoring branches.
+        const pcoDates = pcoServingDatesMap.get(member.userId.toString()) ?? [];
+        let nativeServeDays = new Set<string>();
+        if (group?.communityId) {
+          const recentAssignments = await ctx.db
+            .query("roleAssignments")
+            .withIndex("by_user_eventDate", (q) => q.eq("userId", member.userId))
+            .order("desc")
+            .take(100);
+          nativeServeDays = await nativeServingDays(
+            ctx,
+            recentAssignments,
+            currentTime,
+            group.communityId,
+          );
+        }
+        const servingDayCount = combineServingDayCount(
+          nativeServeDays,
+          pcoDates,
+          pcoServingCountMap.get(member.userId.toString()) ?? 0,
+          currentTime,
+        );
+
         // Compute configurable scores
         let memberScores: Record<string, number>;
         let triggeredAlerts: string[] = [];
@@ -506,7 +583,10 @@ export const internalScoreBatch = internalQuery({
           const connectionParts = computeConnectionParts(
             meetingData, followupData, isSnoozed, currentTime
           );
-          const pcoServing = pcoServingMap.get(member.userId.toString());
+          const pcoServing: PcoServingData | undefined =
+            servingDayCount > 0
+              ? { servicesPast2Months: servingDayCount }
+              : undefined;
           const rawValues = extractRawValues(
             meetingData, followupData, isSnoozed, currentTime, connectionParts, pcoServing,
             crossGroupAttendancePct
@@ -553,8 +633,7 @@ export const internalScoreBatch = internalQuery({
           snoozedUntil,
           scoreFactors: legacyScores.scoreFactors,
           triggeredAlerts,
-          pcoServingCount:
-            pcoServingMap.get(member.userId.toString())?.servicesPast2Months ?? 0,
+          pcoServingCount: servingDayCount,
           latestNoteContent,
           latestNoteAt,
         };
@@ -887,12 +966,17 @@ async function getActiveLeaderGroupIds(
     .query("groupMembers")
     .withIndex("by_user", (q: any) => q.eq("userId", userId))
     .collect();
-  return memberships
-    .filter(
-      (membership: any) =>
-        isActiveMembership(membership) && isLeaderRole(membership.role),
-    )
-    .map((membership: any) => membership.groupId);
+  const leaderMemberships = memberships.filter(
+    (membership: any) =>
+      isActiveMembership(membership) && isLeaderRole(membership.role),
+  );
+  const groupIds: Id<"groups">[] = [];
+  for (const membership of leaderMemberships) {
+    const group = await ctx.db.get(membership.groupId);
+    // Exclude archived groups — their people should not surface on the People page.
+    if (group && !group.isArchived) groupIds.push(membership.groupId);
+  }
+  return groupIds;
 }
 
 /**
@@ -927,6 +1011,13 @@ export const listAssignedToMe = query({
     }
 
     const leaderGroupIdSet = new Set(leaderGroupIds.map((id) => id.toString()));
+
+    // An explicit groupFilter must reference one of the caller's active
+    // (non-archived) leader groups; otherwise the per-doc groupId match below
+    // would bypass the leader-group scope for a stale/archived/arbitrary id.
+    if (args.groupFilter && !leaderGroupIdSet.has(args.groupFilter.toString())) {
+      return { page: [], isDone: true, continueCursor: "" };
+    }
 
     // Use the assignee filter if provided, otherwise default to current user
     const assigneeId = args.assigneeFilter ?? userId;
@@ -1019,6 +1110,13 @@ export const searchAssignedToMe = query({
     if (leaderGroupIds.length === 0) return [];
 
     const leaderGroupIdSet = new Set(leaderGroupIds.map((id) => id.toString()));
+
+    // An explicit groupFilter must reference one of the caller's active
+    // (non-archived) leader groups; otherwise return nothing.
+    if (args.groupFilter && !leaderGroupIdSet.has(args.groupFilter.toString())) {
+      return [];
+    }
+
     const assigneeId = args.assigneeFilter ?? userId;
 
     let results = ctx.db
@@ -1084,9 +1182,16 @@ export const searchAssignedToMe = query({
 /**
  * Get cross-group config for the People page.
  * Returns the union of score configs and leaders across all leader groups.
+ *
+ * A leader/admin can belong to more than one community, so the caller must
+ * pass the currently-active `communityId` to scope the result (announcement
+ * group, leaders, score config) to that community. Without it, the People
+ * roster would resolve to whichever community's announcement group happened to
+ * come first across all of the user's leader groups — showing the wrong
+ * community's people after switching communities (e.g. into a demo).
  */
 export const getCrossGroupConfig = query({
-  args: { token: v.string() },
+  args: { token: v.string(), communityId: v.id("communities") },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
     const leaderGroupIds = await getActiveLeaderGroupIds(ctx, userId);
@@ -1101,15 +1206,24 @@ export const getCrossGroupConfig = query({
 
     const groups = await Promise.all(leaderGroupIds.map((id) => ctx.db.get(id)));
 
-    // Find the announcement group among the leader's groups
-    const announcementGroup = groups.find((g) => g?.isAnnouncementGroup);
+    // Exclude archived groups — their leaders should not be suggested as
+    // assignees and their members should not appear on the People page.
+    // Scope to the active community so a multi-community leader sees only the
+    // active community's announcement group, leaders, and roster.
+    const activeGroups = groups.filter(
+      (g): g is NonNullable<typeof g> =>
+        !!g && !g.isArchived && g.communityId === args.communityId,
+    );
+    const activeLeaderGroupIds = activeGroups.map((g) => g._id);
+
+    // Find the announcement group among the leader's active groups
+    const announcementGroup = activeGroups.find((g) => g.isAnnouncementGroup);
     const announcementGroupId = announcementGroup?._id.toString() ?? null;
 
     // Use the score config from the first group that has one
     // (cross-group view uses a single score config for sorting)
     let scoreConfigScores: Array<{ id: string; name: string }> = [];
-    for (const group of groups) {
-      if (!group) continue;
+    for (const group of activeGroups) {
       const sc: ScoreConfig = group.followupScoreConfig ?? DEFAULT_SCORE_CONFIG;
       if (sc.scores.length > 0) {
         scoreConfigScores = sc.scores.map((s) => ({ id: s.id, name: s.name }));
@@ -1118,13 +1232,14 @@ export const getCrossGroupConfig = query({
     }
 
     // Build leader groups list
-    const leaderGroupsList = groups
-      .filter((g): g is NonNullable<typeof g> => !!g)
-      .map((g) => ({ _id: g._id.toString(), name: g.name ?? "Unnamed Group" }));
+    const leaderGroupsList = activeGroups.map((g) => ({
+      _id: g._id.toString(),
+      name: g.name ?? "Unnamed Group",
+    }));
 
-    // Collect all unique leaders across groups
+    // Collect all unique leaders across active groups
     const allLeaderMemberships = await Promise.all(
-      leaderGroupIds.map((gid) =>
+      activeLeaderGroupIds.map((gid) =>
         ctx.db
           .query("groupMembers")
           .withIndex("by_group_user", (q: any) => q.eq("groupId", gid))
@@ -1134,7 +1249,7 @@ export const getCrossGroupConfig = query({
 
     const leadersByUserId = new Map<string, { userId: string; firstName: string; lastName: string; profilePhoto?: string; groupIds: string[] }>();
     for (let i = 0; i < allLeaderMemberships.length; i++) {
-      const gid = leaderGroupIds[i].toString();
+      const gid = activeLeaderGroupIds[i].toString();
       for (const m of allLeaderMemberships[i]) {
         if (!isActiveMembership(m) || !isLeaderRole(m.role)) continue;
         const uid = m.userId.toString();
@@ -1144,7 +1259,8 @@ export const getCrossGroupConfig = query({
           continue;
         }
         const user = await ctx.db.get(m.userId);
-        if (user) {
+        // Exclude archived (deactivated) users from the assignee picker.
+        if (user && !isArchivedUser(user)) {
           leadersByUserId.set(uid, {
             userId: uid,
             firstName: user.firstName ?? "",
@@ -1338,16 +1454,43 @@ export const history = query({
       meetingData, followupData, isSnoozed, currentTime
     );
 
-    // Build PCO serving data
-    let pcoServing: PcoServingData | undefined;
-    if (group?.pcoServingCounts?.counts) {
-      const entry = group.pcoServingCounts.counts.find(
-        (c: { userId: Id<"users">; count: number }) => c.userId.toString() === member.userId.toString()
+    // Build serving data — distinct calendar DAYS served across BOTH sources
+    // (native rostering + cached PCO dates) in the past ~60 days. A day on both
+    // sources, or on multiple plans, counts once; PCO serves without a cached
+    // date fall back to the `counts` value so they're never dropped.
+    const pcoDates = pcoServingDatesForUser(
+      group?.pcoServingCounts?.servingDetails,
+      member.userId,
+    );
+    const pcoCount =
+      group?.pcoServingCounts?.counts?.find(
+        (c: { userId: Id<"users">; count: number }) =>
+          c.userId.toString() === member.userId.toString(),
+      )?.count ?? 0;
+    let nativeDays = new Set<string>();
+    if (group?.communityId) {
+      const recentAssignments = await ctx.db
+        .query("roleAssignments")
+        .withIndex("by_user_eventDate", (q) => q.eq("userId", member.userId))
+        .order("desc")
+        .take(100);
+      nativeDays = await nativeServingDays(
+        ctx,
+        recentAssignments,
+        currentTime,
+        group.communityId,
       );
-      if (entry) {
-        pcoServing = { servicesPast2Months: entry.count };
-      }
     }
+    const servingDayCount = combineServingDayCount(
+      nativeDays,
+      pcoDates,
+      pcoCount,
+      currentTime,
+    );
+    const pcoServing: PcoServingData | undefined =
+      servingDayCount > 0
+        ? { servicesPast2Months: servingDayCount }
+        : undefined;
 
     // ---- Cross-group attendance ----
     // Find all other groups the user belongs to
@@ -1439,28 +1582,29 @@ export const history = query({
     const crossGroupAttendancePct =
       allGroupsTotal > 0 ? Math.round((allGroupsAttended / allGroupsTotal) * 100) : 0;
 
-    // ---- Serving history (from PCO serving counts cache on group doc) ----
-    const servingHistory: Array<{
+    // ---- Serving history — combines BOTH sources ----
+    // Native-origin rows from roleAssignments AND the cached PCO serving
+    // details on the group doc, merged newest-first and deduped.
+    const nativeRows = group?.communityId
+      ? await nativeServingHistory(ctx, member.userId, group.communityId, 15)
+      : [];
+    const pcoRows: Array<{
       date: string;
       serviceTypeName: string;
       teamName: string;
       position: string | null;
     }> = [];
-
     const allDetails = group?.pcoServingCounts?.servingDetails ?? [];
-    const userDetails = allDetails
-      .filter((d: { userId: Id<"users"> }) => d.userId.toString() === member.userId.toString())
-      .sort((a: { date: string }, b: { date: string }) => b.date.localeCompare(a.date));
-
-    for (const d of userDetails) {
-      servingHistory.push({
+    for (const d of allDetails) {
+      if (d.userId.toString() !== member.userId.toString()) continue;
+      pcoRows.push({
         date: d.date,
         serviceTypeName: d.serviceTypeName,
         teamName: d.teamName,
         position: d.position ?? null,
       });
-      if (servingHistory.length >= 15) break;
     }
+    const servingHistory = mergeServingHistory(nativeRows, pcoRows, 15);
 
     const rawValues = extractRawValues(
       meetingData, followupData, isSnoozed, currentTime, connectionParts, pcoServing, crossGroupAttendancePct
@@ -2206,21 +2350,30 @@ async function analyzeCsvImportRows(
   rowReports: CsvImportRowReport[];
   preparedRows: PreparedCsvImportRow[];
 }> {
-  const customFieldDefs = ((group.followupColumnConfig as any)?.customFields ?? []) as Array<{
-    slot: string;
-    type: string;
-    options?: string[];
-  }>;
+  // Custom field definitions now live at the community level
+  // (`communities.peopleCustomFields`) — that's the source of truth the People
+  // directory and Add Person side panel render from. Older communities may
+  // still only have the legacy per-group `followupColumnConfig.customFields`,
+  // so merge both with the community config taking precedence. Without this,
+  // community-level fields are dropped as "unknown_custom_field_slot_ignored".
+  type CustomFieldDef = { slot: string; type: string; options?: string[] };
+  const legacyCustomFieldDefs = ((group.followupColumnConfig as any)?.customFields ??
+    []) as CustomFieldDef[];
+  let communityCustomFieldDefs: CustomFieldDef[] = [];
+  if (group.communityId) {
+    const community = await ctx.db.get(group.communityId);
+    communityCustomFieldDefs = ((community as any)?.peopleCustomFields ??
+      []) as CustomFieldDef[];
+  }
   const assigneeLookup = await buildCsvAssigneeLookup(ctx, group._id);
-  const customFieldDefsBySlot = new Map(
-    customFieldDefs.map((field) => [
-      field.slot,
-      {
-        type: field.type,
-        options: field.options,
-      },
-    ])
-  );
+  const customFieldDefsBySlot = new Map<string, { type: string; options?: string[] }>();
+  // Legacy first so community definitions override on slot collisions.
+  for (const field of [...legacyCustomFieldDefs, ...communityCustomFieldDefs]) {
+    customFieldDefsBySlot.set(field.slot, {
+      type: field.type,
+      options: field.options,
+    });
+  }
 
   const normalizedRows = rows.map(getNormalizedRow);
 
@@ -3054,7 +3207,11 @@ export const add = mutation({
   args: {
     token: v.string(),
     groupId: v.id("groups"),
-    memberId: v.id("groupMembers"),
+    // Either memberId (legacy callers with a groupMembers id in hand) or
+    // memberUserId (callers reading from communityPeople, which only has
+    // userId — we resolve to groupMembers server-side).
+    memberId: v.optional(v.id("groupMembers")),
+    memberUserId: v.optional(v.id("users")),
     type: followupTypeValidator,
     content: v.optional(v.string()),
   },
@@ -3062,15 +3219,30 @@ export const add = mutation({
     const userId = await requireAuth(ctx, args.token);
     const timestamp = now();
 
-    // Verify member belongs to this group
-    const member = await ctx.db.get(args.memberId);
-    if (!member || member.groupId !== args.groupId) {
+    // Resolve the groupMembers row by id or by (groupId, userId).
+    let member: any = null;
+    let resolvedMemberId: Id<"groupMembers"> | undefined = args.memberId;
+    if (args.memberId) {
+      member = await ctx.db.get(args.memberId);
+    } else if (args.memberUserId) {
+      member = await ctx.db
+        .query("groupMembers")
+        .withIndex("by_group_user", (q) =>
+          q.eq("groupId", args.groupId).eq("userId", args.memberUserId!),
+        )
+        .filter((q) => q.eq(q.field("leftAt"), undefined))
+        .first();
+      resolvedMemberId = member?._id;
+    } else {
+      throw new Error("Either memberId or memberUserId is required");
+    }
+    if (!member || member.groupId !== args.groupId || !resolvedMemberId) {
       throw new Error("Member not found in this group");
     }
 
     // Create follow-up entry
     const followupId = await ctx.db.insert("memberFollowups", {
-      groupMemberId: args.memberId,
+      groupMemberId: resolvedMemberId,
       createdById: userId,
       type: args.type,
       content: args.content,
@@ -3083,7 +3255,7 @@ export const add = mutation({
     await ctx.scheduler.runAfter(
       0,
       internal.functions.followupScoreComputation.computeSingleMemberScore,
-      { groupId: args.groupId, groupMemberId: args.memberId }
+      { groupId: args.groupId, groupMemberId: resolvedMemberId }
     );
     await ctx.scheduler.runAfter(
       0,

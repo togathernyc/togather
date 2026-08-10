@@ -107,7 +107,7 @@ For architecture diagrams, see the [Main README](../README.md).
 - [Navigation CUJ Testing](./guides/navigation-cuj-testing.md) - Navigation flow testing
 - [Quick Make Leader](./guides/quick-make-leader.md) - Make a user a leader quickly
 
-**Test Credentials:** See [CLAUDE.md](../CLAUDE.md) for test account credentials.
+**Test Credentials:** See [`.claude/skills/onboarding-new-dev/SKILL.md`](../.claude/skills/onboarding-new-dev/SKILL.md) for test account credentials.
 
 ---
 

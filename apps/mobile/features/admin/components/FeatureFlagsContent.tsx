@@ -43,9 +43,39 @@ import type { Id } from "@services/api/convex";
  */
 const KNOWN_FLAGS: Array<{ key: string; description: string }> = [
   {
-    key: "direct-messages",
+    key: "chat-notification-collapse",
     description:
-      "1:1 direct messages and ad-hoc group chats. Enables the compose button on the inbox, the start-chat picker, and the request-flow inbox.",
+      "Collapse a chat channel's push notifications into a single tray card — a new message replaces that channel's existing notification instead of stacking a new one. Off: each message shows its own notification.",
+  },
+  {
+    key: "dev-assistant-bot",
+    description:
+      "Enables @Togather dev-assistant bot + bug pipeline (staff only).",
+  },
+  {
+    key: "group-giving",
+    description:
+      "Group giving & finances (ADR-032): community finance onboarding (Stripe + Increase), per-group funds, donations, and reimbursements. This flag only unlocks the feature — each community must complete onboarding, and a community admin must then enable giving per group.",
+  },
+  {
+    key: "nearby-device-location",
+    description:
+      "Shows the compass (use-my-location) button on the Groups tab. Keep OFF until a native build that includes the iOS location-permission string is live — the current binary would mis-prompt. Zip-code search works regardless of this flag.",
+  },
+  {
+    key: "knicks-mode",
+    description:
+      "Themes the whole app in New York Knicks orange & blue, overriding every community's brand colors. Applies to all users across all communities. Off: communities use their own brand colors.",
+  },
+  {
+    key: "whatsapp-shell-on",
+    description:
+      "Force-enables the WhatsApp-style shell (Chats-first tabs, community page, group info page, channel directory, mute) for ALL users system-wide — no PostHog needed. Use for staging or before PostHog targeting is set up; whatsapp-shell-kill still wins if both are on.",
+  },
+  {
+    key: "whatsapp-shell-kill",
+    description:
+      "Kill switch: forces the WhatsApp-style shell off everywhere, overriding both the whatsapp-shell PostHog flag and whatsapp-shell-on. Off: the other two decide.",
   },
 ];
 

@@ -76,6 +76,19 @@ const getAndroidIntentFilters = () => {
             host: "staging.togather.nyc",
             pathPrefix: "/c/",
           },
+          {
+            scheme: "https",
+            host: "staging.togather.nyc",
+            pathPrefix: "/a/",
+          },
+          // Stripe go-live checkout return (success/cancel URLs) — must
+          // deep-link back into the app so the user lands on the authed
+          // go-live screen instead of a logged-out browser tab.
+          {
+            scheme: "https",
+            host: "staging.togather.nyc",
+            pathPrefix: "/onboarding/go-live",
+          },
         ],
         category: ["BROWSABLE", "DEFAULT"],
       },
@@ -107,6 +120,19 @@ const getAndroidIntentFilters = () => {
           host: "togather.nyc",
           pathPrefix: "/c/",
         },
+        {
+          scheme: "https",
+          host: "togather.nyc",
+          pathPrefix: "/a/",
+        },
+        // Stripe go-live checkout return (success/cancel URLs) — must
+        // deep-link back into the app so the user lands on the authed
+        // go-live screen instead of a logged-out browser tab.
+        {
+          scheme: "https",
+          host: "togather.nyc",
+          pathPrefix: "/onboarding/go-live",
+        },
         // Wildcard for community subdomains (e.g., fount.togather.nyc)
         {
           scheme: "https",
@@ -127,6 +153,16 @@ const getAndroidIntentFilters = () => {
           scheme: "https",
           host: "*.togather.nyc",
           pathPrefix: "/c/",
+        },
+        {
+          scheme: "https",
+          host: "*.togather.nyc",
+          pathPrefix: "/a/",
+        },
+        {
+          scheme: "https",
+          host: "*.togather.nyc",
+          pathPrefix: "/onboarding/go-live",
         },
       ],
       category: ["BROWSABLE", "DEFAULT"],
@@ -165,16 +201,50 @@ export default {
         NSPhotoLibraryAddUsageDescription:
           "Togather saves photos to your library when you choose to download images shared by other members in group chats or event cover photos.",
         NSMicrophoneUsageDescription:
-          "Togather uses your microphone to record voice messages to share in group chat conversations."
+          "Togather uses your microphone to record voice messages to share in group chat conversations.",
+        // Foreground-only, and always user-initiated: the Groups tab's compass
+        // button sorts the group directory by distance from you. Declining is
+        // fully supported — a zip code typed into the search field does the
+        // same thing. Nothing here is stored on our servers or shared.
+        NSLocationWhenInUseUsageDescription:
+          "Togather uses your location only when you tap “Find groups near me”, to sort the group directory by how close each group meets to you. You can enter a zip code instead."
       }
     },
     android: {
       permissions: ["android.permission.RECORD_AUDIO"],
+      // Strip permissions that get auto-merged in but the app never uses, to
+      // avoid extra Google Play review scrutiny:
+      // - SYSTEM_ALERT_WINDOW leaks in from react-native's debug manifest (dev
+      //   overlay only); we never draw over other apps.
+      // - CONTACTS/CALENDAR are injected by the expo-contacts/expo-calendar
+      //   config plugins, and ACTIVITY_RECOGNITION by expo-sensors — but none of
+      //   those modules has any runtime usage in the app. Shipping sensitive
+      //   permissions with no backing feature is a known Play rejection cause,
+      //   and ACTIVITY_RECOGNITION additionally forces the Health Connect
+      //   declaration. So we strip them. (If/when these features are built,
+      //   remove the relevant entries here.)
+      // NOTE: We intentionally do NOT block READ/WRITE_EXTERNAL_STORAGE. Although
+      // targetSdk 35 ignores them, the app's minSdk is 24 — on Android 12/API 32
+      // and older there is no READ_MEDIA_*, so expo-image-picker/media-library
+      // still gate gallery access (profile/group/event photos) on these legacy
+      // perms. Blocking them would break photo picking on those devices.
+      blockedPermissions: [
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.ACTIVITY_RECOGNITION",
+        "android.permission.READ_CONTACTS",
+        "android.permission.WRITE_CONTACTS",
+        "android.permission.READ_CALENDAR",
+        "android.permission.WRITE_CALENDAR"
+      ],
       adaptiveIcon: {
         foregroundImage: getAppIcon(),
         backgroundColor: "#ffffff"
       },
       package: getBundleIdentifier(),
+      // Firebase config for FCM push notifications. Production only — the file
+      // contains the app.gatherful.mobile client, so a staging build (package
+      // life.togather.staging) would fail the Google Services gradle check.
+      ...(IS_STAGING ? {} : { googleServicesFile: "./google-services.json" }),
       edgeToEdgeEnabled: true,
       predictiveBackGestureEnabled: false,
       intentFilters: getAndroidIntentFilters(),
@@ -219,6 +289,15 @@ export default {
       // OTA version - set by CI during deployment (format: X.Y.Z.MMDDYY.HHMM)
       // Falls back to binary version for embedded builds
       otaVersion: process.env.OTA_VERSION || "1.0.22",
+      // OTA forced floor — a monotonic serial of the most recent *forced*
+      // release, carried forward unchanged on silent releases. OTAUpdateProvider
+      // reads it off both the published update's manifest and the running
+      // bundle, and force-reloads whenever the running serial is older than an
+      // incoming update's. This keeps a forced release "sticky": a device that
+      // missed the forced window still force-reloads even when a later silent
+      // release supersedes it. Set per deploy by the "Deploy to Production"
+      // workflow (OTA_FORCED_SERIAL); 0 until the first forced release.
+      otaForcedSerial: Number(process.env.OTA_FORCED_SERIAL) || 0,
       // Build variant - used to determine environment at runtime
       // Set by EAS build profiles (staging vs production)
       isStaging: IS_STAGING,

@@ -12,8 +12,20 @@
 
 import { httpRouter } from "convex/server";
 import { httpAction } from "./_generated/server";
-import { api, internal } from "./_generated/api";
+import { internal } from "./_generated/api";
+import { Id } from "./_generated/dataModel";
 import { verifySlackSignature } from "./functions/slackServiceBot/slack";
+import { hashApiKey } from "./lib/apiKeys";
+import { resolveLinkPreviewMeta } from "./functions/linkPreviewMeta";
+import { registerRoutes } from "@supa-media/dev-assistant";
+import "./functions/devAssistant/config"; // side-effect: sets config first
+import {
+  handleBillWebhookRequest,
+  handleFinanceStripeEvent,
+  handleIncreaseWebhookRequest,
+  handlePrivacyWebhookRequest,
+} from "./functions/finance/webhooks";
+import { isConnectEvent } from "./lib/finance/webhookRouting";
 
 const http = httpRouter();
 
@@ -137,302 +149,58 @@ async function verifyStripeSignature(
 }
 
 // ============================================================================
-// Link Preview Endpoints (for Cloudflare Worker)
+// Link Preview Meta Endpoint (for Cloudflare Worker)
 // ============================================================================
 
 /**
- * GET /link-preview/event?shortId=<shortId>
+ * GET /link-preview/meta?url=<urlencoded full original request URL>
  *
- * Returns event data for link preview generation (OG tags).
- * Used by the Cloudflare Worker when bots request /e/[shortId] URLs.
+ * Single typed endpoint that returns standardized preview metadata (title,
+ * description, image, canonical url, siteName) for any shareable app path
+ * (/e/:shortId, /g/:shortId, /t/:shortId, /ch/:shortId, /nearme, /:slug).
+ * Replaces the old per-type /link-preview/{event,group,tool,community,channel}
+ * endpoints — all title/description/image-fallback/date-formatting assembly
+ * now lives in functions/linkPreviewMeta.ts instead of the Cloudflare Worker.
  *
- * Response shape matches what the Cloudflare Worker expects:
- * - id, shortId, title, scheduledAt, status
- * - coverImage, coverImageFallback
- * - groupName, groupImage, groupImageFallback
- * - communityName, communityLogo
- * - locationOverride, note
+ * Response shape: { title, description, image, url, siteName, imageAlt? }
+ * on 200; { error } on 404 (unknown entity or unrecognized path).
+ *
+ * @see ADR-009 for the full link-preview architecture.
  */
 http.route({
-  path: "/link-preview/event",
+  path: "/link-preview/meta",
   method: "GET",
   handler: httpAction(async (ctx, request) => {
     const url = new URL(request.url);
-    const shortId = url.searchParams.get("shortId");
+    // `searchParams.get` already URL-decodes once; the worker single-encodes
+    // the target URL, so decoding again here would mangle reserved chars
+    // (e.g. `%26` -> `&`) that are legitimately part of the target's query string.
+    const targetUrl = url.searchParams.get("url");
 
-    if (!shortId) {
-      return jsonResponse({ error: "Missing shortId parameter" }, 400);
+    if (!targetUrl) {
+      return jsonResponse({ error: "Missing url parameter" }, 400);
+    }
+
+    // Validate it's a well-formed URL before handing it to the resolver.
+    try {
+      new URL(targetUrl);
+    } catch {
+      return jsonResponse({ error: "Invalid url encoding" }, 400);
     }
 
     try {
-      const result = await ctx.runQuery(
-        api.functions.meetings.index.getByShortId,
-        { shortId }
-      );
-
-      if (!result) {
-        return jsonResponse({ error: "Event not found" }, 404);
-      }
-
-      // Transform to match the expected shape for API routes
-      // Include fallback fields (same as primary since we don't store separate versions)
-      return jsonResponse({
-        id: result.id,
-        shortId: result.shortId,
-        title: result.title,
-        scheduledAt: result.scheduledAt,
-        status: result.status,
-        coverImage: result.coverImage,
-        coverImageFallback: result.coverImage, // Same as coverImage
-        groupName: result.groupName,
-        groupImage: result.groupImage,
-        groupImageFallback: result.groupImage, // Same as groupImage
-        communityName: result.communityName,
-        communityLogo: result.communityLogo,
-        locationOverride: result.locationOverride,
-        note: result.note,
-      });
+      const result = await resolveLinkPreviewMeta(ctx, targetUrl);
+      return jsonResponse(result.body, result.status);
     } catch (error) {
-      console.error("Error fetching event for link preview:", error);
-      return jsonResponse({ error: "Failed to fetch event" }, 500);
+      console.error("Error resolving link preview meta:", error);
+      return jsonResponse({ error: "Failed to fetch preview" }, 500);
     }
   }),
 });
 
-// Handle CORS preflight for /link-preview/event
+// Handle CORS preflight for /link-preview/meta
 http.route({
-  path: "/link-preview/event",
-  method: "OPTIONS",
-  handler: httpAction(async () => handleCorsOptions()),
-});
-
-/**
- * GET /link-preview/group?shortId=<shortId>
- *
- * Returns group data needed for social sharing previews.
- * Used by the Cloudflare Worker when bots request /g/<shortId> URLs.
- *
- * Response shape:
- * - id, shortId, name, description
- * - preview (group image)
- * - memberCount
- * - communityName, communityLogo
- * - city, state (location)
- * - groupTypeName
- */
-http.route({
-  path: "/link-preview/group",
-  method: "GET",
-  handler: httpAction(async (ctx, request) => {
-    const url = new URL(request.url);
-    const shortId = url.searchParams.get("shortId");
-
-    if (!shortId) {
-      return jsonResponse({ error: "Missing shortId parameter" }, 400);
-    }
-
-    try {
-      const result = await ctx.runQuery(
-        api.functions.groups.index.getByShortId,
-        { shortId }
-      );
-
-      if (!result) {
-        return jsonResponse({ error: "Group not found" }, 404);
-      }
-
-      // Transform to match the expected shape for API routes
-      // Include fallback fields (same as primary since we don't store separate versions)
-      return jsonResponse({
-        id: result.id,
-        shortId: result.shortId,
-        name: result.name,
-        description: result.description,
-        preview: result.preview,
-        previewFallback: result.preview, // Same as preview
-        memberCount: result.memberCount,
-        communityName: result.communityName,
-        communityLogo: result.communityLogo,
-        communityLogoFallback: result.communityLogo, // Same as communityLogo
-        city: result.city,
-        state: result.state,
-        groupTypeName: result.groupTypeName,
-        isPublic: result.isPublic,
-      });
-    } catch (error) {
-      console.error("Error fetching group for link preview:", error);
-      return jsonResponse({ error: "Failed to fetch group" }, 500);
-    }
-  }),
-});
-
-// Handle CORS preflight for /link-preview/group
-http.route({
-  path: "/link-preview/group",
-  method: "OPTIONS",
-  handler: httpAction(async () => handleCorsOptions()),
-});
-
-/**
- * GET /link-preview/tool?shortId=<shortId>
- *
- * Returns tool data for link preview generation (OG tags).
- * Used by the Cloudflare Worker when bots request /t/[shortId] URLs.
- *
- * Response shape:
- * - shortId, toolType, groupId, groupName
- * - groupImage, communityName, communityLogo
- * - resourceTitle?, resourceIcon?, resourceImage? (for resource tools)
- */
-http.route({
-  path: "/link-preview/tool",
-  method: "GET",
-  handler: httpAction(async (ctx, request) => {
-    const url = new URL(request.url);
-    const shortId = url.searchParams.get("shortId");
-
-    if (!shortId) {
-      return jsonResponse({ error: "Missing shortId parameter" }, 400);
-    }
-
-    try {
-      const result = await ctx.runQuery(
-        api.functions.toolShortLinks.index.getByShortId,
-        { shortId }
-      );
-
-      if (!result) {
-        return jsonResponse({ error: "Tool not found" }, 404);
-      }
-
-      return jsonResponse(result);
-    } catch (error) {
-      console.error("Error fetching tool for link preview:", error);
-      return jsonResponse({ error: "Failed to fetch tool" }, 500);
-    }
-  }),
-});
-
-// Handle CORS preflight for /link-preview/tool
-http.route({
-  path: "/link-preview/tool",
-  method: "OPTIONS",
-  handler: httpAction(async () => handleCorsOptions()),
-});
-
-/**
- * GET /link-preview/community?communitySubdomain=<subdomain>&groupTypeSlug=<slug>
- *
- * Returns community and optional group type data for "near me" link previews.
- * Used by the Cloudflare Worker when bots request /nearme URLs.
- *
- * Response shape:
- * {
- *   community: { id, name, subdomain, logo, logoFallback },
- *   groupType: { id, name, slug, description } | null
- * }
- */
-http.route({
-  path: "/link-preview/community",
-  method: "GET",
-  handler: httpAction(async (ctx, request) => {
-    const url = new URL(request.url);
-    const communitySubdomain = url.searchParams.get("communitySubdomain");
-    const groupTypeSlug = url.searchParams.get("groupTypeSlug") || undefined;
-
-    if (!communitySubdomain) {
-      return jsonResponse(
-        { error: "Missing communitySubdomain parameter" },
-        400
-      );
-    }
-
-    try {
-      const result = await ctx.runQuery(
-        api.functions.groupSearch.publicLinkPreview,
-        { communitySubdomain, groupTypeSlug }
-      );
-
-      // Add logoFallback field (null for Convex, but worker expects it)
-      return jsonResponse({
-        community: {
-          ...result.community,
-          logoFallback: null,
-        },
-        groupType: result.groupType,
-      });
-    } catch (error) {
-      console.error("Error fetching community for link preview:", error);
-
-      // Check if it's a "not found" error
-      if (error instanceof Error && error.message.includes("not found")) {
-        return jsonResponse({ error: "Community not found" }, 404);
-      }
-
-      return jsonResponse({ error: "Failed to fetch community" }, 500);
-    }
-  }),
-});
-
-// Handle CORS preflight for /link-preview/community
-http.route({
-  path: "/link-preview/community",
-  method: "OPTIONS",
-  handler: httpAction(async () => handleCorsOptions()),
-});
-
-/**
- * GET /link-preview/channel?shortId=<shortId>
- *
- * Returns channel data for invite link preview generation (OG tags).
- * Used by the Cloudflare Worker when bots request /ch/[shortId] URLs.
- *
- * Response shape:
- * - channelName, groupName, groupImage, memberCount
- * - communityName, communityLogo
- * - joinMode
- */
-http.route({
-  path: "/link-preview/channel",
-  method: "GET",
-  handler: httpAction(async (ctx, request) => {
-    const url = new URL(request.url);
-    const shortId = url.searchParams.get("shortId");
-
-    if (!shortId) {
-      return jsonResponse({ error: "Missing shortId parameter" }, 400);
-    }
-
-    try {
-      const result = await ctx.runQuery(
-        api.functions.messaging.channelInvites.getByShortId,
-        { shortId }
-      );
-
-      if (!result) {
-        return jsonResponse({ error: "Channel not found" }, 404);
-      }
-
-      return jsonResponse({
-        channelName: result.channelName,
-        channelDescription: result.channelDescription,
-        groupName: result.groupName,
-        groupImage: result.groupImage,
-        communityName: result.communityName,
-        communityLogo: result.communityLogo,
-        memberCount: result.memberCount,
-        joinMode: result.joinMode,
-      });
-    } catch (error) {
-      console.error("Error fetching channel for link preview:", error);
-      return jsonResponse({ error: "Failed to fetch channel" }, 500);
-    }
-  }),
-});
-
-// Handle CORS preflight for /link-preview/channel
-http.route({
-  path: "/link-preview/channel",
+  path: "/link-preview/meta",
   method: "OPTIONS",
   handler: httpAction(async () => handleCorsOptions()),
 });
@@ -643,6 +411,12 @@ http.route({
  * - customer.subscription.updated -> syncs subscription status
  * - customer.subscription.deleted -> marks subscription as canceled
  * - invoice.payment_failed -> marks subscription as past_due
+ *
+ * ALL FOUR are shared with recurring giving (a monthly donation is a Stripe
+ * Subscription on the community's CONNECTED account, set up through a
+ * subscription-mode Checkout Session): when `event.account` is set the event
+ * is a Connect event and goes to the finance handler instead of billing. See
+ * lib/finance/webhookRouting.ts.
  */
 http.route({
   path: "/stripe-webhook",
@@ -661,8 +435,22 @@ http.route({
       return new Response("Webhook not configured", { status: 500 });
     }
 
+    // Two Stripe event destinations share this endpoint, each with its own
+    // signing secret: the platform-account destination (billing events —
+    // STRIPE_WEBHOOK_SECRET) and the "Events from: Connected accounts"
+    // destination (group-giving events: account.updated,
+    // payment_intent.succeeded, payout.paid, charge.refunded,
+    // charge.dispute.created — STRIPE_CONNECT_WEBHOOK_SECRET). Stripe scopes
+    // a destination at creation, so listening to both requires two
+    // destinations; accept either signature here. Optional so pre-Connect
+    // deploys keep working unchanged.
+    const connectWebhookSecret = process.env.STRIPE_CONNECT_WEBHOOK_SECRET;
+
     // Verify signature using Web Crypto API
-    const isValid = await verifyStripeSignature(body, signature, webhookSecret);
+    const isValid =
+      (await verifyStripeSignature(body, signature, webhookSecret)) ||
+      (!!connectWebhookSecret &&
+        (await verifyStripeSignature(body, signature, connectWebhookSecret)));
     if (!isValid) {
       console.error("[StripeWebhook] Invalid signature");
       return new Response("Invalid signature", { status: 400 });
@@ -672,7 +460,18 @@ http.route({
 
     try {
       switch (event.type) {
+        // Ambiguous for the same reason as the three cases below: a monthly
+        // donation is set up through a subscription-mode Checkout Session on
+        // the community's CONNECTED account, and lands here alongside a
+        // community's own SaaS-billing checkout. `event.account` is the
+        // routing key (lib/finance/webhookRouting.ts) — without this, the
+        // billing handler would read a donor's session as a community
+        // subscription activation.
         case "checkout.session.completed": {
+          if (isConnectEvent(event)) {
+            await handleFinanceStripeEvent(ctx, event);
+            break;
+          }
           const session = event.data.object;
           await ctx.runMutation(
             internal.functions.ee.billing.handleCheckoutCompleted,
@@ -684,11 +483,23 @@ http.route({
               monthlyPrice: session.metadata.monthlyPrice
                 ? Number(session.metadata.monthlyPrice)
                 : undefined,
+              demoConversion: session.metadata.demoConversion === "true",
             }
           );
           break;
         }
+        // The next three cases are AMBIGUOUS: a recurring donation is a
+        // Stripe Subscription too, so these event types arrive for both SaaS
+        // billing (platform account) and group giving (connected account).
+        // `event.account` is what tells them apart — without this check the
+        // billing handlers swallow a donor's subscription event and, worse,
+        // could match a Connect subscription id against a community's own
+        // (see lib/finance/webhookRouting.ts).
         case "customer.subscription.updated": {
+          if (isConnectEvent(event)) {
+            await handleFinanceStripeEvent(ctx, event);
+            break;
+          }
           const subscription = event.data.object;
           await ctx.runMutation(
             internal.functions.ee.billing.handleSubscriptionUpdated,
@@ -700,6 +511,10 @@ http.route({
           break;
         }
         case "customer.subscription.deleted": {
+          if (isConnectEvent(event)) {
+            await handleFinanceStripeEvent(ctx, event);
+            break;
+          }
           const subscription = event.data.object;
           await ctx.runMutation(
             internal.functions.ee.billing.handleSubscriptionUpdated,
@@ -711,6 +526,10 @@ http.route({
           break;
         }
         case "invoice.payment_failed": {
+          if (isConnectEvent(event)) {
+            await handleFinanceStripeEvent(ctx, event);
+            break;
+          }
           const invoice = event.data.object;
           await ctx.runMutation(
             internal.functions.ee.billing.handlePaymentFailed,
@@ -721,9 +540,10 @@ http.route({
           break;
         }
         default:
-          console.log(
-            `[StripeWebhook] Unhandled event type: ${event.type}`
-          );
+          // Group-giving events (account.updated, payment_intent.succeeded,
+          // payout.paid) are dispatched by the finance layer; it no-ops on
+          // anything it doesn't own (ADR-032 §6).
+          await handleFinanceStripeEvent(ctx, event);
       }
 
       return new Response(JSON.stringify({ received: true }), {
@@ -734,6 +554,291 @@ http.route({
       console.error("[StripeWebhook] Error processing event:", error);
       return new Response("Webhook processing failed", { status: 500 });
     }
+  }),
+});
+
+/**
+ * POST /increase-webhook
+ *
+ * Increase (banking) event receiver for group giving (ADR-032 §6). Signature
+ * verification, event parsing, and category dispatch all live in
+ * functions/finance/webhooks.ts — this route is pure mounting.
+ */
+http.route({
+  path: "/increase-webhook",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    return await handleIncreaseWebhookRequest(ctx, request);
+  }),
+});
+
+/**
+ * POST /card-provider-webhook/privacy
+ *
+ * Transaction receiver for communities that bring their OWN Privacy.com
+ * account (ADR-033 Phase 1). Signature verification, routing and settlement
+ * recording live in functions/finance/webhooks.ts — this route is pure
+ * mounting, same as /increase-webhook above.
+ *
+ * One URL for every community, not one per church: Privacy has no webhook
+ * API (the endpoint is typed into their dashboard by hand), so a per-community
+ * path would be a setup step someone gets wrong. The handler routes on the
+ * payload's `card_token` instead, and verifies with that community's own key.
+ *
+ * The `/card-provider-webhook/<name>` shape is deliberate — the next BYO
+ * issuer mounts beside this one instead of inventing another top-level path.
+ */
+http.route({
+  path: "/card-provider-webhook/privacy",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    return await handlePrivacyWebhookRequest(ctx, request);
+  }),
+});
+
+/**
+ * POST /card-provider-webhook/bill
+ *
+ * Transaction receiver for communities that bring their own BILL Spend &
+ * Expense account (ADR-033 Phase 2). Unlike the Privacy route above, THIS
+ * ENDPOINT HAS NO SIGNATURE TO CHECK — BILL publishes none — so the handler
+ * treats every delivery as an unauthenticated hint and re-fetches the
+ * transaction from BILL before recording a cent. The reasoning is in
+ * `handleBillWebhookRequest`; this route is pure mounting.
+ *
+ * One URL for every community, matching the Privacy route. BILL's
+ * subscriptions ARE programmatic (`connectCardProvider` registers this URL on
+ * connect, best effort) and are production-only, so a staging deployment
+ * imports through the hourly poll alone.
+ */
+http.route({
+  path: "/card-provider-webhook/bill",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    return await handleBillWebhookRequest(ctx, request);
+  }),
+});
+
+// ============================================================================
+// Public Attendance API (external integrations)
+// ============================================================================
+
+/**
+ * CORS headers for the authenticated API. Unlike the link-preview endpoints,
+ * this one accepts an Authorization / x-api-key header, so those must be listed
+ * as allowed request headers for browser-based clients.
+ */
+const apiCorsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization, x-api-key",
+};
+
+/** JSON response using the API CORS headers. */
+function apiJsonResponse(data: unknown, status: number = 200): Response {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { "Content-Type": "application/json", ...apiCorsHeaders },
+  });
+}
+
+/**
+ * Extract the API key from a request.
+ * Accepts either `Authorization: Bearer <key>` or `x-api-key: <key>`.
+ */
+function extractApiKey(request: Request): string | null {
+  const auth = request.headers.get("authorization");
+  if (auth && auth.toLowerCase().startsWith("bearer ")) {
+    const key = auth.slice(7).trim();
+    if (key) return key;
+  }
+  const headerKey = request.headers.get("x-api-key");
+  if (headerKey && headerKey.trim()) return headerKey.trim();
+  return null;
+}
+
+/**
+ * Parse a timestamp query param that may be Unix milliseconds or an ISO date
+ * string. Returns undefined when absent, or null when present but invalid.
+ */
+function parseTimestampParam(value: string | null): number | undefined | null {
+  if (value === null) return undefined;
+  if (/^\d+$/.test(value)) return Number(value);
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+const VALID_MEETING_STATUSES = ["scheduled", "completed", "cancelled"];
+
+/**
+ * GET /api/v1/attendance
+ *
+ * Returns aggregated attendance for every group in the community that owns the
+ * API key. No personal information is exposed — counts only.
+ *
+ * Auth: `Authorization: Bearer <api-key>` or `x-api-key: <api-key>`.
+ *
+ * Query params (all optional):
+ * - since / until: bound event date (Unix ms or ISO date string).
+ * - groupType: group type slug (e.g. "dinner-parties").
+ * - status: "scheduled" | "completed" | "cancelled".
+ * - limit: max events to return (default 200, max 1000).
+ */
+http.route({
+  path: "/api/v1/attendance",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const apiKey = extractApiKey(request);
+    if (!apiKey) {
+      return apiJsonResponse(
+        { error: "Missing API key. Provide an Authorization: Bearer <key> header." },
+        401
+      );
+    }
+
+    const keyHash = await hashApiKey(apiKey);
+    const verified = await ctx.runMutation(internal.functions.publicApi.verifyApiKey, {
+      keyHash,
+    });
+    if (!verified) {
+      return apiJsonResponse({ error: "Invalid or revoked API key" }, 401);
+    }
+
+    const url = new URL(request.url);
+
+    const since = parseTimestampParam(url.searchParams.get("since"));
+    if (since === null) {
+      return apiJsonResponse({ error: "Invalid 'since' parameter" }, 400);
+    }
+    const until = parseTimestampParam(url.searchParams.get("until"));
+    if (until === null) {
+      return apiJsonResponse({ error: "Invalid 'until' parameter" }, 400);
+    }
+
+    const status = url.searchParams.get("status") || undefined;
+    if (status && !VALID_MEETING_STATUSES.includes(status)) {
+      return apiJsonResponse(
+        { error: `Invalid 'status'. Must be one of: ${VALID_MEETING_STATUSES.join(", ")}` },
+        400
+      );
+    }
+
+    const limitParam = url.searchParams.get("limit");
+    let limit: number | undefined;
+    if (limitParam !== null) {
+      const parsed = Number(limitParam);
+      if (!Number.isInteger(parsed) || parsed < 1) {
+        return apiJsonResponse({ error: "Invalid 'limit' parameter" }, 400);
+      }
+      limit = parsed;
+    }
+
+    try {
+      const data = await ctx.runQuery(
+        internal.functions.publicApi.getCommunityAttendanceAggregate,
+        {
+          communityId: verified.communityId,
+          since: since ?? undefined,
+          until: until ?? undefined,
+          groupTypeSlug: url.searchParams.get("groupType") || undefined,
+          status,
+          limit,
+        }
+      );
+      return apiJsonResponse(data);
+    } catch (error) {
+      console.error("[AttendanceAPI] Error building attendance response:", error);
+      return apiJsonResponse({ error: "Failed to fetch attendance data" }, 500);
+    }
+  }),
+});
+
+// Handle CORS preflight for /api/v1/attendance
+http.route({
+  path: "/api/v1/attendance",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, { status: 204, headers: apiCorsHeaders });
+  }),
+});
+
+/**
+ * GET /api/v1/attendance/summary
+ *
+ * A lighter, rolled-up companion to /api/v1/attendance: returns one row per
+ * (group, calendar day) with summed attendance/guest/RSVP counts instead of one
+ * row per event. Dates are bucketed in the community's time zone. No personal
+ * information is exposed.
+ *
+ * Auth and `since`/`until`/`groupType`/`status` filters match /api/v1/attendance.
+ * There is no `limit` — response size is bounded by the date window and the
+ * number of groups; `truncated: true` means the internal scan cap was hit
+ * (narrow the window for complete buckets).
+ */
+http.route({
+  path: "/api/v1/attendance/summary",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const apiKey = extractApiKey(request);
+    if (!apiKey) {
+      return apiJsonResponse(
+        { error: "Missing API key. Provide an Authorization: Bearer <key> header." },
+        401
+      );
+    }
+
+    const keyHash = await hashApiKey(apiKey);
+    const verified = await ctx.runMutation(internal.functions.publicApi.verifyApiKey, {
+      keyHash,
+    });
+    if (!verified) {
+      return apiJsonResponse({ error: "Invalid or revoked API key" }, 401);
+    }
+
+    const url = new URL(request.url);
+
+    const since = parseTimestampParam(url.searchParams.get("since"));
+    if (since === null) {
+      return apiJsonResponse({ error: "Invalid 'since' parameter" }, 400);
+    }
+    const until = parseTimestampParam(url.searchParams.get("until"));
+    if (until === null) {
+      return apiJsonResponse({ error: "Invalid 'until' parameter" }, 400);
+    }
+
+    const status = url.searchParams.get("status") || undefined;
+    if (status && !VALID_MEETING_STATUSES.includes(status)) {
+      return apiJsonResponse(
+        { error: `Invalid 'status'. Must be one of: ${VALID_MEETING_STATUSES.join(", ")}` },
+        400
+      );
+    }
+
+    try {
+      const data = await ctx.runQuery(
+        internal.functions.publicApi.getCommunityAttendanceSummary,
+        {
+          communityId: verified.communityId,
+          since: since ?? undefined,
+          until: until ?? undefined,
+          groupTypeSlug: url.searchParams.get("groupType") || undefined,
+          status,
+        }
+      );
+      return apiJsonResponse(data);
+    } catch (error) {
+      console.error("[AttendanceAPI] Error building attendance summary:", error);
+      return apiJsonResponse({ error: "Failed to fetch attendance summary" }, 500);
+    }
+  }),
+});
+
+// Handle CORS preflight for /api/v1/attendance/summary
+http.route({
+  path: "/api/v1/attendance/summary",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, { status: 204, headers: apiCorsHeaders });
   }),
 });
 
@@ -756,5 +861,16 @@ http.route({
     });
   }),
 });
+
+// ============================================================================
+// Dev-Assistant (@supa-media/dev-assistant)
+// ============================================================================
+// The dev-assistant contribution pipeline HTTP surface —
+// POST /dev-assistant/callback (signed Routine callback, x-togather-signature),
+// POST /dev-assistant/upload (Routine image upload -> R2), and
+// POST /github/webhook (pull_request + workflow_run) — is registered by the
+// package. Same routes, same HMAC scheme (x-togather-signature /
+// x-hub-signature-256), same wire format and env vars as before.
+registerRoutes(http);
 
 export default http;

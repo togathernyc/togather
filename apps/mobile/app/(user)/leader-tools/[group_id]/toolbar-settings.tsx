@@ -15,6 +15,7 @@ import {
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import { ResourceIcon } from "@components/ui/ResourceIcon";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { UserRoute } from "@components/guards/UserRoute";
 import { DragHandle } from "@components/ui/DragHandle";
@@ -40,7 +41,7 @@ const ALL_TOOLS: readonly ToolDefinition[] = ALL_TOOL_IDS.map(
 );
 
 // Tools that have dedicated settings pages
-const TOOLS_WITH_SETTINGS = ["runsheet", "followup"];
+const TOOLS_WITH_SETTINGS = ["runsheet"];
 
 // Unified item type for both tools and resources
 type UnifiedToolbarItem = {
@@ -71,6 +72,13 @@ export default function ToolbarSettingsScreen() {
   // Query if group has PCO channels
   const hasPcoChannels = useQuery(
     api.functions.messaging.channels.hasAutoChannels,
+    token && groupId ? { token, groupId } : "skip"
+  );
+
+  // Query if group has a native run sheet (event plan with ≥1 item). Lets the
+  // Run Sheet tool surface for native-only groups, not just PCO-connected ones.
+  const hasNativeRunSheet = useQuery(
+    api.functions.scheduling.events.groupHasRunSheet,
     token && groupId ? { token, groupId } : "skip"
   );
 
@@ -210,10 +218,18 @@ export default function ToolbarSettingsScreen() {
   // NOTE: This must be a useMemo to ensure hooks are called in consistent order
   const availableTools = useMemo(() => {
     return ALL_TOOLS.filter((tool) => {
-      if (tool.requiresPco && !hasPcoChannels) return false;
+      // A PCO-required tool stays hidden unless the group has PCO channels —
+      // OR it opts into native run sheets and the group has one.
+      if (
+        tool.requiresPco &&
+        !hasPcoChannels &&
+        !(tool.showsWithRunSheet && hasNativeRunSheet)
+      ) {
+        return false;
+      }
       return true;
     });
-  }, [hasPcoChannels]);
+  }, [hasPcoChannels, hasNativeRunSheet]);
 
   // Create unified list of all toolbar items (tools + resources)
   const allUnifiedItems = useMemo((): UnifiedToolbarItem[] => {
@@ -366,8 +382,8 @@ export default function ToolbarSettingsScreen() {
               {enabledItems.map((item, index) => (
                 <View key={item.id} style={[styles.toolRow, { borderBottomColor: colors.borderLight }]}>
                   <View style={styles.toolInfo}>
-                    <Ionicons
-                      name={item.icon as keyof typeof Ionicons.glyphMap}
+                    <ResourceIcon
+                      name={item.icon}
                       size={20}
                       color={colors.text}
                     />
@@ -425,8 +441,8 @@ export default function ToolbarSettingsScreen() {
               {disabledItems.map((item) => (
                 <View key={item.id} style={[styles.toolRow, { borderBottomColor: colors.borderLight }]}>
                   <View style={styles.toolInfo}>
-                    <Ionicons
-                      name={item.icon as keyof typeof Ionicons.glyphMap}
+                    <ResourceIcon
+                      name={item.icon}
                       size={20}
                       color={colors.textTertiary}
                     />
@@ -514,8 +530,8 @@ export default function ToolbarSettingsScreen() {
                     return (
                       <View key={item.id} style={[styles.toolVisibilityRow, { borderBottomColor: colors.borderLight }]}>
                         <View style={styles.toolVisibilityInfo}>
-                          <Ionicons
-                            name={item.icon as keyof typeof Ionicons.glyphMap}
+                          <ResourceIcon
+                            name={item.icon}
                             size={18}
                             color={colors.textSecondary}
                           />

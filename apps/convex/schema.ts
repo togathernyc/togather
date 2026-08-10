@@ -1,6 +1,7 @@
-import { defineSchema, defineTable } from "convex/server";
+import { defineSchema, defineTable, type TableDefinition } from "convex/server";
 import { v } from "convex/values";
 import { authTables } from "@convex-dev/auth/server";
+import { supaDevAssistantTables } from "@supa-media/dev-assistant/schema";
 
 /**
  * Convex Schema for Togather
@@ -18,6 +19,35 @@ import { authTables } from "@convex-dev/auth/server";
  * - Uses Convex Auth (authTables) for session management
  * - Links to our existing 'users' table via authAccounts.userId
  */
+
+// @supa-media/dev-assistant (ADR-029): the devBugs pipeline row + its
+// devBugMessages conversation thread, with Togather's chat-origination FKs
+// (community/channel/thread) injected via extraBugFields + the by_channel index.
+// Field-for-field and index-for-index identical to the previous inline
+// definition (verified — no data migration). The pipeline also reads two
+// OPTIONAL users fields: githubUsername + autoMergeMaxSeverity (on the users
+// table below).
+//
+// NOTE: the factory is declared to return `Record<string, TableDefinition>`, so
+// spreading its result raw would collapse `devBugs`/`devBugMessages` into a
+// string index signature and drop them from the generated DataModel (breaking
+// `Id<"devBugs">` / `Doc<"devBugs">` everywhere they're referenced). The cast
+// below re-establishes them as two concrete table keys so the rest of the
+// schema stays precisely typed. The runtime VALUE is the factory's (behavior-
+// neutral); only devBugs' compile-time document type is loosened to the
+// package's own `any`-ctx view. (Upstream: the factory should return a
+// precisely-typed object literal so a plain spread preserves the table types.)
+const devAssistantTables = supaDevAssistantTables({
+  extraBugFields: {
+    communityId: v.optional(v.id("communities")),
+    channelId: v.optional(v.id("chatChannels")),
+    threadRootMessageId: v.optional(v.id("chatMessages")),
+  },
+  extraBugIndexes: [{ name: "by_channel", fields: ["channelId"] }],
+}) as unknown as {
+  devBugs: TableDefinition<any, any, any, any>;
+  devBugMessages: TableDefinition<any, any, any, any>;
+};
 
 export default defineSchema({
   // =============================================================================
@@ -37,6 +67,27 @@ export default defineSchema({
     revokedBefore: v.number(), // Unix ms; compared to JWT iat (whole seconds) via floor(revokedBefore/1000)
     createdAt: v.number(), // Unix timestamp ms
   }).index("by_userId", ["userId"]),
+
+  // =============================================================================
+  // API KEYS (external integrations)
+  // =============================================================================
+  // Community-scoped API keys that let external apps (e.g. an attendance
+  // dashboard) call the public HTTP API. The raw key is shown to the admin
+  // exactly once at creation time; only a SHA-256 hash is persisted, so a
+  // leaked database row can't be used to reconstruct a working key.
+  apiKeys: defineTable({
+    communityId: v.id("communities"),
+    name: v.string(), // Human label, e.g. "Fount Attendance Dashboard"
+    keyHash: v.string(), // SHA-256 hex of the raw key (never store the raw key)
+    keyPrefix: v.string(), // First chars of the raw key, for display only (e.g. "tgk_a1b2c3d4")
+    createdById: v.id("users"),
+    createdAt: v.number(), // Unix timestamp ms
+    lastUsedAt: v.optional(v.number()), // Unix timestamp ms; updated on each authenticated call
+    revokedAt: v.optional(v.number()), // Unix timestamp ms; set when revoked (key stops working)
+    revokedById: v.optional(v.id("users")),
+  })
+    .index("by_community", ["communityId"])
+    .index("by_keyHash", ["keyHash"]),
 
   // =============================================================================
   // COMMUNITIES
@@ -63,10 +114,41 @@ export default defineSchema({
     country: v.optional(v.string()),
     primaryColor: v.optional(v.string()), // Hex color e.g. #1E8449
     secondaryColor: v.optional(v.string()), // Hex color e.g. #1E8449
+    // LEGACY — Knicks mode is now an app-wide feature flag ("knicks-mode" in
+    // the featureFlags table, flipped via /admin/features), no longer a
+    // per-community setting. This column is unused by app logic; it stays in
+    // the schema only so existing community rows pass schema validation.
+    // Clear it with functions/migrations:clearCommunityKnicksMode, then drop
+    // this field in a follow-up once every environment has been migrated.
+    knicksMode: v.optional(v.boolean()),
     isPublic: v.optional(v.boolean()), // Whether community is publicly listed
+    // Self-serve demo communities (see functions/demo.ts): seeded sandboxes a
+    // prospective church spins up from a short questionnaire. Excluded from
+    // community search/discovery; everyone who joins via the demo code becomes
+    // an admin so a whole staff team can click around and re-brand together.
+    isDemo: v.optional(v.boolean()),
+    // The user who created the demo (for attribution and future cleanup).
+    demoCreatedById: v.optional(v.id("users")),
+    // Archived (closed / shut down) communities. When true, no one can enter,
+    // switch into, or join the community, and it's hidden from search and
+    // discovery. This is a one-way soft delete set by the Primary Admin (see
+    // functions/admin/settings:archiveCommunity) — reversing it is a manual DB
+    // action, not an in-app flow.
+    isArchived: v.optional(v.boolean()),
+    archivedAt: v.optional(v.number()), // Unix timestamp ms
+    archivedById: v.optional(v.id("users")),
     // Explore page default filters (admin-configurable)
     exploreDefaultGroupTypes: v.optional(v.array(v.id("groupTypes"))),
     exploreDefaultMeetingType: v.optional(v.number()), // 1=In-Person, 2=Online
+    // Church-specific feature toggles. Absent / undefined = all off.
+    // Forward-compat object so we can add more religious-tradition features
+    // (e.g. confessionEnabled) without further schema changes.
+    churchFeatures: v.optional(
+      v.object({
+        prayerEnabled: v.boolean(),
+        eventTasksEnabled: v.optional(v.boolean()),
+      }),
+    ),
     // Community-level custom field definitions for People tab
     peopleCustomFields: v.optional(
       v.array(
@@ -102,6 +184,10 @@ export default defineSchema({
     subscriptionStatus: v.optional(v.string()), // "active" | "past_due" | "canceled" etc.
     subscriptionPriceMonthly: v.optional(v.number()),
     billingEmail: v.optional(v.string()),
+    // "per_active_user" = $1/month per billable active member (see
+    // functions/memberActivity.ts); a monthly cron syncs the Stripe
+    // subscription quantity. Absent = legacy fixed-price subscription.
+    billingModel: v.optional(v.string()),
   })
     .index("by_legacyId", ["legacyId"])
     .index("by_subdomain", ["subdomain"])
@@ -128,11 +214,37 @@ export default defineSchema({
     // Granular platform-level roles for delegated operator access.
     // Values: "poster_admin" (may expand later). isSuperuser/isStaff bypass this check.
     platformRoles: v.optional(v.array(v.string())),
+    // Max contribution risk level whose PR may auto-merge, for dashboard
+    // contributions this user originated (ADR-029 Phase 3). Set per person on
+    // the maintainers screen; unset defaults to "low" (see
+    // maintainers.DEFAULT_AUTO_MERGE_MAX_SEVERITY). "none" opts out entirely.
+    autoMergeMaxSeverity: v.optional(
+      v.union(
+        v.literal("none"),
+        v.literal("low"),
+        v.literal("medium"),
+        v.literal("high"),
+      ),
+    ),
     username: v.optional(v.string()),
     firstName: v.optional(v.string()),
     lastName: v.optional(v.string()),
     isStaff: v.optional(v.boolean()),
     isActive: v.optional(v.boolean()),
+    // True when a leader created a *provisional* user via the
+    // assign-from-community "invite new person" flow — the row carries a
+    // name + phone but no real account behind it. Cleared (and `isActive`
+    // flipped to true) when that phone completes phone-OTP signup; until
+    // then `users` rows with this flag must not be treated as real accounts.
+    // See `assignFromCommunity` / `inviteAndAssign` in
+    // `functions/scheduling/assignments.ts` and the claim path in
+    // `verifyPhoneOTP` / `registerNewUser`.
+    isPlaceholder: v.optional(v.boolean()),
+    // True only for the fake members seeded into a demo community
+    // (functions/demo.ts). Distinguishes them from other placeholder users
+    // (e.g. scheduling's invite-new-person flow) so the go-live purge deletes
+    // exactly the seeded accounts and never a real pending invitee.
+    isDemoSeed: v.optional(v.boolean()),
     dateJoined: v.optional(v.number()), // Unix timestamp ms
     roles: v.optional(v.number()), // Was: SmallInt bitmask
     profilePhoto: v.optional(v.string()),
@@ -163,6 +275,10 @@ export default defineSchema({
     bio: v.optional(v.string()),
     instagramHandle: v.optional(v.string()),
     linkedinHandle: v.optional(v.string()),
+    // Self-entered GitHub username for contributor attribution (ADR-029
+    // Phase 2). Honor-system, not OAuth-verified — it only feeds the
+    // Co-authored-by trailer on dev-dashboard PRs, never authentication.
+    githubUsername: v.optional(v.string()),
     birthdayMonth: v.optional(v.number()), // 1–12
     birthdayDay: v.optional(v.number()), // 1–31
     location: v.optional(v.string()),
@@ -194,17 +310,30 @@ export default defineSchema({
     updatedAt: v.optional(v.number()), // Unix timestamp ms
     communityAnniversary: v.optional(v.number()), // Unix timestamp ms (date only)
     status: v.optional(v.number()), // Was: SmallInt
-    lastLogin: v.optional(v.number()), // Unix timestamp ms - updated when user switches to this community
+    // Unix timestamp ms — per-community activity: stamped on login, on
+    // switching to this community, and on app foreground while it's the
+    // active community (users.recordActivity). Drives the admin "Active
+    // Members" stat and per-active-user billing (functions/memberActivity.ts).
+    lastLogin: v.optional(v.number()),
     // External integrations - stores IDs from external systems per community membership
     // e.g., { planningCenterId: "12345" }
     externalIds: v.optional(
       v.object({
         planningCenterId: v.optional(v.string()),
+        clearstreamContactId: v.optional(v.string()),
+        flodeskSubscriberId: v.optional(v.string()),
       }),
     ),
     // Denormalized PCO person ID for efficient indexed lookups
     // This mirrors externalIds.planningCenterId but is top-level for indexing
     pcoPersonId: v.optional(v.string()),
+    // DEPRECATED — unused. Was a manual "mark this member non-billable"
+    // override, removed because it let a community zero out its bill while
+    // members kept using the app; billing is now purely the automatic 30-day
+    // activity rule (functions/memberActivity.ts). No code reads or writes
+    // this field. Kept in the schema only so any row that already has a value
+    // still validates; drop it in a follow-up after a clear migration.
+    billingInactive: v.optional(v.boolean()),
   })
     .index("by_legacyId", ["legacyId"])
     .index("by_user", ["userId"])
@@ -281,6 +410,13 @@ export default defineSchema({
     // community landing page list, search/browse). Direct share links still
     // work and existing members retain access. Community-admin toggle only.
     hiddenFromDiscovery: v.optional(v.boolean()),
+    // Who approves join requests for this (private) group.
+    //   undefined | "admins" -> community admins approve (default, admin dashboard)
+    //   "leaders"            -> group leaders approve (group-page Requests section)
+    // Only community admins can change this value.
+    joinApprovalMode: v.optional(
+      v.union(v.literal("admins"), v.literal("leaders")),
+    ),
     shortId: v.optional(v.string()), // For shareable links (/g/[shortId])
     coordinates: v.optional(
       v.object({
@@ -402,6 +538,14 @@ export default defineSchema({
     // Stores default service type filters and view preferences
     runSheetConfig: v.optional(
       v.object({
+        // Which run sheet the leader-tools "Run Sheet" tool shows for this
+        // group: "pco" (default/legacy — live from Planning Center) or
+        // "native" (the group's upcoming event-plan run sheet, ADR-026). Typed
+        // as a permissive string here so the schema also tolerates pre-existing
+        // legacy `source` drift on some prod docs; writes are constrained to
+        // "pco"|"native" by `updateRunSheetConfig`, and readers default any
+        // other/absent value to "pco".
+        source: v.optional(v.string()),
         defaultServiceTypeIds: v.optional(v.array(v.string())),
         defaultView: v.optional(v.string()), // "compact" | "detailed"
         // Chip configuration for filtering/ordering plan item categories
@@ -476,7 +620,15 @@ export default defineSchema({
   groupResources: defineTable({
     groupId: v.id("groups"),
     title: v.string(), // "Welcome", "Roles", "Resources", etc.
-    icon: v.optional(v.string()), // Ionicons icon name
+    icon: v.optional(v.string()), // Icon name. Plain string = Ionicons; "mci:<name>" = MaterialCommunityIcons.
+    // When set, tapping the resource opens this URL instead of the resource
+    // detail page. Lets a resource act as a pure link (e.g. a "Give" button
+    // that opens a donation page) with no sections/content of its own.
+    linkUrl: v.optional(v.string()),
+    // When true, the resource is shown under its group's item in the chat
+    // inbox. Independent of the toolbar (a resource can appear in the inbox
+    // without being added to the group's toolbar, and vice versa).
+    showInInbox: v.optional(v.boolean()),
     visibility: v.object({
       type: v.union(
         v.literal("everyone"),
@@ -502,6 +654,9 @@ export default defineSchema({
     createdAt: v.number(),
     updatedAt: v.number(),
     createdBy: v.id("users"),
+    // True only for the placeholder "Partner with us" giving link seeded into a
+    // demo community (functions/demo.ts). Removed on go-live by purgeDemoSeedUsers.
+    isDemoSeed: v.optional(v.boolean()),
   }).index("by_group", ["groupId"]),
 
   // =============================================================================
@@ -617,11 +772,19 @@ export default defineSchema({
       ),
     ),
     // When true, attendees can RSVP but the count is hidden from non-leaders.
-    // Leaders/host still see the count with a "Leaders only" badge.
+    // Leaders/host still see the count with a "Visible to leaders only" badge.
     hideRsvpCount: v.optional(v.boolean()),
 
-    // Visibility
-    visibility: v.optional(v.string()), // 'group' | 'community' | 'public'
+    // Visibility. See `lib/meetingAudience.ts` — every read of these fields
+    // goes through it so "who can see this" and "who can RSVP" can't drift.
+    // 'group' | 'community' | 'public' | 'groups' | 'private'
+    // 'private' is UNLISTED: it appears in no browse, search, or feed on group
+    // membership alone. You reach it by holding the link or being invited
+    // (`eventInvites`), so it needs no audience list of its own.
+    visibility: v.optional(v.string()),
+    // When visibility is 'groups', members of these groups can also see and
+    // RSVP, in addition to the hosting group. Ignored for other visibilities.
+    visibleGroupIds: v.optional(v.array(v.id("groups"))),
 
     // Public sharing
     publicSlug: v.optional(v.string()),
@@ -662,6 +825,16 @@ export default defineSchema({
     // Search support (denormalized)
     communityId: v.optional(v.id("communities")), // Denormalized from group for search filtering
     searchText: v.optional(v.string()), // Denormalized: title + location + group name
+    // True only for events seeded into a demo community (functions/demo.ts).
+    // Lets getDemoProgress tell a seeded event from one the church created,
+    // without a wall-clock heuristic.
+    isDemoSeed: v.optional(v.boolean()),
+    // True only for the PAST "attendance-history" meetings the demo seeds to
+    // give the 100 placeholder members realistic health scores. Unlike normal
+    // demo events (which survive go-live), these are deleted by
+    // purgeDemoSeedUsers — otherwise their empty past sessions would depress
+    // real members' attendance scores for up to 60 days after going live.
+    isDemoActivitySeed: v.optional(v.boolean()),
   })
     .index("by_legacyId", ["legacyId"])
     .index("by_group", ["groupId"])
@@ -717,6 +890,32 @@ export default defineSchema({
     createdAt: v.number(),
   })
     .index("by_meeting", ["meetingId"])
+    .index("by_group", ["groupId"]),
+
+  // =============================================================================
+  // EVENT INVITES (one row per recipient — dedupes "already invited")
+  // =============================================================================
+
+  eventInvites: defineTable({
+    meetingId: v.id("meetings"),
+    groupId: v.id("groups"),
+    communityId: v.id("communities"),
+    sentById: v.id("users"),
+    recipientUserId: v.id("users"),
+    phone: v.optional(v.string()), // snapshot at send time
+    personalNote: v.optional(v.string()),
+    channels: v.array(v.string()), // ["sms", "push"]
+    // per-recipient status — pending → sent | partial | failed
+    status: v.string(),
+    smsStatus: v.optional(v.string()), // "succeeded" | "failed" | "skipped"
+    pushStatus: v.optional(v.string()),
+    failureReason: v.optional(v.string()),
+    inviteRound: v.number(), // 1 = first invite, 2+ = manual reminders
+    lastSentAt: v.number(),
+    createdAt: v.number(),
+  })
+    .index("by_meeting", ["meetingId"])
+    .index("by_meeting_recipient", ["meetingId", "recipientUserId"])
     .index("by_group", ["groupId"]),
 
   // =============================================================================
@@ -787,6 +986,10 @@ export default defineSchema({
     meetingId: v.id("meetings"),
     userId: v.optional(v.id("users")), // Optional: if guest is linked to a user
     recordedById: v.optional(v.id("users")),
+    // The member who brought this guest — the plus-ones they declared on their
+    // "Going" RSVP (`meetingRsvps.guestCount`). Set when a leader checks a guest
+    // in under someone on the check-in roster; absent for unattached walk-ins.
+    hostUserId: v.optional(v.id("users")),
 
     firstName: v.optional(v.string()),
     lastName: v.optional(v.string()),
@@ -1026,6 +1229,10 @@ export default defineSchema({
     .index("by_legacyId", ["legacyId"])
     .index("by_groupMember", ["groupMemberId"])
     .index("by_groupMember_createdAt", ["groupMemberId", "createdAt"])
+    // For "most recent of type X for member" lookups in score recomputes —
+    // back-dated rows can sit far behind newer entries, so we need to
+    // resolve them via an index rather than a filtered scan.
+    .index("by_groupMember_type_createdAt", ["groupMemberId", "type", "createdAt"])
     .index("by_createdBy", ["createdById"])
     .index("by_snoozeUntil", ["snoozeUntil"]),
 
@@ -1484,16 +1691,26 @@ export default defineSchema({
    */
   chatChannels: defineTable({
     groupId: v.optional(v.id("groups")),
-    /** Set for ad-hoc channels (dm, group_dm) that are not bound to a group. */
+    /**
+     * Set for ad-hoc channels (dm, group_dm) that are not bound to a group,
+     * and for announcements/shared channels so `by_community_isShared` can
+     * scope share scans to one community.
+     */
     communityId: v.optional(v.id("communities")),
     /** Convenience flag: true for ad-hoc dm/group_dm channels. */
     isAdHoc: v.optional(v.boolean()),
     /** For 1:1 DMs: deterministic key for dedup, sorted "userIdA::userIdB". */
     dmPairKey: v.optional(v.string()),
     slug: v.optional(v.string()), // URL-friendly, unique per group, immutable (optional for migration)
-    channelType: v.string(), // "main" | "leaders" | "dm" | "group_dm" | "custom" | "pco_services" | "event" | "reach_out" | "announcements"
+    channelType: v.string(), // "main" | "leaders" | "dm" | "group_dm" | "custom" | "pco_services" | "event" | "reach_out" | "announcements" | "cross_team"
     name: v.string(),
     description: v.optional(v.string()),
+    /**
+     * Optional per-channel hint shown as the composer placeholder (e.g.
+     * "put experience updates here"). Guides members to post the right kind of
+     * content in this thread. Editable by leaders on the channel info screen.
+     */
+    hint: v.optional(v.string()),
     createdById: v.id("users"),
     createdAt: v.number(), // Unix timestamp ms
     updatedAt: v.number(), // Unix timestamp ms
@@ -1525,6 +1742,14 @@ export default defineSchema({
           sortOrder: v.optional(v.number()), // How this group orders the channel
           /** Linked group's leaders hid the channel from tab bar / chat; owning group unchanged. */
           hiddenFromNavigation: v.optional(v.boolean()),
+          /**
+           * Announcements-type shares only: whether this group's OWN
+           * announcements channel was enabled when it accepted the share
+           * (accepting disables it). Used to restore the prior state when the
+           * group later leaves the share. Carried over when switching shares
+           * so the true original state survives back-to-back shares.
+           */
+          previousAnnouncementsChannelEnabled: v.optional(v.boolean()),
         }),
       ),
     ),
@@ -1532,6 +1757,40 @@ export default defineSchema({
     inviteShortId: v.optional(v.string()), // 9-char alphanumeric from generateShortId()
     inviteEnabled: v.optional(v.boolean()), // toggle link on/off
     joinMode: v.optional(v.string()), // "open" | "approval_required"
+    /**
+     * Whether a `channelType === "custom"` channel appears in its group's
+     * channel directory ("Channels you can join", W17). undefined/true =
+     * discoverable (default ON); false = leader hid it from the directory.
+     * Independent of `isEnabled`/`isArchived` — those already gate visibility
+     * and are checked separately wherever this flag is read.
+     */
+    discoverable: v.optional(v.boolean()),
+    /**
+     * When true, this channel doubles as a serving team: its members are the
+     * roster, and it can own teamRoles + be scheduled on eventPlans.
+     * See ADR-023. Undefined/false = ordinary channel.
+     */
+    isServingTeam: v.optional(v.boolean()),
+    /**
+     * Set for `channelType === "cross_team"` channels. A cross-team channel
+     * owns no roles or events of its own; its membership is auto-synced (same
+     * rotation window + `event_plan` syncSource as a serving-team channel)
+     * from `roleAssignments` across the listed source serving-team channels.
+     * Each selector pulls in everyone assigned `roleId` on `sourceChannelId`,
+     * or — when `roleId` is omitted — everyone assigned any role there.
+     */
+    crossTeamSync: v.optional(
+      v.object({
+        selectors: v.array(
+          v.object({
+            sourceTeamId: v.id("teams"),
+            /** ADR-025 legacy — unused dead column, stripped in a follow-up. */
+            sourceChannelId: v.optional(v.id("chatChannels")),
+            roleId: v.optional(v.id("teamRoles")),
+          }),
+        ),
+      }),
+    ),
   })
     .index("by_group", ["groupId"])
     .index("by_group_type", ["groupId", "channelType"])
@@ -1540,6 +1799,7 @@ export default defineSchema({
     .index("by_lastMessageAt", ["lastMessageAt"])
     .index("by_archived", ["isArchived"])
     .index("by_isShared", ["isShared"])
+    .index("by_community_isShared", ["communityId", "isShared"])
     .index("by_inviteShortId", ["inviteShortId"])
     .index("by_meetingId", ["meetingId"])
     .index("by_dmPairKey", ["dmPairKey"])
@@ -1560,6 +1820,15 @@ export default defineSchema({
     // Denormalized user info for display
     displayName: v.optional(v.string()),
     profilePhoto: v.optional(v.string()),
+    /**
+     * Manually pinned member. When true, the auto-sync reconcile
+     * (`teamChannelSync.ts`) never soft-removes this row — a leader added them
+     * by hand and they stay in the channel even when off-roster. Independent of
+     * `syncSource`: a row can be BOTH `isPermanent` and role-synced
+     * (`syncSource === "event_plan"`), in which case they render in both the
+     * "Permanent" and "Synced by role" sections of a cross-team Channel Info page.
+     */
+    isPermanent: v.optional(v.boolean()),
     // Auto-sync tracking (for auto channels like PCO Services)
     syncSource: v.optional(v.string()), // "pco_services" | "event_rsvp" | null (manual)
     syncEventId: v.optional(v.string()), // External event/plan ID that added them
@@ -1619,9 +1888,17 @@ export default defineSchema({
    */
   chatMessages: defineTable({
     channelId: v.id("chatChannels"),
+    /**
+     * Denormalized community the message belongs to (derived from the channel's
+     * group, or the channel's own communityId for ad-hoc dm/group_dm channels).
+     * Set at write time and backfilled for existing rows; used as a search-index
+     * filter field so inbox search scopes to a community without scanning other
+     * tenants' messages. Optional only for legacy rows pending backfill.
+     */
+    communityId: v.optional(v.id("communities")),
     senderId: v.optional(v.id("users")), // Optional for bot/system messages
     content: v.string(), // Message text
-    contentType: v.string(), // "text" | "image" | "file" | "system" | "bot" | "reach_out_request" | "task_card"
+    contentType: v.string(), // "text" | "image" | "file" | "system" | "bot" | "reach_out_request" | "task_card" | "bug_card" | "poll" | "availability_request"
     attachments: v.optional(
       v.array(
         v.object({
@@ -1636,8 +1913,18 @@ export default defineSchema({
         }),
       ),
     ),
-    // Threading
+    // Threading. A thread is exactly ONE level deep: `parentMessageId` always
+    // points at the thread's ROOT, never at another reply — `sendMessage` walks
+    // a chosen parent up before writing.
     parentMessageId: v.optional(v.id("chatMessages")),
+    /**
+     * The message the sender actually tapped "reply" on, when that was itself a
+     * reply. WhatsApp quotes the tapped message but files the new one under the
+     * same thread, so the quote target and the thread parent diverge; the quote
+     * bar reads this and falls back to `parentMessageId` (the overwhelmingly
+     * common case, where they are the same message).
+     */
+    quotedMessageId: v.optional(v.id("chatMessages")),
     threadReplyCount: v.optional(v.number()),
     // Timestamps
     createdAt: v.number(), // Unix timestamp ms
@@ -1661,19 +1948,111 @@ export default defineSchema({
     reachOutRequestId: v.optional(v.id("reachOutRequests")),
     // Canonical task reference for task-aware chat cards
     taskId: v.optional(v.id("tasks")),
+    // Dev-assistant bug reference for contentType === "bug_card"
+    bugId: v.optional(v.id("devBugs")),
+    // Poll reference for contentType === "poll"
+    pollId: v.optional(v.id("polls")),
+    // Availability-request reference for contentType === "availability_request"
+    availabilityRequestId: v.optional(v.id("availabilityRequests")),
     // Optional idempotency key for generated bot/task posts
     sourceKey: v.optional(v.string()),
     // For mirrored text blasts — backlink to the eventBlasts row so the UI
     // can render an "Also sent via SMS" badge and deep-link to delivery stats.
     blastId: v.optional(v.id("eventBlasts")),
+    // True only for messages seeded into a demo community (functions/demo.ts):
+    // the scripted group/DM conversations and the Getting Started tour. Lets
+    // getDemoProgress tell a seeded message from one a real user sent.
+    isDemoSeed: v.optional(v.boolean()),
   })
     .index("by_channel", ["channelId"])
     .index("by_channel_createdAt", ["channelId", "createdAt"])
     .index("by_channel_lastActivityAt", ["channelId", "lastActivityAt"])
     .index("by_sender", ["senderId"])
+    // Bounds getDemoProgress's "did this real user send a message here" check
+    // to one community instead of scanning the sender's cross-community history.
+    .index("by_sender_community", ["senderId", "communityId"])
     .index("by_parentMessage", ["parentMessageId"])
     .index("by_createdAt", ["createdAt"])
-    .index("by_sourceKey", ["sourceKey"]),
+    .index("by_sourceKey", ["sourceKey"])
+    // Full-text search over message body for inbox search. `communityId`
+    // scopes the search to a single tenant in the index (so other communities'
+    // messages aren't scanned), and `isDeleted` keeps soft-deleted messages out
+    // of the result budget. Per-channel permission scoping is still enforced in
+    // the query handler against the user's accessible channels — Convex search
+    // filters can't OR across the user's channel set.
+    .searchIndex("search_content", {
+      searchField: "content",
+      filterFields: ["communityId", "isDeleted"],
+    }),
+
+  /**
+   * Polls
+   *
+   * Posted into channels via the chat composer. Backed by a `chatMessages`
+   * row with `contentType: "poll"` and `pollId` pointing here. The card UI
+   * renders inline in place of the normal message bubble.
+   *
+   * v1 semantics:
+   *  - `isAnonymous`: always written `false`. Field is reserved for a future
+   *    setting that hides voter identity in `getPollVoters`.
+   *  - `closesAt`: never set in v1 (no deadline picker). Field is reserved
+   *    for a future scheduler-based auto-close. `status` only flips via
+   *    the manual `closePoll` mutation today.
+   *  - Authors and group leaders can edit/close/delete via `editPoll`,
+   *    `closePoll`, `deletePoll`. `editCount`/`editedAt` track edits so the
+   *    card can render an "edited" badge.
+   */
+  polls: defineTable({
+    channelId: v.id("chatChannels"),
+    /** Back-pointer to the host message. Set after the message is inserted. */
+    messageId: v.optional(v.id("chatMessages")),
+    authorId: v.id("users"),
+    question: v.string(),
+    options: v.array(
+      v.object({
+        /** Stable id; survives text edits so vote rows stay attached. */
+        id: v.string(),
+        text: v.string(),
+      }),
+    ),
+    allowMultiple: v.boolean(),
+    isAnonymous: v.boolean(),
+    closesAt: v.optional(v.number()),
+    status: v.union(v.literal("active"), v.literal("closed")),
+    closedAt: v.optional(v.number()),
+    /** Total votes (each ticked option counts once). */
+    voteCount: v.number(),
+    /** Unique voters (one per user even if they ticked multiple options). */
+    voterCount: v.number(),
+    editedAt: v.optional(v.number()),
+    editCount: v.number(),
+    createdAt: v.number(),
+  })
+    .index("by_channel", ["channelId"])
+    .index("by_message", ["messageId"]),
+
+  /**
+   * Poll Votes
+   *
+   * One row per (poll, option, voter). For multi-select polls a single voter
+   * may have multiple rows in the same poll. For single-select, the
+   * `by_poll_voter` index is used to enforce one row per voter.
+   *
+   * `voterId` is stored even though v1 isn't anonymous — needed for "you
+   * voted" indicators, double-vote prevention, and to support a future
+   * anonymous mode where identity is hidden in queries but tracked at rest.
+   */
+  pollVotes: defineTable({
+    pollId: v.id("polls"),
+    optionId: v.string(),
+    voterId: v.id("users"),
+    /** Denormalized for permission checks without re-fetching the poll. */
+    channelId: v.id("chatChannels"),
+    createdAt: v.number(),
+  })
+    .index("by_poll", ["pollId"])
+    .index("by_poll_option", ["pollId", "optionId"])
+    .index("by_poll_voter", ["pollId", "voterId"]),
 
   /**
    * Chat Message Reactions
@@ -1705,6 +2084,29 @@ export default defineSchema({
     .index("by_channel", ["channelId"])
     .index("by_user", ["userId"])
     .index("by_channel_user", ["channelId", "userId"]),
+
+  /**
+   * Chat Thread Subscriptions
+   *
+   * Per-user notification preference for a single thread (a parent message and
+   * its replies). The absence of a row is the default: a member is notified
+   * about a reply only when they are @mentioned. A row overrides that default:
+   *   - "all":  notify on every reply, even without a mention
+   *   - "none": never notify, even when @mentioned
+   *
+   * `threadId` is the parent (root) message of the thread. Toggled from the
+   * bell control in the thread view (see ThreadHeader on mobile).
+   */
+  chatThreadSubscriptions: defineTable({
+    threadId: v.id("chatMessages"),
+    userId: v.id("users"),
+    state: v.union(v.literal("all"), v.literal("none")),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_thread", ["threadId"])
+    .index("by_thread_user", ["threadId", "userId"])
+    .index("by_user", ["userId"]),
 
   /**
    * Chat Typing Indicators
@@ -1859,6 +2261,17 @@ export default defineSchema({
   }).index("by_key", ["key"]),
 
   // =============================================================================
+  // DEV-ASSISTANT BUGS
+  // =============================================================================
+  // Backs the @Togather in-chat dev-assistant pipeline. The originating chat
+  // thread is the system of record for intent; this row tracks lifecycle state;
+  // the PR tracks code. Each transition posts a bot message into the thread.
+  // Gated behind the "dev-assistant-bot" feature flag; staff/superuser only.
+  // From @supa-media/dev-assistant (see the const above defineSchema).
+  devBugs: devAssistantTables.devBugs,
+  devBugMessages: devAssistantTables.devBugMessages,
+
+  // =============================================================================
 
   // =============================================================================
   // SLACK SERVICE BOT THREADS
@@ -1950,6 +2363,27 @@ export default defineSchema({
         }),
       ),
     }),
+
+    // Native rostering config (native-first, PCO fallback). Mirrors pcoConfig's
+    // map representation: campusGroupNames parallels serviceTypeIds
+    // (location -> value), roleMappings parallels the PCO roleMappings record.
+    // Optional: rows created before native config was promoted to the DB (and
+    // any key omitted here) fall back to the hardcoded config.ts constants.
+    nativeConfig: v.optional(
+      v.object({
+        // location -> native campus group name (case-insensitive substring
+        // match against `groups.name`).
+        campusGroupNames: v.record(v.string(), v.string()),
+        // semantic role id -> native team + role name.
+        roleMappings: v.record(
+          v.string(),
+          v.object({
+            teamName: v.string(),
+            roleName: v.string(),
+          }),
+        ),
+      }),
+    ),
 
     // AI/Prompt config
     aiConfig: v.object({
@@ -2161,6 +2595,9 @@ export default defineSchema({
     lastFollowupAt: v.optional(v.number()),
     lastActiveAt: v.optional(v.number()),
     lastAttendedAt: v.optional(v.number()),
+    // Most recent serving date (PCO + native rostering). Persisted so the
+    // per-group fan-out can carry serving activity into the archive computation.
+    lastServedAt: v.optional(v.number()),
     addedAt: v.optional(v.number()),
     latestNote: v.optional(v.string()),
     latestNoteAt: v.optional(v.number()),
@@ -2171,6 +2608,28 @@ export default defineSchema({
     // Snooze
     isSnoozed: v.optional(v.boolean()),
     snoozedUntil: v.optional(v.number()),
+
+    // Active/archived state.
+    // `isActive === false` means the person is archived/inactive and is hidden
+    // from the people table by default. `undefined`/`true` = active.
+    // `archivedAt` records when they were last set inactive (manual or auto) and
+    // is used by the daily score job to detect app activity that occurred AFTER
+    // archiving (so a returning user is reactivated, but a manual archive otherwise
+    // sticks). See computePersonActiveState in communityScoreComputation.ts.
+    isActive: v.optional(v.boolean()),
+    archivedAt: v.optional(v.number()),
+
+    // When the person was last manually unarchived or reactivated by a form
+    // submission. Counts as activity for the 60-day auto-archive clock, so a
+    // manual unarchive sticks until the person is quiet for the full window
+    // measured from this moment (not from their stale last activity). See
+    // computePersonActiveState in communityScoreComputation.ts.
+    reactivatedAt: v.optional(v.number()),
+
+    // When the "approaching auto-archive" check-in notice was last sent to the
+    // person's leaders/assignees. Used to send that notice once per inactivity
+    // spell (see shouldSendPreArchiveNotice in functions/memberArchiveNotice.ts).
+    preArchiveNoticeSentAt: v.optional(v.number()),
 
     // Custom field slots (5 text + 5 number + 5 boolean)
     customText1: v.optional(v.string()),
@@ -2343,4 +2802,1517 @@ export default defineSchema({
     }),
 
   // =============================================================================
+  // EVENT SCHEDULING & ROSTERING (ADR-023, ADR-025)
+  // Native replacement for the Planning Center scheduling dependency.
+  // ADR-025: `teams` is a first-class table; teamRoles / neededRoles /
+  // roleAssignments are keyed by `teamId`. The legacy `channelId` fields are
+  // unused dead columns, kept optional until a follow-up strips them.
+  // Run `migrateChannelsToTeams` BEFORE deploying this schema — it makes
+  // `teamId` required, so every row must be backfilled first. See ADR-025.
+  // =============================================================================
+
+  /**
+   * A serving team — a roster of volunteers that owns roles and is scheduled
+   * onto event plans. Belongs to a campus group. A team OPTIONALLY has a chat
+   * channel (`channelId`); a channel-less team is a pure roster. See ADR-025.
+   */
+  teams: defineTable({
+    groupId: v.id("groups"),
+    communityId: v.id("communities"),
+    name: v.string(),
+    description: v.optional(v.string()),
+    /** The team's chat channel, if it has one. A team may have none. */
+    channelId: v.optional(v.id("chatChannels")),
+    isArchived: v.optional(v.boolean()),
+    createdAt: v.number(),
+    createdById: v.id("users"),
+    updatedAt: v.number(),
+    // True only for serving teams seeded into a demo community
+    // (functions/demo.ts). Removed on go-live by purgeDemoSeedUsers.
+    isDemoSeed: v.optional(v.boolean()),
+  })
+    .index("by_group", ["groupId"])
+    .index("by_community", ["communityId"])
+    .index("by_channel", ["channelId"]),
+
+  /**
+   * Who manages a serving team's roster (ADR-025).
+   *
+   * A team manager sends serving requests for *their* team and fills its
+   * roster, without being a campus group leader. This exists because roster
+   * scope and leadership scope are different things: a campus group leader has
+   * access to every team at the location, so before this a crew lead teaching
+   * someone to roster would publish an event and fan requests out to *every*
+   * team's pending volunteers, not just their own.
+   *
+   * Group leaders and community admins keep full access to every team whether
+   * or not they appear here — this table grants access, it never restricts it.
+   * Only they may edit the list.
+   */
+  teamManagers: defineTable({
+    teamId: v.id("teams"),
+    userId: v.id("users"),
+    /** Denormalized from the team so community-wide reads skip a join. */
+    communityId: v.id("communities"),
+    addedById: v.id("users"),
+    addedAt: v.number(),
+  })
+    .index("by_team", ["teamId"])
+    // Powers "which teams do I manage?" — the roster grid's default scope and
+    // the publish picker's pre-selection.
+    .index("by_user", ["userId"])
+    .index("by_team_user", ["teamId", "userId"]),
+
+  /**
+   * A role within a serving team, e.g. "Drums", "Greeter". Free-form labels
+   * owned by the team; no global taxonomy, no qualification rules — anyone in
+   * the campus group can be assigned any role.
+   */
+  teamRoles: defineTable({
+    teamId: v.id("teams"),
+    /** ADR-025 legacy — unused dead column, stripped in a follow-up. */
+    channelId: v.optional(v.id("chatChannels")),
+    communityId: v.id("communities"),
+    name: v.string(),
+    color: v.optional(v.string()),
+    sortOrder: v.number(),
+    /** Slot count a new event starts with for this role; stays editable per-event. */
+    defaultNeeded: v.optional(v.number()),
+    isArchived: v.optional(v.boolean()),
+    createdAt: v.number(),
+    createdById: v.id("users"),
+  }).index("by_team", ["teamId"]),
+
+  /**
+   * A dated event volunteers are rostered to. Belongs to a campus group.
+   * Distinct from `meetings` (Events-tab events) — joined via optional
+   * `meetingIds` when a rostered event also wants an Events-tab presence.
+   */
+  eventPlans: defineTable({
+    groupId: v.id("groups"),
+    communityId: v.id("communities"),
+    title: v.string(),
+    eventDate: v.number(), // event date (Unix ms)
+    times: v.array(
+      v.object({
+        label: v.string(), // "9:00 AM"
+        startsAt: v.number(), // Unix ms
+      }),
+    ),
+    status: v.string(), // "draft" | "published"
+    notes: v.optional(v.string()),
+    /** Optional links to Events-tab events (multi-service day, multi-campus). */
+    meetingIds: v.optional(v.array(v.id("meetings"))),
+    /** Set when imported from a Planning Center plan (migration linkage). */
+    pcoPlanId: v.optional(v.string()),
+    /**
+     * Scheduled-job IDs for the automatic "you're still unconfirmed" nudges
+     * fired 4 days and 1 day before `eventDate`. Set on publish (only for
+     * fire times still in the future); cancelled + re-scheduled when the
+     * event date changes, and cancelled on delete. The matching `*Sent`
+     * flags make each reminder idempotent.
+     */
+    reminder4dJobId: v.optional(v.id("_scheduled_functions")),
+    reminder1dJobId: v.optional(v.id("_scheduled_functions")),
+    reminder4dSent: v.optional(v.boolean()),
+    reminder1dSent: v.optional(v.boolean()),
+    /**
+     * Event-templates linkage (Phase 3). When set, this plan is LINKED to a
+     * task and/or run-sheet template: its `eventTasks` / `eventItems` are
+     * materialized from the template's items and future template edits
+     * propagate forward to this plan's still-synced rows (past plans are
+     * frozen — never touched). Cleared on unlink.
+     */
+    taskTemplateId: v.optional(v.id("eventTaskTemplates")),
+    runSheetTemplateId: v.optional(v.id("runSheetTemplates")),
+    /**
+     * Template item ids the user removed LOCALLY from this plan. Propagation
+     * must NOT re-add these, so a deleted-locally template task/item stays
+     * gone even though it still exists on the template.
+     */
+    detachedTaskTemplateItemIds: v.optional(
+      v.array(v.id("eventTaskTemplateItems")),
+    ),
+    detachedRunSheetTemplateItemIds: v.optional(
+      v.array(v.id("runSheetTemplateItems")),
+    ),
+    createdAt: v.number(),
+    createdById: v.id("users"),
+    updatedAt: v.number(),
+    // True only for event plans seeded into a demo community
+    // (functions/demo.ts). Removed on go-live by purgeDemoSeedUsers.
+    isDemoSeed: v.optional(v.boolean()),
+  })
+    .index("by_group", ["groupId"])
+    // The same-day guard (`assertPlanDateFree`) only cares about plans within
+    // a day of the target date. Without this index it had to `.collect()` the
+    // group's ENTIRE plan history, which put every plan of the group in the
+    // mutation's read set — so two leaders editing unrelated dates would
+    // OCC-conflict.
+    .index("by_group_date", ["groupId", "eventDate"])
+    .index("by_community_date", ["communityId", "eventDate"])
+    // Forward-propagation lookups: all plans linked to a given template.
+    .index("by_task_template", ["taskTemplateId"])
+    .index("by_run_sheet_template", ["runSheetTemplateId"]),
+
+  /** "We need N of role X" on a given event. */
+  neededRoles: defineTable({
+    planId: v.id("eventPlans"),
+    teamId: v.id("teams"),
+    /** ADR-025 legacy — unused dead column, stripped in a follow-up. */
+    channelId: v.optional(v.id("chatChannels")),
+    roleId: v.id("teamRoles"),
+    count: v.number(),
+  })
+    .index("by_plan", ["planId"])
+    .index("by_plan_team", ["planId", "teamId"]),
+
+  /** A person scheduled to a role on an event. */
+  roleAssignments: defineTable({
+    planId: v.id("eventPlans"),
+    teamId: v.id("teams"),
+    /** ADR-025 legacy — unused dead column, stripped in a follow-up. */
+    channelId: v.optional(v.id("chatChannels")),
+    roleId: v.id("teamRoles"),
+    userId: v.id("users"),
+    eventDate: v.number(), // denormalized for same-day double-booking queries
+    status: v.string(), // "unconfirmed" | "confirmed" | "declined"
+    timeLabel: v.optional(v.string()),
+    declineNote: v.optional(v.string()),
+    assignedById: v.id("users"),
+    assignedAt: v.number(),
+    respondedAt: v.optional(v.number()),
+    pcoAssignmentId: v.optional(v.string()),
+    // True only for role assignments seeded into a demo community
+    // (functions/demo.ts). Lets getDemoProgress tell a seeded assignment from
+    // one the church created; removed on go-live by purgeDemoSeedUsers.
+    isDemoSeed: v.optional(v.boolean()),
+  })
+    .index("by_plan", ["planId"])
+    .index("by_user", ["userId"])
+    .index("by_user_status", ["userId", "status"])
+    // Most-recent serving lookup for archive activity (ordered by event date).
+    .index("by_user_eventDate", ["userId", "eventDate"])
+    .index("by_plan_role", ["planId", "roleId"])
+    .index("by_role", ["roleId"]) // powers "previously filled by"
+    // powers team auto-sync: desired members of a team within a rotation
+    // window are derived from assignments matched by team + date.
+    .index("by_team_eventDate", ["teamId", "eventDate"]),
+
+  /**
+   * History of serving requests SENT to volunteers (one row per recipient per
+   * send). Unlike `roleAssignments` — which is mutated in place and hard-deleted
+   * on `unassign` — these rows are append-only, so a leader can review the full
+   * "who was asked, when, and how many times" trail and re-send a request to a
+   * single person from it. Written by `sendAssignmentRequests` (publish +
+   * re-send) and the per-person `resendAssignmentRequest` action.
+   */
+  assignmentRequestLog: defineTable({
+    planId: v.id("eventPlans"),
+    groupId: v.id("groups"),
+    communityId: v.id("communities"),
+    // The assignment the request was for. The assignment may later be removed
+    // (`unassign` hard-deletes), so this id can dangle — readers tolerate a
+    // missing target. The log row itself is never deleted.
+    assignmentId: v.id("roleAssignments"),
+    userId: v.id("users"), // recipient (the volunteer who was asked)
+    roleId: v.id("teamRoles"),
+    teamId: v.id("teams"),
+    eventDate: v.number(), // denormalized from the plan for display/sorting
+    sentById: v.id("users"), // the scheduler who triggered the send
+    sentAt: v.number(),
+    kind: v.string(), // "initial" | "resend"
+    channels: v.array(v.string()), // delivery channels used, e.g. ["push","sms"]
+  })
+    .index("by_plan", ["planId"])
+    .index("by_assignment", ["assignmentId"])
+    .index("by_plan_role", ["planId", "roleId"]),
+
+  /**
+   * A single ordered item on an event plan's run sheet (ADR-026). The native
+   * replacement for the PCO-derived order-of-items. One run sheet = many rows,
+   * keyed by `planId` and ordered by `sequence`; the same run sheet is shared
+   * across all of the plan's `times` (clock times are computed client-side by
+   * cascading `durationSec` from the selected service time — never stored).
+   */
+  eventItems: defineTable({
+    planId: v.id("eventPlans"),
+    communityId: v.id("communities"),
+    /**
+     * When this item happens relative to the event's service times:
+     * "before" | "during" | "after". Items group into these three phases
+     * (PCO's "Before All" / "After All"). Optional for legacy rows, which are
+     * treated as "during". `sequence` orders items WITHIN a segment.
+     */
+    segment: v.optional(v.string()),
+    /** Ordering within the run sheet segment; reordering rewrites these. */
+    sequence: v.number(),
+    /** "song" | "header" | "media" | "item" (mirrors PCO vocabulary). */
+    type: v.string(),
+    title: v.string(),
+    description: v.optional(v.string()),
+    /** Drives the cascading clock times. A `header` is typically 0. */
+    durationSec: v.number(),
+    /** Role-categorized free-text notes (e.g. Audio / Video cues). */
+    notes: v.optional(
+      v.array(v.object({ category: v.string(), content: v.string() })),
+    ),
+    /**
+     * Links this item to roles rostered on the plan. The row displays
+     * "whoever currently fills this role", resolved live from the plan's
+     * `roleAssignments` — it never copies a person's name, so there is no
+     * second source of truth to drift.
+     */
+    assignments: v.optional(
+      v.array(v.object({ roleId: v.id("teamRoles") })),
+    ),
+    /**
+     * Lightweight per-occurrence song metadata, retained as an OVERRIDE of the
+     * linked library song's defaults (ADR-027). Display resolves
+     * `songDetails.key ?? song.defaultKey`.
+     */
+    songDetails: v.optional(
+      v.object({
+        key: v.optional(v.string()),
+        bpm: v.optional(v.number()),
+        author: v.optional(v.string()),
+      }),
+    ),
+    /**
+     * Optional link to a library song (ADR-027). When set, the run sheet row
+     * renders the joined song's title/charts/links; `songDetails` overrides its
+     * defaults. Cleared (nulled) when the referenced song is deleted.
+     */
+    songId: v.optional(v.id("songs")),
+    /**
+     * Event-templates linkage (Phase 3). Set => this row was materialized from
+     * the run-sheet template item with this id. SYNCED (`templateDetached`
+     * falsy) rows are updated/deleted by propagation to match the template;
+     * OVERRIDDEN rows (`templateDetached` true, set on a local edit) are left
+     * alone. Rows with no `sourceTemplateItemId` are plain local additions.
+     */
+    sourceTemplateItemId: v.optional(v.id("runSheetTemplateItems")),
+    templateDetached: v.optional(v.boolean()),
+    createdAt: v.number(),
+    createdById: v.id("users"),
+    updatedAt: v.number(),
+  })
+    .index("by_plan", ["planId"])
+    // Scan items referencing a song so deleteSong can null them out (ADR-027).
+    .index("by_song", ["songId"]),
+
+  /**
+   * Per-plan serving tasks (Event Tasks feature). A task is a high-level thing
+   * one or more teams (or specific roles on those teams) need to do for an
+   * event, tagged with when it happens ("before" | "during" | "after").
+   * Optional "how to" guidance can be plain text, a link, an R2 media asset, or
+   * a markdown doc.
+   *
+   * Assignment model (multi-team / multi-role):
+   *   • `teamIds` — the team(s) this task belongs to (always >= 1).
+   *   • `roleIds` — the role(s) responsible. NON-EMPTY => per-person completion
+   *     (each confirmed person in ANY of `roleIds` completes it individually via
+   *     `eventTaskCompletions`). EMPTY => team-level task: ONE shared completion
+   *     for the whole task (`sharedTaskCompletions`), togglable by any confirmed
+   *     member of ANY team in `teamIds`. A team-level task spanning multiple
+   *     teams is still ONE shared checkbox.
+   *
+   * `teamId` / `roleId` are LEGACY single-value columns kept optional for the
+   * migration window; reads go through `taskTeamIds()` / `taskRoleIds()` which
+   * fall back to them when the arrays are absent.
+   * TODO(followup): drop legacy teamId/roleId after
+   * `backfillTaskAssignmentArrays` has run in all envs.
+   */
+  eventTasks: defineTable({
+    planId: v.id("eventPlans"),
+    communityId: v.id("communities"),
+    // Legacy single-value columns (pre multi-assign). Optional during migration.
+    teamId: v.optional(v.id("teams")),
+    roleId: v.optional(v.id("teamRoles")), // legacy: null => team-level task
+    // Multi-assign columns. `teamIds` >= 1; empty `roleIds` => team-level task.
+    teamIds: v.optional(v.array(v.id("teams"))),
+    roleIds: v.optional(v.array(v.id("teamRoles"))),
+    segment: v.union(
+      v.literal("before"),
+      v.literal("during"),
+      v.literal("after"),
+    ),
+    title: v.string(), // short high-level description
+    howToType: v.union(
+      v.literal("none"),
+      v.literal("text"),
+      v.literal("link"),
+      v.literal("media"),
+      v.literal("doc"),
+    ),
+    howToText: v.optional(v.string()),
+    howToUrl: v.optional(v.string()),
+    howToMediaPath: v.optional(v.string()), // r2: path
+    howToDoc: v.optional(v.string()), // markdown source
+    sortOrder: v.number(),
+    /**
+     * Event-templates linkage (Phase 3). Set => this task was materialized from
+     * the task-template item with this id. SYNCED (`templateDetached` falsy)
+     * rows are updated/deleted by propagation to match the template; OVERRIDDEN
+     * rows (`templateDetached` true, set on a local edit) are left alone. Tasks
+     * with no `sourceTemplateItemId` are plain local additions.
+     */
+    sourceTemplateItemId: v.optional(v.id("eventTaskTemplateItems")),
+    templateDetached: v.optional(v.boolean()),
+    createdById: v.id("users"),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_plan", ["planId"])
+    .index("by_plan_segment", ["planId", "segment"]),
+
+  /**
+   * A per-user completion record for an event task. "during" tasks are
+   * completed per service time, so `timeLabel` distinguishes those; "before" /
+   * "after" tasks leave it unset.
+   */
+  eventTaskCompletions: defineTable({
+    taskId: v.id("eventTasks"),
+    planId: v.id("eventPlans"),
+    communityId: v.id("communities"),
+    userId: v.id("users"),
+    timeLabel: v.optional(v.string()), // set only for "during" tasks (per service time)
+    completedAt: v.number(),
+  })
+    .index("by_task", ["taskId"])
+    .index("by_task_user", ["taskId", "userId"])
+    .index("by_plan_user", ["planId", "userId"]),
+
+  /**
+   * Ad-hoc, single-user serving tasks a user adds for themselves in serving
+   * mode. These are personal-only: they never affect the shared template
+   * (`eventTasks`) and are NOT copied when a plan is duplicated. Completion is
+   * inline (`completedAt`) since only one user ever sees the row.
+   */
+  personalServingTasks: defineTable({
+    planId: v.id("eventPlans"),
+    communityId: v.id("communities"),
+    userId: v.id("users"),
+    segment: v.union(
+      v.literal("before"),
+      v.literal("during"),
+      v.literal("after"),
+    ),
+    title: v.string(),
+    note: v.optional(v.string()),
+    timeLabel: v.optional(v.string()), // for "during" tasks at a specific service time
+    sortOrder: v.number(),
+    completedAt: v.optional(v.number()), // inline completion (single user, no separate table)
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_plan_user", ["planId", "userId"]),
+
+  /**
+   * Per-user checked state for the interactive checklist inside a serving
+   * task's "doc" How-To. One row per (user, task) holding the set of checked
+   * checklist-item indices (positional, in document order). This is personal —
+   * each volunteer sees only their own checks — and never mutates the shared
+   * `howToDoc` markdown itself.
+   */
+  howToDocChecks: defineTable({
+    userId: v.id("users"),
+    taskId: v.id("eventTasks"),
+    // Content-based keys for the checked items (a stable hash of the item's
+    // text + its occurrence, so checks survive reordering the doc). Replaces the
+    // old positional-index scheme.
+    checkedKeys: v.array(v.string()),
+    updatedAt: v.number(),
+  })
+    .index("by_user_task", ["userId", "taskId"])
+    // Scan a task's checks (across users) so task/plan deletion can cascade.
+    .index("by_task", ["taskId"]),
+
+  /**
+   * Team-WIDE completion of a team-level event task (the "Shared" serving
+   * surface). Unlike `eventTaskCompletions` (per-user), this is a single shared
+   * state per task: any confirmed member of the task's team may mark the task
+   * done for the whole team, and a row's mere existence means "done". Only used
+   * for team-level tasks (`eventTasks.roleId == null`); one row per task, keyed
+   * by `taskId`. `completedByUserId` records who last flipped it done (for a
+   * "completed by …" label). Deleting the row un-completes the task.
+   */
+  sharedTaskCompletions: defineTable({
+    taskId: v.id("eventTasks"),
+    planId: v.id("eventPlans"),
+    communityId: v.id("communities"),
+    completedByUserId: v.id("users"),
+    completedAt: v.number(),
+  })
+    .index("by_task", ["taskId"])
+    .index("by_plan", ["planId"]),
+
+  /**
+   * A reusable, per-GROUP event-task template — a named, saved checklist of
+   * `eventTaskTemplateItems` a leader can keep for a location and later apply to
+   * a plan's `eventTasks`. Named `eventTaskTemplates` (not `taskTemplates`, which
+   * is a separate feature) to avoid a table collision. Scoped to one campus group
+   * (mirrors how cross-team channels / teams are group-scoped); `communityId` is
+   * denormalized for the community read gate. Phase 1 stores the template only —
+   * there is no plan linkage or propagation yet.
+   */
+  eventTaskTemplates: defineTable({
+    groupId: v.id("groups"),
+    communityId: v.id("communities"),
+    name: v.string(),
+    createdById: v.id("users"),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_group", ["groupId"]),
+
+  /**
+   * A single item on an `eventTaskTemplates` template — the template mirror of
+   * `eventTasks` MINUS `planId` (keyed by `templateId` instead) and using ONLY
+   * the multi-assign array model (`teamIds` >= 0, `roleIds` empty => a
+   * team-level task). No legacy single-value `teamId` / `roleId` columns, and no
+   * completion records (templates are never "done" — they seed a plan's tasks).
+   * `sortOrder` orders items WITHIN a segment.
+   */
+  eventTaskTemplateItems: defineTable({
+    templateId: v.id("eventTaskTemplates"),
+    communityId: v.id("communities"),
+    teamIds: v.array(v.id("teams")),
+    roleIds: v.array(v.id("teamRoles")),
+    segment: v.union(
+      v.literal("before"),
+      v.literal("during"),
+      v.literal("after"),
+    ),
+    title: v.string(),
+    howToType: v.union(
+      v.literal("none"),
+      v.literal("text"),
+      v.literal("link"),
+      v.literal("media"),
+      v.literal("doc"),
+    ),
+    howToText: v.optional(v.string()),
+    howToUrl: v.optional(v.string()),
+    howToMediaPath: v.optional(v.string()), // r2: path
+    howToDoc: v.optional(v.string()), // markdown source
+    sortOrder: v.number(),
+    createdById: v.id("users"),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_template", ["templateId"])
+    .index("by_template_segment", ["templateId", "segment"]),
+
+  /**
+   * A reusable, per-GROUP run-sheet template — a named, saved order-of-items of
+   * `runSheetTemplateItems` a leader can keep for a location and later apply to a
+   * plan's `eventItems`. Group-scoped, with `communityId` denormalized for the
+   * community read gate. Phase 1 stores the template only (no plan linkage or
+   * propagation yet).
+   */
+  runSheetTemplates: defineTable({
+    groupId: v.id("groups"),
+    communityId: v.id("communities"),
+    name: v.string(),
+    createdById: v.id("users"),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_group", ["groupId"]),
+
+  /**
+   * A single item on a `runSheetTemplates` template — the template mirror of
+   * `eventItems` MINUS `planId` (keyed by `templateId` instead). Same segment +
+   * `sequence` ordering, notes, role `assignments`, and library `songId` join as
+   * a real run sheet item. Clock times are never stored (durations cascade
+   * client-side), matching `eventItems`.
+   */
+  runSheetTemplateItems: defineTable({
+    templateId: v.id("runSheetTemplates"),
+    communityId: v.id("communities"),
+    /** "before" | "during" | "after"; optional, treated as "during" if absent. */
+    segment: v.optional(v.string()),
+    /** Ordering within the segment; reordering rewrites these. */
+    sequence: v.number(),
+    /** "song" | "header" | "media" | "item" (mirrors PCO vocabulary). */
+    type: v.string(),
+    title: v.string(),
+    description: v.optional(v.string()),
+    durationSec: v.number(),
+    notes: v.optional(
+      v.array(v.object({ category: v.string(), content: v.string() })),
+    ),
+    assignments: v.optional(v.array(v.object({ roleId: v.id("teamRoles") }))),
+    songDetails: v.optional(
+      v.object({
+        key: v.optional(v.string()),
+        bpm: v.optional(v.number()),
+        author: v.optional(v.string()),
+      }),
+    ),
+    songId: v.optional(v.id("songs")),
+    createdById: v.id("users"),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_template", ["templateId"])
+    // Scan items referencing a song so deleteSong can null them out (ADR-027).
+    .index("by_song", ["songId"]),
+
+  /**
+   * Per-community song library (ADR-027). A song lives once and is referenced
+   * by run sheet `eventItems` via `songId`, so editing its charts/metadata
+   * updates every plan that uses it (no copied-string drift). `ccliNumber` is
+   * the worship world's universal song ID, stored as plain metadata — there is
+   * no live CCLI/MultiTracks integration. Charts are key-specific files in the
+   * existing R2 document pipeline (`functions/uploads.ts`); `multitracksUrl` is
+   * a link-out, never re-hosted audio.
+   *
+   * TODO: cascade songs on community delete — there is no central
+   * community-deletion cascade in the codebase today (eventPlans/eventItems
+   * aren't cascaded either), so `songs` follows the same (absent) pattern. Add
+   * `songs` to that cascade if/when one lands.
+   */
+  songs: defineTable({
+    communityId: v.id("communities"),
+    title: v.string(),
+    author: v.optional(v.string()),
+    /** Universal song ID; the join key for a future Phase-3 integration. */
+    ccliNumber: v.optional(v.string()),
+    defaultKey: v.optional(v.string()),
+    bpm: v.optional(v.number()),
+    meter: v.optional(v.string()),
+    arrangementName: v.optional(v.string()),
+    structure: v.optional(v.array(v.string())),
+    /**
+     * Bring-your-own charts (Phase 2). One file per key. `fileKey` is the R2
+     * stored path (e.g. `r2:...`) from the upload pipeline; the served `url` is
+     * resolved on read, never stored.
+     */
+    charts: v.optional(
+      v.array(
+        v.object({
+          key: v.optional(v.string()),
+          label: v.string(),
+          fileKey: v.string(),
+          mimeType: v.string(),
+        }),
+      ),
+    ),
+    multitracksUrl: v.optional(v.string()),
+    notes: v.optional(v.string()),
+    createdAt: v.number(),
+    createdById: v.id("users"),
+    updatedAt: v.number(),
+  })
+    .index("by_community", ["communityId"])
+    .index("by_community_ccli", ["communityId", "ccliNumber"]),
+
+  /**
+   * A member's self-reported availability for a single event plan (ADR-023
+   * follow-up). This is *intentional availability* — "I am available to serve
+   * this date" — not a block-out calendar. Being available does NOT assign the
+   * member; leaders still decide who serves via `roleAssignments`. The absence
+   * of a row means "no response", which the leader grid renders distinctly from
+   * an explicit "unavailable".
+   *
+   * Keyed per (plan, user): availability is collected at the event-plan level,
+   * not per time-slot. `groupId`/`communityId` are denormalized from the plan
+   * so the dedicated "My Availability" page can scope by group without a join.
+   */
+  eventAvailability: defineTable({
+    planId: v.id("eventPlans"),
+    groupId: v.id("groups"),
+    communityId: v.id("communities"),
+    userId: v.id("users"),
+    status: v.string(), // "available" | "unavailable"
+    note: v.optional(v.string()),
+    respondedAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_plan", ["planId"])
+    .index("by_plan_user", ["planId", "userId"])
+    .index("by_user", ["userId"])
+    .index("by_group_user", ["groupId", "userId"]),
+
+  /**
+   * Debounce bookkeeping for the "member updated their availability" leader
+   * notification. One row per (group, member) holds the pending scheduled
+   * notify job; each availability write cancels and reschedules it, so a burst
+   * of clicks collapses into a single notification that fires once the member
+   * stops (a rolling trailing debounce). Cleared when the job fires.
+   */
+  availabilityNotifyDebounce: defineTable({
+    groupId: v.id("groups"),
+    userId: v.id("users"),
+    communityId: v.id("communities"),
+    jobId: v.id("_scheduled_functions"),
+    // Identity of the currently-scheduled job. The notify job only sends/clears
+    // when its nonce still matches this row, so a stale job that couldn't be
+    // cancelled can't delete a newer replacement row or fire an early/extra
+    // notification.
+    nonce: v.string(),
+    scheduledAt: v.number(),
+  }).index("by_group_user", ["groupId", "userId"]),
+
+  /**
+   * An availability request. Two flavors share this table:
+   *  - **In-chat**: posted into a channel, backed by a `chatMessages` row with
+   *    `contentType: "availability_request"` and `availabilityRequestId`
+   *    pointing here (mirrors the `polls` pattern, flows through chat/push).
+   *  - **Standalone link**: created with no `channelId`, shared as a public web
+   *    URL (`/a/<publicToken>`) that works WITHOUT the app. A guest enters their
+   *    name + phone and marks availability; the response is matched to their
+   *    account when they later sign up and verify that phone (placeholder-claim
+   *    path), exactly like guest invites.
+   *
+   * Either way the card/page lists a snapshot of the group's upcoming event
+   * plans (`planIds`, captured at creation, date-ordered) and responses are
+   * stored in `eventAvailability`. Every request gets a `publicToken` so it is
+   * always shareable as a link, whether or not it was also posted to chat.
+   */
+  availabilityRequests: defineTable({
+    /** Set for in-chat requests; absent for standalone link-only requests. */
+    channelId: v.optional(v.id("chatChannels")),
+    /** Back-pointer to the host message. Set after the message is inserted. */
+    messageId: v.optional(v.id("chatMessages")),
+    groupId: v.id("groups"),
+    communityId: v.id("communities"),
+    authorId: v.id("users"),
+    /** Optional leader note shown above the event list on the card. */
+    message: v.optional(v.string()),
+    /** Snapshot of the event plans this request asks about, in date order. */
+    planIds: v.array(v.id("eventPlans")),
+    /** Unguessable token for the public `/a/<token>` web link. */
+    publicToken: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index("by_channel", ["channelId"])
+    .index("by_message", ["messageId"])
+    .index("by_public_token", ["publicToken"]),
+
+  // =============================================================================
+  // PRAYERS (Church feature, gated by communities.churchFeatures.prayerEnabled)
+  // =============================================================================
+
+  /**
+   * A single prayer request posted by a community member.
+   *
+   * Anonymity contract: `authorUserId` is ALWAYS stored so the author can
+   * receive notifications when others pray for them, but `feed`/`getDetail`
+   * NEVER expose it when `isAnonymous` is true — not even to community admins.
+   * The single chokepoint is `stripAuthor()` in functions/prayers.ts.
+   */
+  prayers: defineTable({
+    communityId: v.id("communities"),
+    authorUserId: v.id("users"),
+    isAnonymous: v.boolean(),
+    bodyText: v.string(),
+    status: v.union(
+      v.literal("active"),
+      v.literal("answered"),
+      v.literal("archived"),
+    ),
+    // Denormalized count, source of truth is `prayerResponses`. Indexed so
+    // the feed query can sort cheaply by "needs prayer most" (fewest first).
+    prayedForCount: v.number(),
+    // Tiered moderation outcome:
+    //   pending          — newly inserted; LLM hasn't responded yet.
+    //                      Hidden from feed so borderline content never leaks
+    //                      in the 1-5s before the LLM resolves.
+    //   approved         — green: safe to publish.
+    //   pending_review   — yellow: held for community admin to approve/reject.
+    //                      Hidden from feed; visible in admin queue.
+    //   rejected         — red: never publishes, author sees a reason.
+    moderationStatus: v.union(
+      v.literal("pending"),
+      v.literal("approved"),
+      v.literal("pending_review"),
+      v.literal("rejected"),
+    ),
+    // Crisis flag is independent of severity — a prayer can be APPROVED + flagged
+    // (the "show resources, don't suppress" pattern from 7 Cups / Crisis Text
+    // Line). When true, viewers see a 988 / Find-a-Helpline resource card
+    // attached above the body.
+    crisisFlag: v.optional(v.boolean()),
+    // Detail surfaced to author (transparency) and to admins (review queue).
+    // Never sent to other viewers.
+    moderationDetail: v.optional(
+      v.object({
+        severity: v.union(v.literal("green"), v.literal("yellow"), v.literal("red")),
+        category: v.optional(v.string()),
+        note: v.optional(v.string()),
+      }),
+    ),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    archivedAt: v.optional(v.number()),
+    // When the prayer's moderationStatus most recently flipped to "approved".
+    // Used by the daily-digest cron to count "new since last digest" by
+    // publish time rather than creation time — a prayer held in
+    // pending_review across a digest boundary still surfaces to members
+    // once an admin approves it. Falls back to createdAt for any pre-
+    // migration row that has no approvedAt yet.
+    approvedAt: v.optional(v.number()),
+  })
+    .index("by_community", ["communityId"])
+    .index("by_author", ["authorUserId"])
+    // Powers the feed: active+APPROVED prayers sorted by count asc (fewest
+    // prayers first). The moderation predicate is in the index, not a
+    // post-filter — without it, pending/rejected rows (which are also
+    // `status: "active"`) can fill the candidate window and starve
+    // approved prayers from ever being seen.
+    .index("by_community_status_modStatus_count", [
+      "communityId",
+      "status",
+      "moderationStatus",
+      "prayedForCount",
+    ])
+    // Powers the admin review queue: pending_review prayers per community.
+    .index("by_community_moderationStatus", ["communityId", "moderationStatus"]),
+
+  /**
+   * A single 3-minute prayer session a user completed for a prayer.
+   * Uniqueness on (prayerId, userId) is enforced in the mutation by
+   * checking `by_prayer_user` before inserting.
+   */
+  prayerResponses: defineTable({
+    prayerId: v.id("prayers"),
+    userId: v.id("users"),
+    // Denormalized so per-community counts (today/week pill) don't have
+    // to load every prayer doc to check membership. Optional only to
+    // accommodate any pre-migration rows; new inserts always set it.
+    communityId: v.optional(v.id("communities")),
+    prayedAt: v.number(),
+  })
+    .index("by_prayer", ["prayerId"])
+    .index("by_user", ["userId"])
+    .index("by_prayer_user", ["prayerId", "userId"])
+    // Powers `myPrayedThisWeekCount` scoped per community.
+    .index("by_user_community", ["userId", "communityId"]),
+
+  /**
+   * Author-posted follow-ups on a prayer: updates and "praise reports"
+   * (celebrating answered prayer). Visible to everyone who prayed.
+   */
+  prayerFollowUps: defineTable({
+    prayerId: v.id("prayers"),
+    authorUserId: v.id("users"),
+    kind: v.union(v.literal("update"), v.literal("praise_report")),
+    bodyText: v.string(),
+    createdAt: v.number(),
+  }).index("by_prayer", ["prayerId"]),
+
+  /**
+   * Lightweight emoji reactions on a prayer request or one of its follow-ups
+   * (updates / praise reports). Mirrors `chatMessageReactions`, but because a
+   * reaction can target two different row kinds, the target is polymorphic:
+   * `targetType` picks the table and `targetId` holds the string id of a
+   * `prayers` or `prayerFollowUps` row. One row per (target, user, emoji);
+   * uniqueness is enforced in the mutation via `by_target_user`. `emoji` is
+   * validated against a server-side allowlist before insert.
+   *
+   * `communityId` is denormalized for scoping and to make cleanup/queries
+   * cheap without joining back through the prayer.
+   */
+  prayerReactions: defineTable({
+    communityId: v.id("communities"),
+    targetType: v.union(v.literal("prayer"), v.literal("followUp")),
+    targetId: v.string(), // a prayers._id or prayerFollowUps._id
+    userId: v.id("users"),
+    emoji: v.string(),
+    createdAt: v.number(),
+  })
+    .index("by_target", ["targetType", "targetId"])
+    .index("by_target_user", ["targetType", "targetId", "userId"]),
+
+  /**
+   * Member-filed reports against a published prayer — the last-line
+   * defense after our LLM and any author-side nudges. Each report is one
+   * (prayer, reporter) pair; we enforce uniqueness in the mutation via
+   * `by_prayer_reporter`. `communityId` is denormalized so admins can
+   * query their queue without joining through prayers.
+   *
+   * Status:
+   *   open      — visible in admin queue.
+   *   actioned  — admin took action (typically rejected the prayer).
+   *   dismissed — admin reviewed and chose to leave the prayer up.
+   */
+  prayerReports: defineTable({
+    prayerId: v.id("prayers"),
+    communityId: v.id("communities"),
+    reporterUserId: v.id("users"),
+    reason: v.union(
+      v.literal("names_person"),
+      v.literal("intimate_explicit"),
+      v.literal("spam_solicitation"),
+      v.literal("hateful"),
+      v.literal("crisis_needs_resources"),
+      v.literal("other"),
+    ),
+    customNote: v.optional(v.string()),
+    status: v.union(
+      v.literal("open"),
+      v.literal("actioned"),
+      v.literal("dismissed"),
+    ),
+    createdAt: v.number(),
+  })
+    .index("by_prayer", ["prayerId"])
+    .index("by_reporter", ["reporterUserId"])
+    // Admin queue: open reports in this community, oldest first.
+    .index("by_community_status", ["communityId", "status"])
+    // Uniqueness check inside reportPrayer.
+    .index("by_prayer_reporter", ["prayerId", "reporterUserId"]),
+
+  // =============================================================================
+  // PRAYER NOTIFICATION PREFERENCES + CRON STATE
+  // =============================================================================
+
+  /**
+   * Per-(user, community) prayer notification preferences.
+   *
+   * `masterEnabled: false` short-circuits every prayer notification path for
+   * this user — it's the bell-off toggle surfaced on the prayer page.
+   *
+   * Per-type fields are optional; `undefined` means "use the type's default"
+   * (every prayer type defaults to ON in v1). Reading code applies the
+   * default — we never write defaults eagerly so flipping the global
+   * default later doesn't require a backfill.
+   */
+  userPrayerNotificationPreferences: defineTable({
+    userId: v.id("users"),
+    communityId: v.id("communities"),
+    masterEnabled: v.boolean(),
+    prayedFor: v.optional(v.boolean()),
+    update: v.optional(v.boolean()),
+    praiseReport: v.optional(v.boolean()),
+    dailyDigest: v.optional(v.boolean()),
+    mondayNudge: v.optional(v.boolean()),
+    updateNudge: v.optional(v.boolean()),
+    updatedAt: v.number(),
+  }).index("by_user_community", ["userId", "communityId"]),
+
+  /**
+   * Per-(user, community) cron scheduling state for prayer notifications.
+   * Separated from the prefs table because it's high-write — keeping it on
+   * the prefs row would churn its `_creationTime` and invalidate any cache
+   * on every cron send.
+   *
+   * Dedup keys:
+   *   - dailyDigestLastSentDateKey: UTC YYYY-MM-DD of last digest sent
+   *   - mondayNudgeLastSentWeekKey: ISO year+week of last Monday nudge sent
+   */
+  userPrayerNotificationState: defineTable({
+    userId: v.id("users"),
+    communityId: v.id("communities"),
+    dailyDigestLastSentDateKey: v.optional(v.string()),
+    dailyDigestLastSentAt: v.optional(v.number()),
+    mondayNudgeLastSentWeekKey: v.optional(v.string()),
+    mondayNudgeLastSentAt: v.optional(v.number()),
+  }).index("by_user_community", ["userId", "communityId"]),
+
+  /**
+   * Per-prayer one-shot tracking for notification events that fire at most
+   * once per prayer (e.g. T+14d update nudge). Insertion is the "lock" —
+   * the cron looks up `by_prayer_type` before sending and inserts on send.
+   */
+  prayerNotificationEvents: defineTable({
+    prayerId: v.id("prayers"),
+    type: v.string(),
+    sentAt: v.number(),
+  }).index("by_prayer_type", ["prayerId", "type"]),
+
+  /**
+   * Lightweight live presence for the roster grid (#477) — "who else is
+   * viewing/editing this roster right now". Convex-native: a heartbeat row per
+   * (gridKey, user), refreshed every few seconds by the client; a reactive
+   * `listViewers` query returns whoever's row is within the staleness window.
+   * No external presence service.
+   *
+   * `gridKey` is the rostering group's id as a string — the grid is scoped per
+   * campus group (`rosterMatrix({ groupId })`), so the group id is the natural
+   * stable grid scope. `name`/`avatarUrl` are denormalized from the user at
+   * heartbeat time so `listViewers` needs no per-row user join. Staleness is
+   * enforced read-side in `listViewers` (rows older than the window are
+   * filtered out), so a missed `leave` self-heals; a cleanup cron is optional.
+   */
+  rosterPresence: defineTable({
+    /** The grid scope — the rostering group's id, as a string. */
+    gridKey: v.string(),
+    userId: v.id("users"),
+    /** Unix ms of the last heartbeat. Drives the staleness filter. */
+    lastSeenAt: v.number(),
+    /** Denormalized display name (snapshot at heartbeat). */
+    name: v.string(),
+    /** Denormalized resolved avatar URL, if any (snapshot at heartbeat). */
+    avatarUrl: v.optional(v.string()),
+  })
+    .index("by_gridKey", ["gridKey"])
+    .index("by_gridKey_user", ["gridKey", "userId"]),
+
+  /**
+   * Provenance for an R2 object key: who it was minted for.
+   *
+   * Written by both producers of `r2:` keys — functions/uploads.ts's
+   * getR2UploadUrl / getR2FileUploadUrl (at presign time, before the bytes
+   * exist) and lib/r2.ts's putR2Object when a server-side upload names the
+   * member it is for via `grantTo`. Server-side uploads that belong to the
+   * system rather than a person (PCO song files, dev-assistant config) pass
+   * nothing on purpose: no row means nobody can claim the key.
+   *
+   * WHY: an `r2:<key>` string is just a string. Any caller can put any
+   * `r2:` value into a field that stores one, so a feature that treats the
+   * key as evidence ("here is MY receipt") has no way to tell an object the
+   * caller uploaded from one they merely learned the key of — e.g. from
+   * another member's expense receipt URL. This table is the record that says
+   * who the key was minted for, so those features can check.
+   *
+   * Consumed today by `submitExpense` (functions/finance/expenses.ts), which
+   * refuses a reimbursement receipt whose key wasn't minted for the
+   * submitter. A key with NO row (minted before this table existed, or whose
+   * best-effort grant write failed) is refused too, with a message that asks
+   * the member to re-attach the photo rather than accusing them — the fix is
+   * one re-upload, and expenses already stored are unaffected because the
+   * check runs only at submit.
+   */
+  uploadGrants: defineTable({
+    /** The `r2:<key>` storage path exactly as returned to the client. */
+    storagePath: v.string(),
+    userId: v.id("users"),
+    folder: v.string(),
+    contentType: v.string(),
+    createdAt: v.number(), // Unix timestamp ms
+  })
+    .index("by_storagePath", ["storagePath"])
+    .index("by_user", ["userId"]),
+
+  // =============================================================================
+  // GROUP GIVING (ADR-032) — Stripe (acquiring) + Increase (banking) + our own
+  // append-only ledger for attribution/audit. See docs/architecture/decisions/
+  // ADR-032-group-giving.md for the full design. All money amounts are integer
+  // cents. Provider object ids (Stripe/Increase) are optional throughout: the
+  // ADR's onboarding status machine ("collecting" -> "verifying" -> "live")
+  // only accumulates them progressively as each provider's setup step
+  // completes, so a row can legitimately exist before they're known.
+  // =============================================================================
+
+  /**
+   * One row per community. Holds the church's legal/banking identity and the
+   * two provider ids it maps to (Stripe connected account for acquiring,
+   * Increase Entity for banking) plus the receiving Account Stripe pays out
+   * to. `onboardingStatus` is the monotonic status machine from ADR-032 §2;
+   * `stripe_blocked` / `increase_blocked` are side states surfaced as "needs
+   * attention" with the provider's remediation reason (not stored here — read
+   * live from the provider when displaying the checklist).
+   */
+  communityFinance: defineTable({
+    communityId: v.id("communities"),
+    stripeConnectedAccountId: v.optional(v.string()),
+    increaseEntityId: v.optional(v.string()),
+    increaseReceivingAccountId: v.optional(v.string()),
+    onboardingStatus: v.union(
+      v.literal("collecting"),
+      v.literal("verifying"),
+      v.literal("live"),
+      v.literal("stripe_blocked"),
+      v.literal("increase_blocked"),
+    ),
+    // Human-readable reason when provisionProviders itself failed (a provider
+    // API error before any webhook exists to explain it) — surfaced on the
+    // onboarding checklist so admins aren't stuck staring at "In progress".
+    // Cleared on resubmit/retry.
+    provisioningError: v.optional(v.string()),
+    // Which card issuer this community's cards live at (ADR-033). Absent means
+    // "never chosen", which the resolver (lib/finance/cardProviders/index.ts)
+    // reads as "increase" for any community that already has Increase ids —
+    // every community that exists today. "none" is the explicit opt-out for a
+    // community that takes giving but issues no cards; it is a different fact
+    // from "not chosen yet" and the resolver throws on it rather than guessing.
+    cardProvider: v.optional(
+      v.union(
+        v.literal("increase"),
+        v.literal("privacy"),
+        v.literal("bill"),
+        v.literal("none"),
+      ),
+    ),
+    // Appears on the donor's card/bank statement. Optional — Stripe defaults
+    // it from the connected account if the community hasn't set one.
+    statementDescriptor: v.optional(v.string()),
+    legalName: v.string(),
+    ein: v.string(),
+    website: v.optional(v.string()),
+    address: v.object({
+      addressLine1: v.string(),
+      addressLine2: v.optional(v.string()),
+      city: v.string(),
+      state: v.string(),
+      zipCode: v.string(),
+    }),
+    createdAt: v.number(), // Unix timestamp ms
+    updatedAt: v.number(), // Unix timestamp ms
+  }).index("by_community", ["communityId"]),
+
+  /**
+   * A community's own account at a third-party card issuer (ADR-033) — the
+   * "bring your own cards" leg, where the community holds the vendor
+   * relationship and Togather drives it on their behalf.
+   *
+   * CREDENTIALS ARE ENCRYPTED, ALWAYS. `credentialCiphertext` /
+   * `credentialIv` / `keyVersion` are the output of
+   * lib/finance/credentialCrypto.ts's `encryptCredential`, never a raw API
+   * key. This is the one hard difference from `communityIntegrations`, which
+   * stores its tokens in plaintext and is deliberately NOT reused here: a key
+   * on this table can move a church's money.
+   *
+   * `syncCursor` / `lastSyncAt` belong to the pull-based providers — the ones
+   * with no usable webhook, where a poll has to remember where it stopped.
+   * `lastError` is the operator-facing reason behind `status: "error"`; it is
+   * a provider message, so treat it as untrusted display text.
+   */
+  cardProviderConnections: defineTable({
+    communityId: v.id("communities"),
+    provider: v.union(v.literal("privacy"), v.literal("bill")),
+    credentialCiphertext: v.string(),
+    credentialIv: v.string(),
+    keyVersion: v.number(),
+    // What the admin calls this account ("Operations card account"), shown on
+    // the connection screen. Purely cosmetic — never sent to the provider.
+    accountLabel: v.optional(v.string()),
+    // "error" means the credential stopped working (revoked, rotated, rate-
+    // limited); "revoked" means WE disconnected it and the ciphertext is dead.
+    status: v.union(
+      v.literal("active"),
+      v.literal("error"),
+      v.literal("revoked"),
+    ),
+    // Some providers issue a per-endpoint webhook signing secret at connect
+    // time. Same envelope encryption as the credential, same reason.
+    webhookSecretCiphertext: v.optional(v.string()),
+    webhookSecretIv: v.optional(v.string()),
+    syncCursor: v.optional(v.string()),
+    lastSyncAt: v.optional(v.number()), // Unix timestamp ms
+    lastError: v.optional(v.string()),
+    connectedById: v.id("users"),
+    createdAt: v.number(), // Unix timestamp ms
+    updatedAt: v.number(), // Unix timestamp ms
+  }).index("by_community", ["communityId"]),
+
+  /**
+   * Community-wide financial-controls role (ADR-033 §5). Distinct from
+   * `fundRoles`, which scopes power to ONE fund: this row is what lets
+   * someone act on the community's finance setup itself — onboarding, the
+   * card-provider connection, the surfaces that have no fund to hang off.
+   *
+   * Only the primary admin grants it, and the primary admin's own power is
+   * IMPLICIT — there is no seeded row for them, so revoking every row here
+   * can never lock a community out of its own finances. One literal role for
+   * now (`finance_admin`); it is a union rather than a bare string so adding
+   * a second tier later is a schema change someone has to think about.
+   *
+   * `revokedAt` soft-deletes, matching `fundRoles` — the audit trail of who
+   * held the keys and when outlives the grant.
+   */
+  communityFinanceRoles: defineTable({
+    communityId: v.id("communities"),
+    userId: v.id("users"),
+    role: v.literal("finance_admin"),
+    grantedBy: v.id("users"),
+    grantedAt: v.number(), // Unix timestamp ms
+    revokedAt: v.optional(v.number()), // Unix timestamp ms
+  })
+    .index("by_community", ["communityId"])
+    .index("by_user_community", ["userId", "communityId"]),
+
+  /**
+   * A fund is Togather's own attribution unit: one per group with giving
+   * enabled, plus one "general" fund per community (the community-wide
+   * General Account). `increaseAccountId` is the Increase Account this fund
+   * is bound to — absent until Phase 2 (Increase live) provisions it.
+   * `balanceCents` is a cache derived from `ledgerEntries`, never the source
+   * of truth (see lib/finance/ledger.ts) — the bank balance is authoritative,
+   * per the ADR-032 invariant.
+   */
+  funds: defineTable({
+    communityId: v.id("communities"),
+    groupId: v.optional(v.id("groups")), // Absent for the community's "general" fund
+    name: v.string(),
+    type: v.union(v.literal("group"), v.literal("general")),
+    increaseAccountId: v.optional(v.string()),
+    status: v.union(
+      v.literal("active"),
+      v.literal("frozen"),
+      v.literal("closed"),
+    ),
+    balanceCents: v.number(),
+    createdAt: v.number(), // Unix timestamp ms
+    updatedAt: v.number(), // Unix timestamp ms
+  })
+    .index("by_community", ["communityId"])
+    .index("by_group", ["groupId"])
+    // Webhook lookup: the card-settlement transaction sync (functions/finance/
+    // webhooks.ts's recordCardSettlement) resolves a fund from the Increase
+    // account id on the transaction, to cross-check it against the card's fund.
+    .index("by_increaseAccountId", ["increaseAccountId"]),
+
+  /**
+   * Append-only ledger — the single source of attribution/audit history.
+   * NEVER mutate or delete a row here; balances are always derived by
+   * summing entries (see lib/finance/ledger.ts's `deriveBalance` /
+   * `postLedgerEntry`), and `funds.balanceCents` is only ever a cache of
+   * that derivation. `communityId` is denormalized from the fund at write
+   * time so the nightly reconcile job and community-wide audit views can
+   * query `by_community` without fanning out over every fund first.
+   */
+  ledgerEntries: defineTable({
+    fundId: v.id("funds"),
+    communityId: v.id("communities"), // Denormalized from funds.communityId
+    direction: v.union(v.literal("credit"), v.literal("debit")),
+    amountCents: v.number(),
+    kind: v.union(
+      v.literal("donation"),
+      v.literal("allocation"),
+      v.literal("card_capture"),
+      v.literal("refund"),
+      v.literal("reimbursement"),
+      v.literal("transfer"),
+      v.literal("sweep"),
+      v.literal("fee"),
+    ),
+    stripeObjectId: v.optional(v.string()),
+    increaseObjectId: v.optional(v.string()),
+    // The other leg of a paired transfer/sweep entry (see postPairedTransfer).
+    counterpartFundId: v.optional(v.id("funds")),
+    // Dedupe key for every external write (webhook retries, scheduler
+    // retries). postLedgerEntry treats a repeat key as a no-op.
+    idempotencyKey: v.string(),
+    actorUserId: v.optional(v.id("users")), // Absent for system/webhook-driven entries
+    createdAt: v.number(), // Unix timestamp ms
+  })
+    .index("by_fund", ["fundId", "createdAt"])
+    .index("by_idempotencyKey", ["idempotencyKey"])
+    .index("by_community", ["communityId"]),
+
+  /**
+   * Finance permissions, scoped to a fund rather than a group (ADR-032 §4) —
+   * a trusted treasurer doesn't need to be a group leader, and a leader can't
+   * automatically move money. Ranked cardholder < manager < finance_admin
+   * (see FUND_ROLE_ORDER in lib/helpers.ts). `revokedAt` soft-deletes a grant
+   * without losing the audit trail of who granted/held it.
+   */
+  fundRoles: defineTable({
+    fundId: v.id("funds"),
+    userId: v.id("users"),
+    role: v.union(
+      v.literal("finance_admin"),
+      v.literal("manager"),
+      v.literal("cardholder"),
+    ),
+    grantedBy: v.id("users"),
+    grantedAt: v.number(), // Unix timestamp ms
+    revokedAt: v.optional(v.number()), // Unix timestamp ms
+  })
+    .index("by_fund", ["fundId"])
+    .index("by_user_fund", ["userId", "fundId"]),
+
+  /**
+   * One row per donation PaymentIntent. `allocationStatus` tracks the
+   * Stripe-bulk-payout -> Increase-AccountTransfer allocation job (ADR-032
+   * §3); "n/a" covers donations made before Increase went live for the
+   * community, which never need allocating out of a receiving Account.
+   * "refunded" is terminal and means the donor got the whole gift back, so
+   * nothing will ever be allocated for it — every allocation query selects on
+   * `allocationStatus === "pending"`, so this one flag is what keeps a
+   * refunded gift out of the planner, the retry cron, AND the pending sum.
+   */
+  donations: defineTable({
+    fundId: v.id("funds"),
+    donorUserId: v.optional(v.id("users")), // Absent for anonymous/guest gifts
+    amountCents: v.number(),
+    feeCoverCents: v.number(), // Donor's voluntary fee-cover add-on (never a mandatory surcharge — ADR-031)
+    stripePaymentIntentId: v.string(),
+    allocationStatus: v.union(
+      v.literal("pending"),
+      v.literal("allocated"),
+      v.literal("refunded"),
+      v.literal("n/a"),
+    ),
+    // Stripe's CUMULATIVE `amount_refunded` for this donation's charge, as of
+    // the last `charge.refunded` we processed (giving.ts
+    // recordDonationRefund). Absent means never refunded. Allocation reads it
+    // so a partially-refunded gift is only ever transferred/counted at what
+    // is actually left of it.
+    refundedCents: v.optional(v.number()),
+    // The `recurringDonations` row this gift was billed under, when it came
+    // from a monthly subscription rather than a one-off gift. Reserved: no
+    // code writes it yet — the `invoice.paid` handler that records a monthly
+    // charge as a donation is the PR that starts stamping it, and it will
+    // store that row's `_id` stringified. NOTE: the type stays `v.string()`
+    // rather than `v.id("recurringDonations")` because the field predates the
+    // table and re-typing an existing validator is not an additive schema
+    // change; readers must `ctx.db.get(recurringId as Id<"recurringDonations">)`
+    // and cannot rely on Convex to type- or existence-check the reference.
+    recurringId: v.optional(v.string()),
+    receiptEmailStatus: v.string(), // "pending" | "sent" | "failed" — Resend receipt from the church's name/EIN
+    // The Stripe payout this donation was matched into by planAllocations
+    // (functions/finance/jobs.ts). Stamped once, at plan time, and never
+    // re-stamped — it is what makes allocation replay-safe per DONATION
+    // rather than per payout: a redelivered `payout.paid` re-processes only
+    // the donations already bound to that payout id and still "pending".
+    // Optional/backfill-safe: donations recorded before net matching shipped
+    // (and any donation not yet paid out) simply have neither field.
+    allocationPayoutId: v.optional(v.string()),
+    // Integer cents allocation will move for this donation out of that
+    // payout: the Stripe balance-transaction NET (gross minus Stripe's
+    // processing fee) — what the bulk payout physically delivered, and
+    // therefore the ceiling on what we can transfer on to the group's
+    // Increase Account — CAPPED at the unrefunded gross. The cap matters when
+    // a partial refund's own balance transaction settles in a different
+    // payout: the charge still appears here at its full net while the ledger
+    // has already taken the refund debit, and transferring the full net would
+    // move money the donor got back (jobs.ts `allocationAmountCents`). The
+    // gross (amountCents + feeCoverCents) is what the ledger credited at
+    // donation time; the difference is posted as a "fee" debit once the
+    // allocation transfer lands (see jobs.ts recordAllocation).
+    payoutNetCents: v.optional(v.number()),
+    // LEASE, not a marker: set in the same transaction that selects this
+    // donation for a transfer, and cleared when that transfer resolves either
+    // way. A second pass (a redelivered `payout.paid`, or the hourly retry
+    // cron racing an in-flight `runAllocation`) skips a donation whose lease
+    // is still live, so two passes can never both issue the same
+    // `alloc:{donationId}` transfer concurrently. Stale leases expire after
+    // ALLOCATION_LEASE_TTL_MS (jobs.ts) so a crashed pass can't strand an
+    // item forever.
+    allocationTransferStartedAt: v.optional(v.number()),
+    createdAt: v.number(), // Unix timestamp ms
+  })
+    .index("by_fund", ["fundId"])
+    .index("by_stripePaymentIntentId", ["stripePaymentIntentId"])
+    .index("by_allocationStatus", ["allocationStatus"]),
+
+  /**
+   * A donor's standing monthly gift to a fund — the Stripe Subscription
+   * behind it, not the money it has moved. Individual monthly charges are
+   * recorded as ordinary `donations` rows when `invoice.paid` fires, so the
+   * ledger, receipts, allocation and transparency views all keep working
+   * unchanged and this table never needs a balance of its own. Everything
+   * Stripe-side lives on the community's CONNECTED account (ADR-032 §1) —
+   * the same account one-off donations charge on.
+   *
+   * `communityId` is denormalized from the fund at write time, following
+   * `ledgerEntries`' precedent, so a row carries its community without a
+   * lookup through `funds`. NOTE: there is deliberately no `by_community`
+   * index yet — nothing queries this table community-wide, and an index costs
+   * write throughput on every subscription event. The first community-scoped
+   * read must add one rather than filter the table.
+   */
+  recurringDonations: defineTable({
+    fundId: v.id("funds"),
+    communityId: v.id("communities"), // Denormalized from funds.communityId
+    donorUserId: v.id("users"), // Required: a subscription needs an account to manage/cancel it
+    amountCents: v.number(), // Base monthly gift
+    feeCoverCents: v.number(), // Donor's voluntary fee-cover add-on, billed with each invoice (never a mandatory surcharge — ADR-031)
+    // Absent until Checkout completes — the Subscription doesn't exist while
+    // the donor is still on Stripe's hosted page.
+    stripeSubscriptionId: v.optional(v.string()),
+    // Customer on the CONNECTED account, NOT the platform account. Donors
+    // have no platform Customer at all (only communities do, for SaaS
+    // billing — `communities.stripeCustomerId`), so this id is only ever
+    // meaningful when used with `stripeAccount: stripeConnectedAccountId`.
+    // Absent until Checkout creates the Customer.
+    stripeCustomerId: v.optional(v.string()),
+    stripeConnectedAccountId: v.string(), // The community's Connect account this subscription lives on
+    // Binds the Checkout return (and the completed-session webhook) to this
+    // row in the window before a subscription id exists — it is the only
+    // handle we have between "row created" and "subscription created".
+    checkoutSessionId: v.string(),
+    status: v.union(
+      v.literal("pending"), // Row created, donor still in Checkout
+      v.literal("active"),
+      v.literal("past_due"),
+      v.literal("canceled"), // Terminal
+    ),
+    currentPeriodEnd: v.optional(v.number()), // Unix timestamp ms — next bill date, mirrored from Stripe
+    canceledAt: v.optional(v.number()), // Unix timestamp ms
+    createdAt: v.number(), // Unix timestamp ms
+    updatedAt: v.number(), // Unix timestamp ms
+  })
+    // Webhook entry point: Connect subscription/invoice events identify
+    // themselves by subscription id and nothing else.
+    //
+    // CAUTION: the field is optional, so every `pending` row shares the same
+    // missing value on this index. `q.eq("stripeSubscriptionId", undefined)`
+    // matches all of them, which means a lookup with an absent id would
+    // return an arbitrary stranger's pending subscription. Every reader MUST
+    // guard on a non-empty id before querying this index.
+    .index("by_stripeSubscriptionId", ["stripeSubscriptionId"])
+    // One active monthly gift per donor per fund. Convex has no unique
+    // constraint — this index is only the lookup the create path checks
+    // before starting a second Checkout; the rule lives in that code.
+    .index("by_donor_fund", ["donorUserId", "fundId"])
+    .index("by_fund", ["fundId"]) // Fund's recurring-giving view
+    // Donor's "my giving" management list. Not redundant with by_donor_fund
+    // despite the shared prefix: this one orders a donor's subscriptions by
+    // _creationTime, where by_donor_fund orders by fundId first.
+    .index("by_donor", ["donorUserId"])
+    // Resolves the Checkout return/webhook before stripeSubscriptionId exists.
+    .index("by_checkoutSessionId", ["checkoutSessionId"]),
+
+  /**
+   * An Increase virtual/physical card bound to a fund's Increase Account.
+   * The bank enforces segregation (a card can't overdraw its fund or touch
+   * another fund's balance), so there's no custom authorization decisioner
+   * here — this row is attribution + display (holder, limits, status).
+   */
+  cards: defineTable({
+    fundId: v.id("funds"),
+    holderUserId: v.id("users"),
+    increaseCardId: v.optional(v.string()),
+    // ADR-033 (bring-your-own-cards): which issuer this card was created at,
+    // and its id there. Provider-neutral replacements for `increaseCardId`,
+    // which stays exactly as it is — every card in production today was
+    // created at Increase and is found through `by_increaseCardId`, and
+    // rewriting a live webhook's lookup key is not something an additive
+    // schema change gets to do. New cards write BOTH (provider "increase" +
+    // the same id in both columns); a card at a BYOC provider writes only the
+    // provider pair. See ADR-033 "Phases" for when increaseCardId retires.
+    provider: v.optional(v.string()),
+    providerCardId: v.optional(v.string()),
+    // Display name the finance_admin picked at creation, e.g. "Groceries &
+    // supplies" — shown on the fund's card list, distinct from the holder.
+    name: v.optional(v.string()),
+    // Last 4 digits of the card PAN, echoed back by Increase on creation —
+    // purely for display (e.g. "Groceries •••• 4242"); never the full PAN.
+    last4: v.optional(v.string()),
+    // Mirrors Increase's own card status string (e.g. "active", "canceled",
+    // "frozen") rather than a locally-enumerated union, since we pass it
+    // through from the card-status webhook without reinterpreting it. Also
+    // covers our own pre-provisioning states "pending" (row inserted, the
+    // provisionCard action hasn't returned yet) and "failed" (it errored).
+    status: v.string(),
+    spendLimitCents: v.optional(v.number()),
+    // The period the spend limit covers. Both fields are a MIRROR of a
+    // control Increase actually enforces: cards.ts translates them into
+    // `authorization_controls.usage.multi_use.spending_limits` at card
+    // creation and on every change, and Increase declines authorizations
+    // past the cap without calling us. Reset semantics are Increase's, and
+    // UTC: "week" resets Mondays at midnight UTC, "month" on the 1st,
+    // "charge" applies per authorization (lib/finance/cardPolicy.ts).
+    limitPeriod: v.optional(
+      v.union(v.literal("week"), v.literal("month"), v.literal("charge")),
+    ),
+    controls: v.optional(v.any()), // Merchant-category / velocity controls, provider-shaped
+    createdAt: v.number(), // Unix timestamp ms
+    updatedAt: v.number(), // Unix timestamp ms
+  })
+    .index("by_fund", ["fundId"])
+    .index("by_holder", ["holderUserId"])
+    .index("by_increaseCardId", ["increaseCardId"])
+    // Provider-neutral webhook lookup (ADR-033). CAUTION, same trap as
+    // `recurringDonations.by_stripeSubscriptionId`: both fields are optional,
+    // so every legacy card shares the same missing value on this index and a
+    // query with an absent provider/card id would return an arbitrary
+    // stranger's row. Readers MUST guard on non-empty values before using it.
+    .index("by_provider_cardId", ["provider", "providerCardId"]),
+
+  /**
+   * A card charge (from the card-transaction webhook) or a member-submitted
+   * reimbursement request. Approval guardrails (no self-approval, two-
+   * approver threshold, receipt-required policy) are enforced by the backend
+   * mutations that write `approverId` / `secondApproverId`, not by this
+   * schema — see ADR-032 §4.
+   */
+  expenses: defineTable({
+    fundId: v.id("funds"),
+    submitterId: v.id("users"),
+    amountCents: v.number(),
+    kind: v.union(v.literal("card_charge"), v.literal("reimbursement")),
+    // What the money was for, shown in the approvals queue ("pizza for
+    // outreach night"). Optional: card-charge expenses start with only the
+    // merchant name from the card webhook.
+    description: v.optional(v.string()),
+    // R2 object key. Optional because a card-charge expense is created by the
+    // transaction webhook before the cardholder attaches a receipt (the nudge
+    // flow); reimbursements always have one at submission.
+    receiptKey: v.optional(v.string()),
+    status: v.union(
+      v.literal("pending"),
+      v.literal("approved"),
+      v.literal("denied"),
+      v.literal("paid"),
+    ),
+    approverId: v.optional(v.id("users")),
+    secondApproverId: v.optional(v.id("users")), // Set only when the two-approver threshold applies
+    increaseTransferId: v.optional(v.string()), // Set once the reimbursement ACH transfer is initiated
+    // Set only for kind "card_charge" — the card whose swipe created this
+    // expense (functions/finance/webhooks.ts's recordCardSettlement).
+    cardId: v.optional(v.id("cards")),
+    // Increase transaction id backing a card_charge expense — dedupe key so a
+    // redelivered transaction.created webhook doesn't create a second
+    // expense for the same swipe (see by_increaseTransactionId below).
+    increaseTransactionId: v.optional(v.string()),
+    createdAt: v.number(), // Unix timestamp ms
+    updatedAt: v.number(), // Unix timestamp ms
+  })
+    .index("by_fund_status", ["fundId", "status"])
+    .index("by_submitter", ["submitterId"])
+    .index("by_increaseTransferId", ["increaseTransferId"])
+    .index("by_card", ["cardId"])
+    // Card charges inside one spend-limit window. `by_card` alone can only be
+    // read whole, and the over-limit drift check (webhooks.ts's
+    // `auditOverLimitCardCharge`) would then grow with a card's entire
+    // lifetime history until it hit Convex's read limits. The window is a
+    // time range, so `createdAt` has to be in the index for it to be bounded.
+    .index("by_card_created", ["cardId", "createdAt"])
+    .index("by_increaseTransactionId", ["increaseTransactionId"]),
+
+  /**
+   * One row per Stripe payout that has had an allocation pass run against
+   * it — a record of when the payout was first seen, plus the payout amount
+   * we matched against.
+   *
+   * This used to be the ONLY replay protection: a redelivered `payout.paid`
+   * was dropped outright, because the old gross-total matcher would have
+   * grabbed the NEXT pending donations on a re-plan and moved money the
+   * payout never contained (Codex review, PR #653). That also meant a
+   * partially-failed pass could never be retried. Replay protection now
+   * lives on the donation rows themselves (`donations.allocationPayoutId` —
+   * matched by Stripe payment-intent id out of the payout's own balance
+   * transactions, so a re-plan can only ever re-select the SAME donations),
+   * which makes a redelivery a safe resume of the unfinished items. This row
+   * remains as the audit/bookkeeping record of the FIRST pass over a payout
+   * (`payoutCents` is never re-written by a later pass — the per-pass detail
+   * lives in `financeAuditEvents` instead).
+   */
+  processedStripePayouts: defineTable({
+    communityId: v.id("communities"),
+    stripePayoutId: v.string(),
+    payoutCents: v.number(),
+    processedAt: v.number(), // Unix timestamp ms
+  })
+    .index("by_payout", ["stripePayoutId"])
+    .index("by_community", ["communityId"]),
+
+  /**
+   * Immutable audit trail for every non-ledger finance action (ADR-032 §4).
+   * Money movement is already fully audited by append-only ledgerEntries;
+   * this table covers the control plane: role grants/revocations, card
+   * issue/freeze/limit changes, expense approvals/denials, onboarding status
+   * transitions, and fund freezes/closures. Rows are never patched or
+   * deleted. Write via logFinanceAudit() in lib/finance/audit.ts.
+   */
+  financeAuditEvents: defineTable({
+    communityId: v.id("communities"),
+    fundId: v.optional(v.id("funds")),
+    // Undefined actor = system action (webhook, cron), named in detailsJson.
+    actorUserId: v.optional(v.id("users")),
+    // Dot-namespaced, e.g. "role.granted", "card.frozen", "expense.approved",
+    // "onboarding.status_changed", "fund.swept".
+    action: v.string(),
+    // JSON-encoded context (before/after values, target user, amounts).
+    // Stored as a string so the shape can evolve without schema migrations.
+    detailsJson: v.optional(v.string()),
+    createdAt: v.number(), // Unix timestamp ms
+  })
+    .index("by_community", ["communityId", "createdAt"])
+    .index("by_fund", ["fundId", "createdAt"]),
 });

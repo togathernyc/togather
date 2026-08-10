@@ -740,6 +740,63 @@ describe("Channel Updates", () => {
 
     expect(afterUpdate?.updatedAt).toBeGreaterThan(beforeUpdate?.updatedAt || 0);
   });
+
+  test("should set and clear the composer hint", async () => {
+    const t = convexTest(schema, modules);
+    const { groupId, communityId } = await seedTestData(t);
+    const { accessToken: leaderToken } = await createLeaderUser(t, communityId, groupId);
+
+    const channelId = await t.mutation(api.functions.messaging.channels.createChannel, {
+      token: leaderToken,
+      groupId,
+      channelType: "main",
+      name: "General",
+    });
+
+    // Set a hint (and confirm surrounding whitespace is trimmed).
+    await t.mutation(api.functions.messaging.channels.updateChannel, {
+      token: leaderToken,
+      channelId,
+      hint: "  put experience updates here  ",
+    });
+
+    let channel = await t.run(async (ctx) => ctx.db.get(channelId));
+    expect(channel?.hint).toBe("put experience updates here");
+
+    // An empty/whitespace value clears the hint back to undefined.
+    await t.mutation(api.functions.messaging.channels.updateChannel, {
+      token: leaderToken,
+      channelId,
+      hint: "   ",
+    });
+
+    channel = await t.run(async (ctx) => ctx.db.get(channelId));
+    expect(channel?.hint).toBeUndefined();
+  });
+
+  test("should reject a composer hint longer than 100 characters", async () => {
+    const t = convexTest(schema, modules);
+    const { groupId, communityId } = await seedTestData(t);
+    const { accessToken: leaderToken } = await createLeaderUser(t, communityId, groupId);
+
+    const channelId = await t.mutation(api.functions.messaging.channels.createChannel, {
+      token: leaderToken,
+      groupId,
+      channelType: "main",
+      name: "General",
+    });
+
+    await expect(
+      t.mutation(api.functions.messaging.channels.updateChannel, {
+        token: leaderToken,
+        channelId,
+        hint: "x".repeat(101),
+      }),
+    ).rejects.toThrow(/100 characters or fewer/);
+
+    const channel = await t.run(async (ctx) => ctx.db.get(channelId));
+    expect(channel?.hint).toBeUndefined();
+  });
 });
 
 // ============================================================================
@@ -969,6 +1026,182 @@ describe("createCustomChannel", () => {
         name: "Directors",
       })
     ).rejects.toThrow("Only group leaders can create channels");
+  });
+
+  // Regression: event channels (auto-created per meeting, hidden from the
+  // channel list) must NOT count toward the 20-channel creation limit. A group
+  // with many past events would otherwise hit "maximum of 20 channels" while
+  // showing only a few real channels, blocking all manual channel creation.
+  test("event channels do not count toward the 20-channel limit", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId } = await seedTestData(t);
+    const { userId: leaderId, accessToken: leaderToken } = await createLeaderUser(
+      t,
+      communityId,
+      groupId
+    );
+
+    // Seed 25 event channels (more than the limit) plus a couple real ones.
+    await t.run(async (ctx) => {
+      const now = Date.now();
+      for (let i = 0; i < 25; i++) {
+        await ctx.db.insert("chatChannels", {
+          groupId,
+          slug: `event-${i}`,
+          channelType: "event",
+          name: `Event ${i}`,
+          createdById: leaderId,
+          createdAt: now,
+          updatedAt: now,
+          isArchived: false,
+          memberCount: 0,
+        });
+      }
+      await ctx.db.insert("chatChannels", {
+        groupId,
+        slug: "general",
+        channelType: "main",
+        name: "General",
+        createdById: leaderId,
+        createdAt: now,
+        updatedAt: now,
+        isArchived: false,
+        memberCount: 0,
+      });
+    });
+
+    // Creation should still succeed — only the 1 managed channel counts.
+    const result = await t.mutation(
+      api.functions.messaging.channels.createCustomChannel,
+      { token: leaderToken, groupId, name: "LIC Boys" }
+    );
+    expect(result.slug).toBe("lic-boys");
+  });
+
+  // Regression (MH group, 2026-07-27): channels a leader has *hidden*
+  // (`isEnabled: false`) fold into the collapsed "Archived · hidden from
+  // members" section of the channel list, exactly like archived ones. Counting
+  // them against the cap told the leader they were at 20 while the list showed
+  // 8 — with no visible channel left to archive, creation was permanently
+  // blocked. The group carried 12 disabled `pco_services` channels.
+  test("hidden (isEnabled: false) channels do not count toward the 20-channel limit", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId } = await seedTestData(t);
+    const { userId: leaderId, accessToken: leaderToken } =
+      await createLeaderUser(t, communityId, groupId);
+
+    await t.run(async (ctx) => {
+      const now = Date.now();
+      // 18 hidden PCO channels — visible to nobody, but not archived.
+      for (let i = 0; i < 18; i++) {
+        await ctx.db.insert("chatChannels", {
+          groupId,
+          slug: `pco-${i}`,
+          channelType: "pco_services",
+          name: `PCO ${i}`,
+          createdById: leaderId,
+          createdAt: now,
+          updatedAt: now,
+          isArchived: false,
+          isEnabled: false,
+          memberCount: 0,
+        });
+      }
+      await ctx.db.insert("chatChannels", {
+        groupId,
+        slug: "general",
+        channelType: "main",
+        name: "General",
+        createdById: leaderId,
+        createdAt: now,
+        updatedAt: now,
+        isArchived: false,
+        memberCount: 0,
+      });
+    });
+
+    const result = await t.mutation(
+      api.functions.messaging.channels.createCustomChannel,
+      { token: leaderToken, groupId, name: "LIC Boys" }
+    );
+    expect(result.slug).toBe("lic-boys");
+  });
+
+  // Hiding a channel frees a capacity slot, so re-showing one must re-acquire
+  // it. Otherwise a full group could hide a channel, create a replacement,
+  // un-hide the original, and repeat past the cap indefinitely.
+  test("re-enabling a hidden channel is blocked when the group is at the cap", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId } = await seedTestData(t);
+    const { userId: leaderId, accessToken: leaderToken } =
+      await createLeaderUser(t, communityId, groupId);
+
+    const hiddenId = await t.run(async (ctx) => {
+      const now = Date.now();
+      // 20 visible channels — the group is full.
+      for (let i = 0; i < 20; i++) {
+        await ctx.db.insert("chatChannels", {
+          groupId,
+          slug: `visible-${i}`,
+          channelType: "custom",
+          name: `Visible ${i}`,
+          createdById: leaderId,
+          createdAt: now,
+          updatedAt: now,
+          isArchived: false,
+          memberCount: 0,
+        });
+      }
+      // …plus one the leader has hidden, which does not count.
+      return ctx.db.insert("chatChannels", {
+        groupId,
+        slug: "hidden-one",
+        channelType: "custom",
+        name: "Hidden One",
+        createdById: leaderId,
+        createdAt: now,
+        updatedAt: now,
+        isArchived: false,
+        isEnabled: false,
+        memberCount: 0,
+      });
+    });
+
+    await expect(
+      t.mutation(
+        api.functions.messaging.channels.setCustomChannelLeaderEnabled,
+        { token: leaderToken, channelId: hiddenId, enabled: true }
+      )
+    ).rejects.toThrow("maximum of 20 channels");
+  });
+
+  test("re-enabling a hidden channel succeeds when there is room", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId } = await seedTestData(t);
+    const { userId: leaderId, accessToken: leaderToken } =
+      await createLeaderUser(t, communityId, groupId);
+
+    const hiddenId = await t.run(async (ctx) => {
+      const now = Date.now();
+      return ctx.db.insert("chatChannels", {
+        groupId,
+        slug: "hidden-one",
+        channelType: "custom",
+        name: "Hidden One",
+        createdById: leaderId,
+        createdAt: now,
+        updatedAt: now,
+        isArchived: false,
+        isEnabled: false,
+        memberCount: 0,
+      });
+    });
+
+    const result = await t.mutation(
+      api.functions.messaging.channels.setCustomChannelLeaderEnabled,
+      { token: leaderToken, channelId: hiddenId, enabled: true }
+    );
+    expect(result.status).toBe("enabled");
   });
 
   test("enforces 20 channel limit", async () => {
@@ -1934,6 +2167,73 @@ describe("listGroupChannels", () => {
     expect(customChannel?.isMember).toBe(true);
   });
 
+  test("surfaces isServingTeam so serving-team custom channels are distinguishable", async () => {
+    const t = convexTest(schema, modules);
+    const { userId, communityId, groupId, accessToken } = await seedTestData(t);
+    const { userId: leaderId } = await createLeaderUser(t, communityId, groupId);
+
+    // A plain, manually-created custom channel.
+    const plainId = await t.run(async (ctx) => {
+      const chId = await ctx.db.insert("chatChannels", {
+        groupId,
+        slug: "directors",
+        channelType: "custom",
+        name: "Directors",
+        createdById: leaderId,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        isArchived: false,
+        memberCount: 1,
+      });
+      await ctx.db.insert("chatChannelMembers", {
+        channelId: chId,
+        userId,
+        role: "member",
+        joinedAt: Date.now(),
+        isMuted: false,
+      });
+      return chId;
+    });
+
+    // A serving-team custom channel (auto-created from an event plan).
+    const servingId = await t.run(async (ctx) => {
+      const chId = await ctx.db.insert("chatChannels", {
+        groupId,
+        slug: "sunday-band",
+        channelType: "custom",
+        name: "Sunday Band",
+        isServingTeam: true,
+        createdById: leaderId,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        isArchived: false,
+        memberCount: 1,
+      });
+      await ctx.db.insert("chatChannelMembers", {
+        channelId: chId,
+        userId,
+        role: "member",
+        joinedAt: Date.now(),
+        isMuted: false,
+      });
+      return chId;
+    });
+
+    const channels = await t.query(api.functions.messaging.channels.listGroupChannels, {
+      token: accessToken,
+      groupId,
+    });
+
+    const plain = channels.find((c) => c._id === plainId);
+    const serving = channels.find((c) => c._id === servingId);
+
+    expect(plain?.channelType).toBe("custom");
+    expect(plain?.isServingTeam).toBeUndefined();
+
+    expect(serving?.channelType).toBe("custom");
+    expect(serving?.isServingTeam).toBe(true);
+  });
+
   test("hides leader-disabled custom channels from members (group page list)", async () => {
     const t = convexTest(schema, modules);
     const { userId, communityId, groupId, accessToken } = await seedTestData(t);
@@ -1969,6 +2269,61 @@ describe("listGroupChannels", () => {
       groupId,
     });
     expect(leaderChannels.find((c) => c._id === customResult.channelId)).toBeDefined();
+  });
+
+  test("cross-team channels are membership-gated for members, always visible to leaders", async () => {
+    const t = convexTest(schema, modules);
+    const { userId, communityId, groupId, accessToken } = await seedTestData(t);
+    const { userId: leaderId, accessToken: leaderToken } = await createLeaderUser(
+      t,
+      communityId,
+      groupId,
+    );
+
+    const crossChannelId = await t.run((ctx) =>
+      ctx.db.insert("chatChannels", {
+        groupId,
+        communityId,
+        slug: "service-leads",
+        channelType: "cross_team",
+        name: "Service Leads",
+        createdById: leaderId,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        isArchived: false,
+        memberCount: 0,
+      }),
+    );
+
+    // A non-synced regular member does NOT see the cross-team channel.
+    const before = await t.query(
+      api.functions.messaging.channels.listGroupChannels,
+      { token: accessToken, groupId },
+    );
+    expect(before.find((c) => c._id === crossChannelId)).toBeUndefined();
+
+    // A leader always sees it (to manage its synced roles).
+    const leaderChannels = await t.query(
+      api.functions.messaging.channels.listGroupChannels,
+      { token: leaderToken, groupId },
+    );
+    expect(leaderChannels.find((c) => c._id === crossChannelId)).toBeDefined();
+
+    // Once auto-synced in as a member, the regular member sees it too.
+    await t.run((ctx) =>
+      ctx.db.insert("chatChannelMembers", {
+        channelId: crossChannelId,
+        userId,
+        role: "member",
+        joinedAt: Date.now(),
+        isMuted: false,
+      }),
+    );
+    const after = await t.query(
+      api.functions.messaging.channels.listGroupChannels,
+      { token: accessToken, groupId },
+    );
+    expect(after.find((c) => c._id === crossChannelId)).toBeDefined();
   });
 
   test("sorts: main first, leaders second, custom alphabetically", async () => {
@@ -2817,6 +3172,9 @@ describe("toggleMainChannel", () => {
       enabled: true,
     });
 
+    // Re-adding members runs in scheduled batches — drain before asserting count.
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
     const mainAfterOn = await t.run(async (ctx) => {
       return await ctx.db
         .query("chatChannels")
@@ -2827,6 +3185,193 @@ describe("toggleMainChannel", () => {
     });
     expect(mainAfterOn?.isArchived).toBe(false);
     expect(mainAfterOn?.memberCount).toBeGreaterThanOrEqual(2);
+  });
+
+  test("rejects sends to General the instant it is disabled (before async member-clear runs)", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId, accessToken } = await seedTestData(t);
+    const { userId: leaderId, accessToken: leaderToken } = await createLeaderUser(
+      t,
+      communityId,
+      groupId
+    );
+
+    await t.mutation(api.functions.messaging.channels.createChannel, {
+      token: accessToken,
+      groupId,
+      channelType: "main",
+      name: "General",
+    });
+
+    const mainChannel = await t.run(async (ctx) =>
+      ctx.db
+        .query("chatChannels")
+        .withIndex("by_group_type", (q) =>
+          q.eq("groupId", groupId).eq("channelType", "main")
+        )
+        .first()
+    );
+    const channelId = mainChannel!._id;
+
+    // Leader is an active member of General.
+    await t.run(async (ctx) =>
+      ctx.db.insert("chatChannelMembers", {
+        channelId,
+        userId: leaderId,
+        role: "admin",
+        joinedAt: Date.now(),
+        isMuted: false,
+      })
+    );
+
+    // Disable General: archives the channel and schedules
+    // clearChannelMembersBatch. Deliberately do NOT drain — this is the
+    // async-clear window where the leader's membership row is still active.
+    await t.mutation(api.functions.messaging.channels.toggleMainChannel, {
+      token: leaderToken,
+      groupId,
+      enabled: false,
+    });
+
+    // Membership is still active, but the channel is archived — sendMessage
+    // must reject immediately rather than accept a post to a disabled channel.
+    await expect(
+      t.mutation(api.functions.messaging.messages.sendMessage, {
+        token: leaderToken,
+        channelId,
+        content: "Should not go through",
+      })
+    ).rejects.toThrow("This channel is disabled");
+
+    // Drain the scheduled clear so no jobs leak past the test.
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+  });
+});
+
+describe("toggleAnnouncementsChannel", () => {
+  test("leader enabling populates all members via scheduled batches (no read-limit blowup)", async () => {
+    const t = convexTest(schema, modules);
+    const {
+      userId: memberId,
+      communityId,
+      groupId,
+    } = await seedTestData(t);
+    const { userId: leaderId, accessToken: leaderToken } =
+      await createLeaderUser(t, communityId, groupId);
+
+    const res = await t.mutation(
+      api.functions.messaging.channels.toggleAnnouncementsChannel,
+      { token: leaderToken, groupId, enabled: true }
+    );
+    expect(res.status).toBe("enabled");
+    const channelId = res.channelId!;
+
+    // Members are added asynchronously in scheduled batches — drain them.
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const channel = await t.run((ctx) => ctx.db.get(channelId));
+    expect(channel?.channelType).toBe("announcements");
+    expect(channel?.memberCount).toBeGreaterThanOrEqual(2);
+
+    // Regular member is added (so unread counts work) ...
+    const memberRow = await t.run(async (ctx) =>
+      ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", channelId).eq("userId", memberId)
+        )
+        .first()
+    );
+    expect(memberRow?.leftAt).toBeUndefined();
+    expect(memberRow?.role).toBe("member");
+
+    // ... and the leader's channel role mirrors their group role.
+    const leaderRow = await t.run(async (ctx) =>
+      ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", channelId).eq("userId", leaderId)
+        )
+        .first()
+    );
+    expect(leaderRow?.role).toBe("admin");
+  });
+
+  test("enabling leader can post immediately, before the populate batch runs", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId } = await seedTestData(t);
+    const { accessToken: leaderToken } = await createLeaderUser(
+      t,
+      communityId,
+      groupId
+    );
+
+    const res = await t.mutation(
+      api.functions.messaging.channels.toggleAnnouncementsChannel,
+      { token: leaderToken, groupId, enabled: true }
+    );
+    const channelId = res.channelId!;
+
+    // Deliberately do NOT drain the populate batch — this is the window the P2
+    // covers. The enabling leader was added synchronously, so their immediate
+    // post must succeed rather than fail with "Not a member of this channel".
+    const messageId = await t.mutation(
+      api.functions.messaging.messages.sendMessage,
+      { token: leaderToken, channelId, content: "First announcement" }
+    );
+    const message = await t.run((ctx) => ctx.db.get(messageId));
+    expect(message?.channelId).toBe(channelId);
+
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+  });
+});
+
+describe("clearChannelMembersBatch", () => {
+  test("is a no-op on a re-enabled (unarchived) channel — stale clear can't strip active members", async () => {
+    const t = convexTest(schema, modules);
+    const { userId, groupId } = await seedTestData(t);
+
+    // An active (unarchived) main channel with a member — i.e. the state after
+    // a quick disable → re-enable, where a stale clear job is still pending.
+    const channelId = await t.run(async (ctx) =>
+      ctx.db.insert("chatChannels", {
+        groupId,
+        channelType: "main",
+        slug: "general",
+        name: "General",
+        createdById: userId,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        isArchived: false,
+        memberCount: 1,
+      })
+    );
+    await t.run(async (ctx) =>
+      ctx.db.insert("chatChannelMembers", {
+        channelId,
+        userId,
+        role: "member",
+        joinedAt: Date.now(),
+        isMuted: false,
+      })
+    );
+
+    // The stale clear job fires against the now-active channel.
+    await t.mutation(
+      internal.functions.messaging.channels.clearChannelMembersBatch,
+      { channelId, cursor: null }
+    );
+
+    // The member must NOT be soft-deleted.
+    const member = await t.run(async (ctx) =>
+      ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", channelId).eq("userId", userId)
+        )
+        .first()
+    );
+    expect(member?.leftAt).toBeUndefined();
   });
 });
 
@@ -3263,5 +3808,720 @@ describe("updateAutoChannelConfig", () => {
         },
       })
     ).rejects.toThrow(/Only group leaders can update/);
+  });
+});
+
+// ============================================================================
+// Channel Discovery + Mute Tests
+// ============================================================================
+
+describe("listJoinableChannels", () => {
+  test("discoverable defaults to on for custom channels the caller hasn't joined", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId, accessToken } = await seedTestData(t);
+    const { accessToken: leaderToken } = await createLeaderUser(t, communityId, groupId);
+
+    const { channelId } = await t.mutation(
+      api.functions.messaging.channels.createCustomChannel,
+      { token: leaderToken, groupId, name: "Worship Team" }
+    );
+
+    const joinable = await t.query(api.functions.messaging.channels.listJoinableChannels, {
+      token: accessToken,
+      groupId,
+    });
+
+    expect(joinable).toEqual([
+      {
+        channelId,
+        name: "Worship Team",
+        memberCount: 1,
+        joinMode: "open",
+        hasPendingRequest: false,
+      },
+    ]);
+  });
+
+  test("hides channels marked discoverable: false", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId, accessToken } = await seedTestData(t);
+    const { accessToken: leaderToken } = await createLeaderUser(t, communityId, groupId);
+
+    const { channelId } = await t.mutation(
+      api.functions.messaging.channels.createCustomChannel,
+      { token: leaderToken, groupId, name: "Hidden Channel" }
+    );
+
+    await t.run(async (ctx) => {
+      await ctx.db.patch(channelId, { discoverable: false });
+    });
+
+    const joinable = await t.query(api.functions.messaging.channels.listJoinableChannels, {
+      token: accessToken,
+      groupId,
+    });
+
+    expect(joinable).toEqual([]);
+  });
+
+  test("excludes archived channels", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId, accessToken } = await seedTestData(t);
+    const { accessToken: leaderToken } = await createLeaderUser(t, communityId, groupId);
+
+    const { channelId } = await t.mutation(
+      api.functions.messaging.channels.createCustomChannel,
+      { token: leaderToken, groupId, name: "Old Channel" }
+    );
+
+    await t.run(async (ctx) => {
+      await ctx.db.patch(channelId, { isArchived: true });
+    });
+
+    const joinable = await t.query(api.functions.messaging.channels.listJoinableChannels, {
+      token: accessToken,
+      groupId,
+    });
+
+    expect(joinable).toEqual([]);
+  });
+
+  test("excludes leader-disabled channels", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId, accessToken } = await seedTestData(t);
+    const { accessToken: leaderToken } = await createLeaderUser(t, communityId, groupId);
+
+    const { channelId } = await t.mutation(
+      api.functions.messaging.channels.createCustomChannel,
+      { token: leaderToken, groupId, name: "Paused Channel" }
+    );
+
+    await t.run(async (ctx) => {
+      await ctx.db.patch(channelId, { isEnabled: false });
+    });
+
+    const joinable = await t.query(api.functions.messaging.channels.listJoinableChannels, {
+      token: accessToken,
+      groupId,
+    });
+
+    expect(joinable).toEqual([]);
+  });
+
+  test("excludes channels the caller already belongs to", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId, accessToken } = await seedTestData(t);
+    const { accessToken: leaderToken } = await createLeaderUser(t, communityId, groupId);
+
+    const { channelId } = await t.mutation(
+      api.functions.messaging.channels.createCustomChannel,
+      { token: leaderToken, groupId, name: "Already In" }
+    );
+
+    await t.mutation(api.functions.messaging.channels.joinDiscoverableChannel, {
+      token: accessToken,
+      channelId,
+    });
+
+    const joinable = await t.query(api.functions.messaging.channels.listJoinableChannels, {
+      token: accessToken,
+      groupId,
+    });
+
+    expect(joinable).toEqual([]);
+  });
+
+  test("flags a channel with an existing pending request", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId, accessToken } = await seedTestData(t);
+    const { accessToken: leaderToken } = await createLeaderUser(t, communityId, groupId);
+
+    const { channelId } = await t.mutation(
+      api.functions.messaging.channels.createCustomChannel,
+      { token: leaderToken, groupId, name: "Approval Needed" }
+    );
+    await t.mutation(api.functions.messaging.channelInvites.updateJoinMode, {
+      token: leaderToken,
+      channelId,
+      joinMode: "approval_required",
+    });
+
+    await t.mutation(api.functions.messaging.channels.joinDiscoverableChannel, {
+      token: accessToken,
+      channelId,
+    });
+
+    const joinable = await t.query(api.functions.messaging.channels.listJoinableChannels, {
+      token: accessToken,
+      groupId,
+    });
+
+    expect(joinable).toEqual([
+      {
+        channelId,
+        name: "Approval Needed",
+        memberCount: 1,
+        joinMode: "approval_required",
+        hasPendingRequest: true,
+      },
+    ]);
+  });
+
+  test("rejects callers who are not members of the group", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId } = await seedTestData(t);
+
+    const nonMemberId = await t.run(async (ctx) => {
+      return await ctx.db.insert("users", {
+        firstName: "Non",
+        lastName: "Member",
+        phone: "+15555550098",
+        phoneVerified: true,
+        activeCommunityId: communityId,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+    });
+    const { accessToken: nonMemberToken } = await generateTokens(nonMemberId);
+
+    await expect(
+      t.query(api.functions.messaging.channels.listJoinableChannels, {
+        token: nonMemberToken,
+        groupId,
+      })
+    ).rejects.toThrow();
+  });
+});
+
+describe("setChannelDiscoverable", () => {
+  test("group leader can hide and re-show a custom channel", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId } = await seedTestData(t);
+    const { accessToken: leaderToken } = await createLeaderUser(t, communityId, groupId);
+
+    const { channelId } = await t.mutation(
+      api.functions.messaging.channels.createCustomChannel,
+      { token: leaderToken, groupId, name: "Toggle Me" }
+    );
+
+    await t.mutation(api.functions.messaging.channels.setChannelDiscoverable, {
+      token: leaderToken,
+      channelId,
+      discoverable: false,
+    });
+    expect(await t.run(async (ctx) => (await ctx.db.get(channelId))?.discoverable)).toBe(false);
+
+    await t.mutation(api.functions.messaging.channels.setChannelDiscoverable, {
+      token: leaderToken,
+      channelId,
+      discoverable: true,
+    });
+    expect(await t.run(async (ctx) => (await ctx.db.get(channelId))?.discoverable)).toBe(true);
+  });
+
+  test("community admin can change discoverability without being a group member", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId } = await seedTestData(t);
+    const { accessToken: leaderToken } = await createLeaderUser(t, communityId, groupId);
+    const { accessToken: adminToken } = await createCommunityAdminUser(t, communityId);
+
+    const { channelId } = await t.mutation(
+      api.functions.messaging.channels.createCustomChannel,
+      { token: leaderToken, groupId, name: "Admin Toggle" }
+    );
+
+    await t.mutation(api.functions.messaging.channels.setChannelDiscoverable, {
+      token: adminToken,
+      channelId,
+      discoverable: false,
+    });
+
+    expect(await t.run(async (ctx) => (await ctx.db.get(channelId))?.discoverable)).toBe(false);
+  });
+
+  test("rejects a regular member", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId, accessToken } = await seedTestData(t);
+    const { accessToken: leaderToken } = await createLeaderUser(t, communityId, groupId);
+
+    const { channelId } = await t.mutation(
+      api.functions.messaging.channels.createCustomChannel,
+      { token: leaderToken, groupId, name: "Members Cannot Toggle" }
+    );
+
+    await expect(
+      t.mutation(api.functions.messaging.channels.setChannelDiscoverable, {
+        token: accessToken,
+        channelId,
+        discoverable: false,
+      })
+    ).rejects.toThrow();
+  });
+
+  test("rejects non-custom channels", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId } = await seedTestData(t);
+    const { accessToken: leaderToken } = await createLeaderUser(t, communityId, groupId);
+
+    const mainChannelId = await t.mutation(api.functions.messaging.channels.createChannel, {
+      token: leaderToken,
+      groupId,
+      channelType: "main",
+      name: "General",
+    });
+
+    await expect(
+      t.mutation(api.functions.messaging.channels.setChannelDiscoverable, {
+        token: leaderToken,
+        channelId: mainChannelId,
+        discoverable: false,
+      })
+    ).rejects.toThrow();
+  });
+});
+
+describe("joinDiscoverableChannel", () => {
+  test("open join mode adds the caller as a member immediately", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId, userId, accessToken } = await seedTestData(t);
+    const { accessToken: leaderToken } = await createLeaderUser(t, communityId, groupId);
+
+    const { channelId } = await t.mutation(
+      api.functions.messaging.channels.createCustomChannel,
+      { token: leaderToken, groupId, name: "Open Channel" }
+    );
+
+    const result = await t.mutation(api.functions.messaging.channels.joinDiscoverableChannel, {
+      token: accessToken,
+      channelId,
+    });
+
+    expect(result).toEqual({ status: "joined" });
+
+    const membership = await t.run(async (ctx) => {
+      return await ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", channelId).eq("userId", userId)
+        )
+        .first();
+    });
+    expect(membership).not.toBeNull();
+    expect(membership?.leftAt).toBeUndefined();
+
+    const channel = await t.run(async (ctx) => ctx.db.get(channelId));
+    expect(channel?.memberCount).toBe(2); // leader (owner) + joined member
+  });
+
+  test("approval_required mode creates a pending join request instead of membership", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId, userId, accessToken } = await seedTestData(t);
+    const { accessToken: leaderToken } = await createLeaderUser(t, communityId, groupId);
+
+    const { channelId } = await t.mutation(
+      api.functions.messaging.channels.createCustomChannel,
+      { token: leaderToken, groupId, name: "Approval Channel" }
+    );
+    await t.mutation(api.functions.messaging.channelInvites.updateJoinMode, {
+      token: leaderToken,
+      channelId,
+      joinMode: "approval_required",
+    });
+
+    const result = await t.mutation(api.functions.messaging.channels.joinDiscoverableChannel, {
+      token: accessToken,
+      channelId,
+    });
+
+    expect(result).toEqual({ status: "requested" });
+
+    const membership = await t.run(async (ctx) => {
+      return await ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", channelId).eq("userId", userId)
+        )
+        .first();
+    });
+    expect(membership).toBeNull();
+
+    const requests = await t.run(async (ctx) => {
+      return await ctx.db
+        .query("channelJoinRequests")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", channelId).eq("userId", userId)
+        )
+        .collect();
+    });
+    expect(requests).toHaveLength(1);
+    expect(requests[0].status).toBe("pending");
+  });
+
+  test("is idempotent when a request is already pending", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId, userId, accessToken } = await seedTestData(t);
+    const { accessToken: leaderToken } = await createLeaderUser(t, communityId, groupId);
+
+    const { channelId } = await t.mutation(
+      api.functions.messaging.channels.createCustomChannel,
+      { token: leaderToken, groupId, name: "Idempotent Channel" }
+    );
+    await t.mutation(api.functions.messaging.channelInvites.updateJoinMode, {
+      token: leaderToken,
+      channelId,
+      joinMode: "approval_required",
+    });
+
+    await t.mutation(api.functions.messaging.channels.joinDiscoverableChannel, {
+      token: accessToken,
+      channelId,
+    });
+    const second = await t.mutation(api.functions.messaging.channels.joinDiscoverableChannel, {
+      token: accessToken,
+      channelId,
+    });
+
+    expect(second).toEqual({ status: "requested" });
+
+    // Only one request row should exist for this user, not a duplicate.
+    const requests = await t.run(async (ctx) => {
+      return await ctx.db
+        .query("channelJoinRequests")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", channelId).eq("userId", userId)
+        )
+        .collect();
+    });
+    expect(requests).toHaveLength(1);
+    expect(requests[0].status).toBe("pending");
+  });
+
+  test("enforces the 24h cooldown after a declined request", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId, userId, accessToken } = await seedTestData(t);
+    const { accessToken: leaderToken } = await createLeaderUser(t, communityId, groupId);
+
+    const { channelId } = await t.mutation(
+      api.functions.messaging.channels.createCustomChannel,
+      { token: leaderToken, groupId, name: "Approval Needed" }
+    );
+    await t.mutation(api.functions.messaging.channelInvites.updateJoinMode, {
+      token: leaderToken,
+      channelId,
+      joinMode: "approval_required",
+    });
+
+    await t.mutation(api.functions.messaging.channels.joinDiscoverableChannel, {
+      token: accessToken,
+      channelId,
+    });
+    await t.run(async (ctx) => {
+      const request = await ctx.db
+        .query("channelJoinRequests")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", channelId).eq("userId", userId)
+        )
+        .first();
+      await ctx.db.patch(request!._id, {
+        status: "declined",
+        reviewedAt: Date.now(),
+      });
+    });
+
+    await expect(
+      t.mutation(api.functions.messaging.channels.joinDiscoverableChannel, {
+        token: accessToken,
+        channelId,
+      })
+    ).rejects.toThrow(/24 hours/);
+  });
+
+  test("rejects non-custom channels (e.g. main)", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId, accessToken } = await seedTestData(t);
+    const { accessToken: leaderToken } = await createLeaderUser(t, communityId, groupId);
+
+    const mainChannelId = await t.mutation(
+      api.functions.messaging.channels.createChannel,
+      { token: leaderToken, groupId, channelType: "main", name: "General Chat" }
+    );
+
+    await expect(
+      t.mutation(api.functions.messaging.channels.joinDiscoverableChannel, {
+        token: accessToken,
+        channelId: mainChannelId,
+      })
+    ).rejects.toThrow();
+  });
+
+  test("rejects channels hidden from the directory (discoverable: false)", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId, accessToken } = await seedTestData(t);
+    const { accessToken: leaderToken } = await createLeaderUser(t, communityId, groupId);
+
+    const { channelId } = await t.mutation(
+      api.functions.messaging.channels.createCustomChannel,
+      { token: leaderToken, groupId, name: "Hidden Channel" }
+    );
+    await t.run(async (ctx) => {
+      await ctx.db.patch(channelId, { discoverable: false });
+    });
+
+    await expect(
+      t.mutation(api.functions.messaging.channels.joinDiscoverableChannel, {
+        token: accessToken,
+        channelId,
+      })
+    ).rejects.toThrow();
+  });
+
+  test("rejects callers who are not members of the group", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId } = await seedTestData(t);
+    const { accessToken: leaderToken } = await createLeaderUser(t, communityId, groupId);
+
+    const { channelId } = await t.mutation(
+      api.functions.messaging.channels.createCustomChannel,
+      { token: leaderToken, groupId, name: "Members Only" }
+    );
+
+    const nonMemberId = await t.run(async (ctx) => {
+      return await ctx.db.insert("users", {
+        firstName: "Non",
+        lastName: "Member",
+        phone: "+15555550097",
+        phoneVerified: true,
+        activeCommunityId: communityId,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+    });
+    const { accessToken: nonMemberToken } = await generateTokens(nonMemberId);
+
+    await expect(
+      t.mutation(api.functions.messaging.channels.joinDiscoverableChannel, {
+        token: nonMemberToken,
+        channelId,
+      })
+    ).rejects.toThrow();
+  });
+});
+
+describe("listGroupChannels isMuted", () => {
+  // Regression: prod's returns-validator rejected the row once isMuted was
+  // added to the mapping but not the validator (convex-test doesn't enforce
+  // returns validators, so only a field-presence assertion can pin this).
+  test("reports the caller's muted state per row", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId, accessToken } = await seedTestData(t);
+    const { accessToken: leaderToken } = await createLeaderUser(t, communityId, groupId);
+
+    const { channelId } = await t.mutation(
+      api.functions.messaging.channels.createCustomChannel,
+      { token: leaderToken, groupId, name: "Mutable" }
+    );
+    await t.mutation(api.functions.messaging.channels.joinDiscoverableChannel, {
+      token: accessToken,
+      channelId,
+    });
+    await t.mutation(api.functions.messaging.channels.setChannelMuted, {
+      token: accessToken,
+      channelId,
+      muted: true,
+    });
+
+    const channels = await t.query(api.functions.messaging.channels.listGroupChannels, {
+      token: accessToken,
+      groupId,
+    });
+    const muted = channels.find((c: any) => c._id === channelId);
+    expect(muted?.isMuted).toBe(true);
+  });
+});
+
+describe("setChannelMuted", () => {
+  test("member can mute and unmute a channel they belong to", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId, userId, accessToken } = await seedTestData(t);
+    const { accessToken: leaderToken } = await createLeaderUser(t, communityId, groupId);
+
+    const { channelId } = await t.mutation(
+      api.functions.messaging.channels.createCustomChannel,
+      { token: leaderToken, groupId, name: "Mute Test" }
+    );
+    await t.mutation(api.functions.messaging.channels.addChannelMembers, {
+      token: leaderToken,
+      channelId,
+      userIds: [userId],
+    });
+
+    await t.mutation(api.functions.messaging.channels.setChannelMuted, {
+      token: accessToken,
+      channelId,
+      muted: true,
+    });
+
+    const muted = await t.run(async (ctx) => {
+      return await ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", channelId).eq("userId", userId)
+        )
+        .first();
+    });
+    expect(muted?.isMuted).toBe(true);
+
+    await t.mutation(api.functions.messaging.channels.setChannelMuted, {
+      token: accessToken,
+      channelId,
+      muted: false,
+    });
+
+    const unmuted = await t.run(async (ctx) => {
+      return await ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", channelId).eq("userId", userId)
+        )
+        .first();
+    });
+    expect(unmuted?.isMuted).toBe(false);
+  });
+
+  test("rejects a caller who is not a member of the channel", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId, accessToken } = await seedTestData(t);
+    const { accessToken: leaderToken } = await createLeaderUser(t, communityId, groupId);
+
+    // Custom channel created by the leader; regular member never joined.
+    const { channelId } = await t.mutation(
+      api.functions.messaging.channels.createCustomChannel,
+      { token: leaderToken, groupId, name: "Not A Member" }
+    );
+
+    await expect(
+      t.mutation(api.functions.messaging.channels.setChannelMuted, {
+        token: accessToken,
+        channelId,
+        muted: false,
+      })
+    ).rejects.toThrow();
+  });
+});
+
+describe("muted members and unread bookkeeping", () => {
+  test("a muted member still gets unread increments from onMessageSent", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId, userId, accessToken } = await seedTestData(t);
+    const { userId: leaderId, accessToken: leaderToken } = await createLeaderUser(
+      t,
+      communityId,
+      groupId
+    );
+
+    const { channelId } = await t.mutation(
+      api.functions.messaging.channels.createCustomChannel,
+      { token: leaderToken, groupId, name: "Muted But Tracked" }
+    );
+    await t.mutation(api.functions.messaging.channels.joinDiscoverableChannel, {
+      token: accessToken,
+      channelId,
+    });
+    await t.mutation(api.functions.messaging.channels.setChannelMuted, {
+      token: accessToken,
+      channelId,
+      muted: true,
+    });
+
+    const messageId = await t.run(async (ctx) => {
+      return await ctx.db.insert("chatMessages", {
+        channelId,
+        senderId: leaderId,
+        content: "Rehearsal moved to 7pm",
+        contentType: "text",
+        createdAt: Date.now(),
+        isDeleted: false,
+        senderName: "Test Leader",
+      });
+    });
+    await t.mutation(internal.functions.messaging.events.onMessageSent, {
+      messageId,
+      channelId,
+      senderId: leaderId,
+    });
+
+    const readState = await t.run(async (ctx) => {
+      return await ctx.db
+        .query("chatReadState")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", channelId).eq("userId", userId)
+        )
+        .first();
+    });
+    expect(readState?.unreadCount).toBe(1);
+  });
+});
+
+describe("getInboxChannels — isMuted", () => {
+  test("surfaces the caller's own isMuted for each channel", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId, userId, accessToken } = await seedTestData(t);
+    const { accessToken: leaderToken } = await createLeaderUser(
+      t,
+      communityId,
+      groupId
+    );
+
+    // Main channel the seeded user is a member of by default (unmuted).
+    const mainChannelId = await t.run(async (ctx) => {
+      const chId = await ctx.db.insert("chatChannels", {
+        groupId,
+        slug: "general",
+        channelType: "main",
+        name: "General",
+        createdById: userId,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        isArchived: false,
+        memberCount: 1,
+      });
+      await ctx.db.insert("chatChannelMembers", {
+        channelId: chId,
+        userId,
+        role: "member",
+        joinedAt: Date.now(),
+        isMuted: false,
+      });
+      return chId;
+    });
+
+    // A second, custom channel the user mutes via the real mutation.
+    const { channelId: customChannelId } = await t.mutation(
+      api.functions.messaging.channels.createCustomChannel,
+      { token: leaderToken, groupId, name: "Quiet Channel" }
+    );
+    await t.mutation(api.functions.messaging.channels.joinDiscoverableChannel, {
+      token: accessToken,
+      channelId: customChannelId,
+    });
+    await t.mutation(api.functions.messaging.channels.setChannelMuted, {
+      token: accessToken,
+      channelId: customChannelId,
+      muted: true,
+    });
+
+    const result = await t.query(api.functions.messaging.channels.getInboxChannels, {
+      token: accessToken,
+      communityId,
+    });
+
+    const groupEntry = result.find((g) => g.group._id === groupId);
+    expect(groupEntry).toBeDefined();
+
+    const mainChannel = groupEntry?.channels.find((c) => c._id === mainChannelId);
+    const customChannel = groupEntry?.channels.find((c) => c._id === customChannelId);
+
+    expect(mainChannel?.isMuted).toBe(false);
+    expect(customChannel?.isMuted).toBe(true);
   });
 });

@@ -35,8 +35,23 @@ export function getMediaUrl(path: string | null | undefined): string | undefined
     return path;
   }
 
-  // Local file URIs (from image picker) - return as-is for preview
-  if (path.startsWith('file://')) {
+  // Local, not-yet-uploaded URIs (from the image picker) - return as-is for
+  // preview. `file://` is what expo-image-picker hands back on native; on web
+  // it returns a `blob:` object URL (`URL.createObjectURL` in
+  // expo-image-picker's ExponentImagePicker.web). Dropping `blob:` made every
+  // just-picked preview on web fall through to AppImage's gray placeholder,
+  // so the user couldn't see what they'd attached.
+  //
+  // Both are *references*, not payloads: they only resolve against this
+  // device/document, so a `blob:` string arriving from the server simply
+  // fails to load - the same gray placeholder as before. `data:` is
+  // deliberately NOT accepted here, because it's the one scheme that carries
+  // an arbitrary, unbounded payload inline. `chatMessages.attachments[].url`
+  // is an unvalidated `v.string()`, so trusting `data:` in this shared
+  // resolver would let any group member post a huge inline blob that renders
+  // at full size, uncached and untransformed, for every other subscriber. The
+  // picker never produces one, so nothing legitimate needs it.
+  if (path.startsWith('file://') || path.startsWith('blob:')) {
     return path;
   }
 
@@ -61,7 +76,7 @@ export function getMediaUrl(path: string | null | undefined): string | undefined
  *
  * @example
  * getMediaUrlWithTransform('r2:profiles/abc.jpg', { width: 100, height: 100 })
- * // => '{R2_PUBLIC_URL}/cdn-cgi/image/width=100,height=100,fit=cover,format=auto/profiles/abc.jpg'
+ * // => '{R2_PUBLIC_URL}/cdn-cgi/image/width=100,height=100,fit=cover,metadata=keep,format=auto/profiles/abc.jpg'
  */
 export function getMediaUrlWithTransform(
   path: string | null | undefined,
@@ -86,6 +101,13 @@ export function getMediaUrlWithTransform(
   if (options.height) transforms.push(`height=${options.height}`);
   if (options.fit) transforms.push(`fit=${options.fit}`);
   if (options.quality) transforms.push(`quality=${options.quality}`);
+  // Preserve EXIF metadata so the orientation tag survives the transform.
+  // Without this, Cloudflare strips the orientation tag without rotating the
+  // pixels, so photos taken in a rotated orientation render upside-down in
+  // transformed thumbnails (while the untransformed full-size original, which
+  // still carries the tag, displays correctly). Keeping metadata lets the
+  // client apply the rotation just like it does for the original.
+  transforms.push('metadata=keep');
   transforms.push('format=auto'); // Always optimize format (WebP/AVIF)
 
   const transformString = transforms.join(',');

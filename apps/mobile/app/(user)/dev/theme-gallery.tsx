@@ -1054,6 +1054,8 @@ export default function ThemeGalleryScreen() {
       colorScheme: effectiveScheme,
       preference: mode,
       setPreference: () => {},
+      knicksMode: false,
+      setKnicksMode: () => {},
     }),
     [effectiveScheme, mode]
   );

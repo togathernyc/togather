@@ -31,6 +31,10 @@ import {
   calculateAllSystemScores,
   evaluateSystemAlerts,
 } from "./systemScoring";
+import {
+  nativeServingDays,
+  combineServingDayCount,
+} from "../lib/nativeServing";
 
 // ============================================================================
 // Constants
@@ -46,6 +50,83 @@ const CROSS_GROUP_BATCH_SIZE = 10;
 const STAGGER_INTERVAL_MS = 3000;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** A person is auto-archived after this long with no activity. */
+export const INACTIVITY_THRESHOLD_MS = 60 * DAY_MS;
+
+/** Largest of the given timestamps, ignoring undefined. */
+export function mostRecentTimestamp(
+  ...timestamps: Array<number | undefined>
+): number | undefined {
+  let max: number | undefined;
+  for (const ts of timestamps) {
+    if (ts != null && (max == null || ts > max)) max = ts;
+  }
+  return max;
+}
+
+/**
+ * Decide a person's active/archived state during the daily score refresh.
+ *
+ * `lastActivityTs` is the most recent of a person's real activity signals —
+ * opening the app, attending a meeting, or serving (see the call site). Leader
+ * actions (followups) are NOT counted; this is the person's own engagement.
+ *
+ * Rules (see the `isActive`/`archivedAt` fields in schema.ts):
+ * - A manual or automatic archive sticks. The daily job never resurrects an
+ *   archived person on its own.
+ * - The ONE thing that reactivates an archived person is fresh activity after
+ *   the archive: if their activity is newer than the moment they were archived,
+ *   clear the flag. (For records archived before `archivedAt` was tracked, fall
+ *   back to "active within the inactivity window".)
+ * - A manual unarchive or a form submission records `reactivatedAt`. It counts
+ *   as activity, so the clock restarts from that moment: a reactivated person
+ *   stays active unless BOTH their last real activity AND the reactivation date
+ *   are past the 60-day threshold.
+ * - An active person is auto-archived once they go quiet for the threshold.
+ *   People with no recorded activity have no activity signal, so we fall back to
+ *   `addedAt` (date added).
+ */
+export function computePersonActiveState(params: {
+  nowTs: number;
+  lastActivityTs?: number;
+  reactivatedAt?: number;
+  addedAt?: number;
+  currentIsActive?: boolean;
+  currentArchivedAt?: number;
+}): { isActive: boolean; archivedAt: number | undefined } {
+  const {
+    nowTs,
+    lastActivityTs,
+    reactivatedAt,
+    addedAt,
+    currentIsActive,
+    currentArchivedAt,
+  } = params;
+
+  // A manual unarchive (or a form submission) counts as activity for the
+  // auto-archive clock, alongside the person's own engagement signals.
+  const activitySignal = mostRecentTimestamp(lastActivityTs, reactivatedAt);
+
+  if (currentIsActive === false) {
+    // Archived. Only activity that happened AFTER archiving brings them back.
+    const activeSinceArchive =
+      activitySignal != null &&
+      (currentArchivedAt != null
+        ? activitySignal > currentArchivedAt
+        : nowTs - activitySignal <= INACTIVITY_THRESHOLD_MS);
+    return activeSinceArchive
+      ? { isActive: true, archivedAt: undefined }
+      : { isActive: false, archivedAt: currentArchivedAt };
+  }
+
+  // Active (or brand new). Auto-archive once activity goes stale.
+  const activityTs = activitySignal ?? addedAt;
+  if (activityTs != null && nowTs - activityTs > INACTIVITY_THRESHOLD_MS) {
+    return { isActive: false, archivedAt: nowTs };
+  }
+  return { isActive: true, archivedAt: undefined };
+}
 
 // ============================================================================
 // Internal Queries
@@ -193,18 +274,49 @@ export const computeCommunityScoresBatch = internalQuery({
     const currentTime = now();
     const announcementGroup = await ctx.db.get(args.announcementGroupId);
 
-    // Build PCO serving map from announcement group doc
-    const pcoServingMap = new Map<string, number>();
+    // Serving combines BOTH sources, counted by DAY: the cached PCO snapshot
+    // (dates below) AND native rostering (roleAssignments, per member). Any day
+    // served on either source counts once; a day on both counts once.
+
+    // PCO serving DATES per user (for day-dedup) plus the PCO serve COUNT per
+    // user (the floor used when servingDetails is absent/truncated so a valid
+    // count is never dropped).
+    const pcoServingDatesMap = new Map<string, string[]>();
+    if (announcementGroup?.pcoServingCounts?.servingDetails) {
+      for (const { userId, date } of announcementGroup.pcoServingCounts
+        .servingDetails) {
+        const key = userId.toString();
+        const arr = pcoServingDatesMap.get(key);
+        if (arr) arr.push(date);
+        else pcoServingDatesMap.set(key, [date]);
+      }
+    }
+    const pcoServingCountMap = new Map<string, number>();
     if (announcementGroup?.pcoServingCounts?.counts) {
       for (const { userId, count } of announcementGroup.pcoServingCounts
         .counts) {
-        pcoServingMap.set(userId.toString(), count);
+        pcoServingCountMap.set(userId.toString(), count);
+      }
+    }
+
+    // Most recent serving date per user (counts as activity for archiving).
+    const pcoLastServedMap = new Map<string, number>();
+    if (announcementGroup?.pcoServingCounts?.servingDetails) {
+      for (const { userId, date } of announcementGroup.pcoServingCounts
+        .servingDetails) {
+        const ts = Date.parse(date);
+        if (!Number.isFinite(ts)) continue;
+        const key = userId.toString();
+        const prev = pcoLastServedMap.get(key);
+        if (prev == null || ts > prev) pcoLastServedMap.set(key, ts);
       }
     }
 
     const results = await Promise.all(
       args.members.map(async (member) => {
-        // Fetch followups for this member in the announcement group
+        // Fetch followups for this member in the announcement group.
+        // The top-20 window is used only for snooze/note state, both of which
+        // are always written at `now` — so back-dating doesn't affect them.
         const followups = await ctx.db
           .query("memberFollowups")
           .withIndex("by_groupMember_createdAt", (q) =>
@@ -213,16 +325,60 @@ export const computeCommunityScoresBatch = internalQuery({
           .order("desc")
           .take(20);
 
-        // Compute days since each followup type
-        const lastFollowup = followups.find(
-          (f) =>
-            f.type === "followed_up" ||
-            f.type === "call" ||
-            f.type === "text"
+        // Contact-type recency must query per-type so a back-dated Log Past
+        // contact (createdAt set to its occurrence time) is still picked up
+        // even if there are 20+ newer rows of other types in between. Use
+        // the (groupMember, type, createdAt) compound index so the lookup is
+        // bounded to rows of that type — a filtered scan would walk the
+        // whole history for members with no matching row.
+        const latestByType = (type: string) =>
+          ctx.db
+            .query("memberFollowups")
+            .withIndex("by_groupMember_type_createdAt", (q) =>
+              q.eq("groupMemberId", member.groupMemberId).eq("type", type),
+            )
+            .order("desc")
+            .first();
+
+        const [lastInPersonRaw, lastCallRaw, lastTextRaw, lastNoteRaw] = await Promise.all([
+          latestByType("followed_up"),
+          latestByType("call"),
+          latestByType("text"),
+          latestByType("note"),
+        ]);
+        // .first() returns T | null; `daysSince` consumes T | undefined.
+        const lastInPerson = lastInPersonRaw ?? undefined;
+        const lastCall = lastCallRaw ?? undefined;
+        const lastText = lastTextRaw ?? undefined;
+        const lastNote = lastNoteRaw ?? undefined;
+        // "Last contact" for the days-since-contact score signal: only the
+        // three contact types (call / text / followed_up) — notes don't count.
+        const contactCandidates = [lastInPerson, lastCall, lastText].filter(
+          (f): f is NonNullable<typeof f> => f != null,
         );
-        const lastInPerson = followups.find((f) => f.type === "followed_up");
-        const lastCall = followups.find((f) => f.type === "call");
-        const lastText = followups.find((f) => f.type === "text");
+        const lastFollowup =
+          contactCandidates.length > 0
+            ? contactCandidates.reduce((a, b) =>
+                a.createdAt >= b.createdAt ? a : b,
+              )
+            : undefined;
+        // `lastFollowupAt` (the displayed "Last Contact" column) tracks the
+        // most recent touch of ANY kind, including notes — matches the
+        // addFollowup mutation's monotonic patch. Without including notes,
+        // a recompute right after a back-dated contact insert would roll
+        // back lastFollowupAt and erase a newer note's timestamp.
+        const lastTouchCandidates = [
+          lastInPerson,
+          lastCall,
+          lastText,
+          lastNote,
+        ].filter((f): f is NonNullable<typeof f> => f != null);
+        const lastTouchAt =
+          lastTouchCandidates.length > 0
+            ? lastTouchCandidates.reduce((a, b) =>
+                a.createdAt >= b.createdAt ? a : b,
+              ).createdAt
+            : undefined;
 
         const daysSince = (entry: { createdAt: number } | undefined): number =>
           entry
@@ -245,14 +401,12 @@ export const computeCommunityScoresBatch = internalQuery({
           }
         }
 
-        // Latest note for display in notes cell
-        const latestNoteEntry = followups.find(
-          (f) => f.type === "note" && f.content,
-        );
-        const latestNote = latestNoteEntry?.content
-          ? safeSliceForJson(latestNoteEntry.content, 200)
+        // Latest note for display in notes cell — use the per-type indexed
+        // lookup (same back-dated-row reasoning as contacts).
+        const latestNote = lastNote?.content
+          ? safeSliceForJson(lastNote.content, 200)
           : undefined;
-        const latestNoteAt = latestNoteEntry?.createdAt ?? undefined;
+        const latestNoteAt = lastNote?.createdAt ?? undefined;
 
         // Cross-group attendance data
         const crossGroupData = args.crossGroupAttendanceMap?.[
@@ -283,14 +437,33 @@ export const computeCommunityScoresBatch = internalQuery({
             1,
             Math.round((lastWeek - firstWeek) / WEEK_MS) + 1,
           );
-          // Filter attended weeks to only those within the member's window
-          attendedWeeksInWindow = crossGroupData.attendedWeekStarts.filter(
-            (ws) => ws >= firstWeek,
-          ).length;
-          // Weeks that actually had meetings (within member's window)
-          meetingWeeksInWindow = crossGroupData.meetingWeekStarts
-            ? crossGroupData.meetingWeekStarts.filter((ws) => ws >= firstWeek).length
-            : totalWeeksInWindow; // fallback: assume all weeks had meetings
+          // Derive attended/meeting weeks from meetingEntries filtered by full
+          // `scheduledAt >= member.joinedAt` — a week-start cutoff alone would
+          // keep a meeting that ran earlier in the same ISO week the member
+          // joined, even though they couldn't have attended it.
+          if (crossGroupData.meetingEntries) {
+            const eligible = crossGroupData.meetingEntries.filter(
+              (e: any) => e.scheduledAt >= member.joinedAt,
+            );
+            const meetingWeeks = new Set<number>();
+            const attendedWeeks = new Set<number>();
+            for (const e of eligible) {
+              const ws = getWeekStart(e.scheduledAt);
+              meetingWeeks.add(ws);
+              if (e.attended) attendedWeeks.add(ws);
+            }
+            meetingWeeksInWindow = meetingWeeks.size;
+            attendedWeeksInWindow = attendedWeeks.size;
+          } else {
+            // Pre-meetingEntries fallback (kept for safety; current
+            // internalCrossGroupAttendance always returns entries).
+            attendedWeeksInWindow = crossGroupData.attendedWeekStarts.filter(
+              (ws) => ws >= firstWeek,
+            ).length;
+            meetingWeeksInWindow = crossGroupData.meetingWeekStarts
+              ? crossGroupData.meetingWeekStarts.filter((ws) => ws >= firstWeek).length
+              : totalWeeksInWindow;
+          }
         } else {
           // Legacy fallback: plain number percentage
           crossGroupPct = (crossGroupData as number) ?? 0;
@@ -304,26 +477,83 @@ export const computeCommunityScoresBatch = internalQuery({
           meetingWeeksInWindow = totalWeeksInWindow;
         }
 
-        // Consecutive missed meetings — from cross-group meeting entries, filtered by join date
+        // Consecutive missed weeks — walk back week-by-week through weeks that had
+        // meetings (post-join) until we find one the member attended. Counting weeks
+        // (not raw meeting entries) keeps the unit consistent with the displayed
+        // "Weeks with meetings" so a member in multiple groups isn't penalized
+        // multiple times for the same week.
+        //
+        // We derive both meeting-week and attended-week sets from `meetingEntries`
+        // filtered by `scheduledAt >= member.joinedAt`. A week-start cutoff alone
+        // would count a meeting that happened earlier in the same ISO week the
+        // member joined — they had no chance to attend it.
         let consecutiveMissed = 0;
-        if (crossGroupData && typeof crossGroupData === "object" && crossGroupData.meetingEntries) {
-          // Filter to meetings after member joined, already sorted desc by scheduledAt
-          const memberMeetings = crossGroupData.meetingEntries.filter(
+        if (
+          crossGroupData &&
+          typeof crossGroupData === "object" &&
+          crossGroupData.meetingEntries
+        ) {
+          const eligibleEntries = crossGroupData.meetingEntries.filter(
             (e: any) => e.scheduledAt >= member.joinedAt,
           );
-          for (const entry of memberMeetings) {
-            if (entry.attended) break;
+          const eligibleMeetingWeeks = new Set<number>();
+          const eligibleAttendedWeeks = new Set<number>();
+          for (const e of eligibleEntries) {
+            const ws = getWeekStart(e.scheduledAt);
+            eligibleMeetingWeeks.add(ws);
+            if (e.attended) eligibleAttendedWeeks.add(ws);
+          }
+          const meetingWeeksDesc = [...eligibleMeetingWeeks].sort(
+            (a, b) => b - a,
+          );
+          for (const ws of meetingWeeksDesc) {
+            if (eligibleAttendedWeeks.has(ws)) break;
             consecutiveMissed++;
           }
-          // Last attended date — actual meeting timestamp (not week start)
-          const lastAttendedEntry = memberMeetings.find((e: any) => e.attended);
+          // Last attended date — actual meeting timestamp (not week start).
+          // `meetingEntries` is sorted desc, so .find returns the most recent.
+          const lastAttendedEntry = eligibleEntries.find((e: any) => e.attended);
           if (lastAttendedEntry) {
             lastAttendedAt = lastAttendedEntry.scheduledAt;
           }
         }
 
-        // PCO serving count
-        const pcoCount = pcoServingMap.get(member.userId.toString()) ?? 0;
+        // Serving activity = most recent of PCO serving and native rostering
+        // (roleAssignments). A non-declined assignment means the person is
+        // rostered to serve, which counts as activity for archiving. Not
+        // community-scoped: serving anywhere keeps the person active, and this
+        // only ever prevents archiving (never hides someone), so it's safe.
+        // Read newest-event-first via the by_user_eventDate index so the most
+        // recent serving date is found regardless of assignment creation order.
+        const recentAssignments = await ctx.db
+          .query("roleAssignments")
+          .withIndex("by_user_eventDate", (q) => q.eq("userId", member.userId))
+          .order("desc")
+          .take(100);
+        const lastRosteredAt = recentAssignments.find(
+          (a) => a.status !== "declined",
+        )?.eventDate;
+        const lastServedAt = mostRecentTimestamp(
+          pcoLastServedMap.get(member.userId.toString()),
+          lastRosteredAt,
+        );
+
+        // Combined Serving count = distinct calendar DAYS served across native
+        // rostering and PCO in the past ~60 days (reuses recentAssignments, no
+        // extra read). A day served on both sources — or on multiple plans —
+        // counts once.
+        const nativeDays = await nativeServingDays(
+          ctx,
+          recentAssignments,
+          currentTime,
+          args.communityId,
+        );
+        const servingCount = combineServingDayCount(
+          nativeDays,
+          pcoServingDatesMap.get(member.userId.toString()) ?? [],
+          pcoServingCountMap.get(member.userId.toString()) ?? 0,
+          currentTime,
+        );
 
         // Extract system raw values
         const rawValues = extractSystemRawValues({
@@ -336,7 +566,7 @@ export const computeCommunityScoresBatch = internalQuery({
           daysSinceLastInPerson: daysSince(lastInPerson),
           daysSinceLastCall: daysSince(lastCall),
           daysSinceLastText: daysSince(lastText),
-          pcoServicesCount: pcoCount,
+          pcoServicesCount: servingCount,
         });
 
         // Calculate scores and alerts
@@ -370,9 +600,10 @@ export const computeCommunityScoresBatch = internalQuery({
           isSnoozed: !!snoozedUntil,
           snoozedUntil,
           rawValues,
-          lastFollowupAt: lastFollowup?.createdAt,
+          lastFollowupAt: lastTouchAt,
           lastActiveAt: member.lastActiveAt,
           lastAttendedAt,
+          lastServedAt,
           addedAt: member.joinedAt,
           addedAtInv: Number.MAX_SAFE_INTEGER - member.joinedAt,
           latestNote,
@@ -435,6 +666,7 @@ export const upsertCommunityPeopleBatch = internalMutation({
         lastFollowupAt: member.lastFollowupAt,
         lastActiveAt: member.lastActiveAt,
         lastAttendedAt: member.lastAttendedAt,
+        lastServedAt: member.lastServedAt,
         addedAt: member.addedAt,
         addedAtInv: member.addedAt ? Number.MAX_SAFE_INTEGER - member.addedAt : undefined,
         latestNote: member.latestNote,
@@ -446,7 +678,24 @@ export const upsertCommunityPeopleBatch = internalMutation({
         // Patch preserves custom fields, status, assigneeIds, connectionPoint (not in scoreDoc)
         // Keep assigneeId in sync with assigneeIds for indexing
         const assigneeId = (existing as any).assigneeIds?.[0];
-        await ctx.db.patch(existing._id, { ...scoreDoc, assigneeId });
+        const activeState = computePersonActiveState({
+          nowTs,
+          lastActivityTs: mostRecentTimestamp(
+            member.lastActiveAt,
+            member.lastAttendedAt,
+            member.lastServedAt,
+          ),
+          reactivatedAt: (existing as any).reactivatedAt,
+          addedAt: member.addedAt,
+          currentIsActive: (existing as any).isActive,
+          currentArchivedAt: (existing as any).archivedAt,
+        });
+        await ctx.db.patch(existing._id, {
+          ...scoreDoc,
+          assigneeId,
+          isActive: activeState.isActive,
+          archivedAt: activeState.archivedAt,
+        });
       } else {
         // Check if user has a record in another group — copy leader-set fields
         const siblingRecord = await ctx.db
@@ -457,8 +706,33 @@ export const upsertCommunityPeopleBatch = internalMutation({
           .first();
 
         const siblingAssigneeId = (siblingRecord as any)?.assigneeIds?.[0];
+        // Inherit archive state from a sibling record (archiving applies to the
+        // person across all their groups); otherwise derive it from activity.
+        const activeState =
+          siblingRecord && (siblingRecord as any).isActive === false
+            ? {
+                isActive: false,
+                archivedAt: (siblingRecord as any).archivedAt ?? nowTs,
+              }
+            : computePersonActiveState({
+                nowTs,
+                lastActivityTs: mostRecentTimestamp(
+                  member.lastActiveAt,
+                  member.lastAttendedAt,
+                  member.lastServedAt,
+                ),
+                reactivatedAt: (siblingRecord as any)?.reactivatedAt,
+                addedAt: member.addedAt,
+                currentIsActive: (siblingRecord as any)?.isActive,
+                currentArchivedAt: (siblingRecord as any)?.archivedAt,
+              });
         const cpId = await ctx.db.insert("communityPeople", {
           ...scoreDoc,
+          isActive: activeState.isActive,
+          archivedAt: activeState.archivedAt,
+          // Carry the community-wide reactivation timestamp onto the new
+          // per-group record so the manual-unarchive clock survives.
+          reactivatedAt: (siblingRecord as any)?.reactivatedAt,
           // Copy leader-set fields from sibling if exists
           status: siblingRecord?.status,
           assigneeIds: siblingRecord?.assigneeIds,
@@ -744,6 +1018,15 @@ export const computeCommunityScores = internalAction({
       }
     );
 
+    // Step 9: Notify leaders about anyone approaching auto-archive. Runs after
+    // the rows above are committed (fresh isActive/lastActivity), scheduled so
+    // the push-sending action doesn't extend this score job's failure surface.
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.memberArchiveNotice.sendCommunityPreArchiveNotices,
+      { communityId: args.communityId }
+    );
+
     console.log(
       `[community-scores] Completed score computation for community ${args.communityId}`
     );
@@ -968,6 +1251,7 @@ export const getScoredDataForUsers = internalQuery({
           lastFollowupAt: existing.lastFollowupAt,
           lastActiveAt: existing.lastActiveAt,
           lastAttendedAt: existing.lastAttendedAt,
+          lastServedAt: existing.lastServedAt,
           addedAt: existing.addedAt,
           addedAtInv: existing.addedAt ? Number.MAX_SAFE_INTEGER - existing.addedAt : undefined,
         });

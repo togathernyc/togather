@@ -12,6 +12,7 @@
  * - communityWideEvents.ts
  */
 
+import { ConvexError } from "convex/values";
 import type { Id } from "../_generated/dataModel";
 
 // ============================================================================
@@ -36,7 +37,42 @@ export const COMMUNITY_ADMIN_THRESHOLD = COMMUNITY_ROLES.ADMIN;
 
 /**
  * Primary Admin role level - highest privilege level.
- * Only one user per community can have this role.
+ *
+ * PRIMARY ADMIN IS A SET, NOT A SINGLETON.
+ *
+ * A community has **one or more** members with `userCommunities.roles === 4`.
+ * At least one is expected; there is no upper bound and no uniqueness
+ * constraint in the schema, so code must never assume "the" primary admin.
+ *
+ * How a community ends up with more than one:
+ * - Every creation flow (`proposals.acceptProposal`, `ee/proposals`,
+ *   `ee/billing` checkout, `migrations`, seeding) inserts exactly ONE row at
+ *   role 4 — the founder.
+ * - `admin/members.transferPrimaryAdmin` MOVES the role (demotes the caller,
+ *   promotes the target) rather than adding one, so it leaves the set size
+ *   unchanged — unless the target already held role 4, in which case the set
+ *   shrinks by the caller.
+ * - Both `updateMemberRole` mutations (`functions/communities.ts` and
+ *   `functions/admin/members.ts`) take an unbounded `v.number()` role and
+ *   will happily write role 4 onto a second member. Both gate that on the
+ *   CALLER already being a primary admin (`communities.ts` security check 3;
+ *   `admin/members.ts` via `requirePrimaryAdmin` on admin-level changes), so
+ *   it is not an escalation — but it does mean an existing primary admin can
+ *   mint another one in-app today, without any dashboard access.
+ * - Operators also add them by editing `userCommunities.roles` directly in the
+ *   Convex dashboard. Either way it is a deliberate, supported state —
+ *   several communities run this way, which is why every read has to
+ *   tolerate it.
+ *
+ * Consequences for callers:
+ * - PER-USER checks (`isPrimaryAdmin`, `requirePrimaryAdmin`, the finance
+ *   gate in lib/finance/communityFinanceAccess.ts) are inherently multi-safe:
+ *   they ask "is THIS user a primary admin", and every primary admin answers
+ *   yes independently. Prefer these.
+ * - Anything that needs to *find* a primary admin must either operate on the
+ *   whole set (e.g. notify all of them) or pick DETERMINISTICALLY. The
+ *   repo-wide convention for "pick one" is the row with the earliest
+ *   `createdAt` — see `pickInheritingPrimaryAdmin` below.
  */
 export const PRIMARY_ADMIN_ROLE = COMMUNITY_ROLES.PRIMARY_ADMIN;
 
@@ -59,6 +95,28 @@ export const LEADER_ROLES = ["leader"] as const;
 // ============================================================================
 // Permission Check Helpers
 // ============================================================================
+
+/**
+ * Throw if the target community has been archived (closed).
+ *
+ * The universal `requireAuth` gate (lib/auth.ts) already rejects any request
+ * whose JWT is *scoped* to an archived community, which covers all normal
+ * sessions. This helper closes the complementary by-id vector: a caller holding
+ * a community-less or other-community token that passes an archived community's
+ * id as an argument. It's wired into the shared authorization helpers below
+ * (admin/member checks) so those paths reject archived communities regardless
+ * of token scope. Throws the same `COMMUNITY_ARCHIVED` error the client uses to
+ * route users back to community selection.
+ */
+export async function assertCommunityNotArchived(
+  ctx: { db: any },
+  communityId: Id<"communities">
+): Promise<void> {
+  const community = await ctx.db.get(communityId);
+  if (community?.isArchived) {
+    throw new ConvexError("COMMUNITY_ARCHIVED");
+  }
+}
 
 /**
  * Check if user is a community admin (Admin or Primary Admin).
@@ -89,13 +147,17 @@ export async function isCommunityAdmin(
 }
 
 /**
- * Check if user is the Primary Admin of a community.
+ * Check if user is a Primary Admin of a community.
  * Returns boolean, doesn't throw.
+ *
+ * Per-user, so it is multi-safe by construction: a community may have several
+ * primary admins (see PRIMARY_ADMIN_ROLE) and each of them independently
+ * answers true here.
  *
  * @param ctx - Convex query/mutation context with db access
  * @param communityId - The community to check
  * @param userId - The user to check
- * @returns true if user is the Primary Admin (roles === 4)
+ * @returns true if user is a Primary Admin (roles === 4)
  */
 export async function isPrimaryAdmin(
   ctx: { db: any },
@@ -129,15 +191,21 @@ export async function requireCommunityAdmin(
   if (!isAdmin) {
     throw new Error("Community admin role required");
   }
+  // Even an admin cannot act on an archived (closed) community.
+  await assertCommunityNotArchived(ctx, communityId);
 }
 
 /**
- * Require Primary Admin role. Throws if user is not the primary admin.
+ * Require Primary Admin role. Throws if user is not a primary admin.
+ *
+ * Per-user like `isPrimaryAdmin` — every member of the primary-admin set
+ * passes this gate, which is what makes multiple primary admins work without
+ * any per-call-site change.
  *
  * @param ctx - Convex query/mutation context with db access
  * @param communityId - The community to check
  * @param userId - The user to check
- * @throws Error if user is not the Primary Admin
+ * @throws Error if user is not a Primary Admin
  */
 export async function requirePrimaryAdmin(
   ctx: { db: any },
@@ -154,6 +222,115 @@ export async function requirePrimaryAdmin(
   if (!membership || membership.roles !== PRIMARY_ADMIN_ROLE || membership.status !== 1) {
     throw new Error("Primary Admin role required");
   }
+}
+
+/**
+ * Every ACTIVE primary admin of a community, as `userCommunities` rows.
+ *
+ * Use this whenever a code path wants to reach "the primary admin" — there may
+ * be several (see PRIMARY_ADMIN_ROLE). Paths that fan out (notifications,
+ * digests, escalations) should act on the whole array rather than one row.
+ *
+ * COST: `roles`/`status` are post-index filters, so this reads every
+ * membership row in the community. That is inherent to "give me all of them"
+ * and is fine for the fan-out paths this exists for, but it means you should
+ * NOT call it just to pick one row — use `pickInheritingPrimaryAdmin`, which
+ * walks `by_community_createdAt` and stops at the first match instead of
+ * collecting the whole community.
+ *
+ * @returns rows sorted oldest-first by `createdAt`, so `[0]` is the
+ * longest-standing primary admin and the ordering is stable across runs.
+ */
+export async function getPrimaryAdmins(
+  ctx: { db: any },
+  communityId: Id<"communities">
+): Promise<any[]> {
+  const rows = await ctx.db
+    .query("userCommunities")
+    .withIndex("by_community", (q: any) => q.eq("communityId", communityId))
+    .filter((q: any) =>
+      q.and(
+        q.eq(q.field("roles"), PRIMARY_ADMIN_ROLE),
+        q.eq(q.field("status"), 1)
+      )
+    )
+    .collect();
+
+  return rows.sort(comparePrimaryAdminSeniority);
+}
+
+/**
+ * Deterministic ordering for the primary-admin set: oldest membership first.
+ *
+ * `createdAt` is the primary key because it is the field the product means by
+ * "longest-standing admin" and it survives data migrations that rewrite
+ * `_creationTime`. `_creationTime` then `_id` break ties so the order is a
+ * total one — two rows written in the same transaction share a `createdAt`,
+ * and an unstable comparator there would make the "pick one" paths
+ * arbitrary again.
+ */
+function comparePrimaryAdminSeniority(a: any, b: any): number {
+  const byCreatedAt = (a.createdAt ?? 0) - (b.createdAt ?? 0);
+  if (byCreatedAt !== 0) return byCreatedAt;
+  const byCreationTime = (a._creationTime ?? 0) - (b._creationTime ?? 0);
+  if (byCreationTime !== 0) return byCreationTime;
+  // Plain codepoint comparison, NOT localeCompare: locale collation can rank
+  // the same two ids differently depending on the runtime's default locale,
+  // and can even report equality for distinct strings. `_id` is unique, so
+  // this makes the comparator a genuinely total, locale-independent order.
+  const aId = String(a._id);
+  const bId = String(b._id);
+  if (aId === bId) return 0;
+  return aId < bId ? -1 : 1;
+}
+
+/**
+ * The single primary admin that inherits something ownerless — a departing
+ * member's future meetings, for instance.
+ *
+ * Some things genuinely can only have one owner, so when the set has more than
+ * one member we must choose. We choose the EARLIEST `createdAt`:
+ *
+ * - Stable. The same community produces the same answer on every run, so a
+ *   retry, a replay, or a second removal doesn't scatter ownership across
+ *   different admins. `.first()` on the index used to decide this, which is
+ *   insertion-order luck rather than a rule.
+ * - Defensible. Oldest membership is the founder / longest-standing admin —
+ *   the person most likely to recognise an inherited event, and the one who
+ *   was there before whoever was added last week.
+ * - Cheap. Walking `by_community_createdAt` means the index is ALREADY in the
+ *   order we want, so we stop at the first matching row rather than reading
+ *   every membership in the community. This matters: the caller is member
+ *   removal, and collecting the whole `userCommunities` range for a
+ *   thousand-member community would put a scan proportional to community size
+ *   on the removal path (Convex per-query read limits are a documented hazard
+ *   in this repo). In practice the founder is both the earliest `createdAt`
+ *   and a primary admin, so this usually matches on the very first row.
+ *
+ * Ties on `createdAt` fall back to index order, which is stable — same
+ * intent as `comparePrimaryAdminSeniority`, enforced by the index instead of
+ * by a sort. `getPrimaryAdmins(...)[0]` is the equivalent (and equally
+ * deterministic) whole-set form; this one just doesn't pay for the whole set.
+ *
+ * @returns null if the community has no active primary admin at all (possible
+ * for archived or half-migrated communities); callers must handle that.
+ */
+export async function pickInheritingPrimaryAdmin(
+  ctx: { db: any },
+  communityId: Id<"communities">
+): Promise<any | null> {
+  const row = await ctx.db
+    .query("userCommunities")
+    .withIndex("by_community_createdAt", (q: any) => q.eq("communityId", communityId))
+    .filter((q: any) =>
+      q.and(
+        q.eq(q.field("roles"), PRIMARY_ADMIN_ROLE),
+        q.eq(q.field("status"), 1)
+      )
+    )
+    .first();
+
+  return row ?? null;
 }
 
 /**

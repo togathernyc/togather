@@ -2,25 +2,42 @@
  * ChannelInfoScreen
  *
  * Mirror of `ChatInfoScreen` (the DM info surface) but for group channels
- * — Leaders, Reach Out, PCO synced, and custom channels. Reached via the
- * (i) icon in the chat header on non-General channels and via the
- * CHANNELS card on the group page.
+ * — General, Leaders, Reach Out, PCO synced, and custom channels. Reached
+ * via the (i) icon in the chat header and via the CHANNELS card on the
+ * group page.
  *
- * General (channelType === "main") does NOT mount this screen — the
- * group page IS the channel info for General. The route shim
- * `/inbox/[groupId]/[channelSlug]/info/index.tsx` redirects in that
- * case.
+ * General (channelType === "main") mounts this screen like every other
+ * channel, but only renders the hero, Open chat, Members, and the
+ * leader-only Active state control — General can't be renamed, archived,
+ * shared, left, or have people added (its membership is the group itself).
  *
  * Layout (DM-sleek):
  *   - "Channel info" centered title + back chevron
  *   - Centered hero (channel icon + #name + "N members" + share pill if shared)
  *   - "Open chat" CTA card
+ *   - "Mute channel" switch (whatsapp-shell flag only, W18)
  *   - MEMBERS card
  *   - "Add people" standalone card (leaders only — manage screen)
  *   - CHANNEL ACTIONS (Share invite link, Leave channel)
- *   - LEADER CONTROLS (Active state, Rename, Share with groups, Archive)
+ *   - LEADER CONTROLS (Active state, Rename, Discoverable [flag-gated,
+ *     custom only], Share with groups, Archive)
+ *
+ * This screen serves BOTH the whatsapp-shell flag-off and flag-on paths (see
+ * `app/inbox/[groupId]/[channelSlug]/info.tsx`), so restyle work extends the
+ * existing `whatsappShell` gating rather than replacing it. Per
+ * `docs/plans/church-migration-ui-redesign/WHATSAPP-DESIGN-SYSTEM.md` §3.2/§8
+ * ("Channel info" checklist), when `whatsappShell` is on: the hero, Open
+ * chat + Mute row, Members (+ Add people), Channel actions, and Leader
+ * controls each regroup into `WaInsetGroup`/`WaCell` anatomy on
+ * `bg.grouped`. Per-type branching (main/leaders/reach_out/custom/pco/
+ * cross_team/announcements) is unchanged — only the visual shell around it
+ * is. Sections not named in the restyle task (pending shared-channel
+ * invite, Requests, cross-team members, PCO "Not in channel") are
+ * deliberately left in their pre-existing bespoke card styling in both
+ * flag states — see the restyle report for the reasoning. Flag-off is
+ * byte-identical to before this pass.
  */
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -36,6 +53,7 @@ import {
   TextInput,
   Modal,
   Linking,
+  Switch,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
@@ -46,9 +64,21 @@ import { AdminViewNote } from "@components/ui/AdminViewNote";
 import { ConfirmModal } from "@components/ui/ConfirmModal";
 import { CustomModal } from "@components/ui/Modal";
 import { AutoChannelSettings } from "@features/channels";
+import { MemberSearch, type CommunityMember } from "@components/ui/MemberSearch";
+import {
+  CrossTeamSelectorPicker,
+  updateCrossTeamChannelRef,
+  getCrossTeamChannelMembershipRef,
+  addPermanentMemberToChannelRef,
+  removePermanentMemberFromChannelRef,
+  type CrossTeamSelector,
+  type CrossTeamChannelMembership,
+} from "@features/scheduling";
 import { useAuth } from "@providers/AuthProvider";
 import { useTheme } from "@hooks/useTheme";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { waAccentPalette } from "@utils/waPalette";
+import { useWhatsappShell } from "@hooks/useWhatsappShell";
 import {
   useQuery,
   api,
@@ -60,13 +90,47 @@ import {
   getDebugReasonText,
   type UnsyncedPerson,
 } from "@/utils/channel-members";
+import { errorMessage } from "@/utils/error-handling";
+import { confirmAnnouncementsShareAccept } from "@features/groups/hooks/useRespondToChannelInvite";
+import {
+  WaInsetGroup,
+  WaCell,
+  WaRow,
+  WaSubScreenHeader,
+  WaActionCard,
+  WaActionCardRow,
+  waAvatarPalette,
+  WA_GROUP_SPACING,
+  WA_GROUP_MARGIN,
+  WA_AVATAR_PROFILE,
+  WA_HERO_NAME_GAP,
+  WA_CHEVRON_SIZE,
+  WA_CHEVRON_GAP,
+  WA_SECTION_LABEL_SIZE,
+  WA_TYPE_HERO_NAME,
+  WA_TYPE_SUBTITLE,
+  WA_WEIGHT_BOLD,
+} from "@components/wa";
 
 type Props = {
   groupId: string;
   channelSlug: string;
+  /**
+   * Optional disambiguator for shared channels. Channel slugs are only unique
+   * within the owning group, so a group invited to two same-slug channels needs
+   * the id to resolve the right one. Plain group channels omit it.
+   */
+  channelId?: string;
 };
 
-type ChannelType = "main" | "leaders" | "reach_out" | "pco_services" | "custom";
+type ChannelType =
+  | "main"
+  | "leaders"
+  | "reach_out"
+  | "announcements"
+  | "pco_services"
+  | "custom"
+  | "cross_team";
 
 type ChannelIconConfig = {
   icon: React.ComponentProps<typeof Ionicons>["name"];
@@ -78,7 +142,20 @@ type ChannelIconConfig = {
 function getChannelIconConfig(
   channelType: string,
   brand: string,
+  isServingTeam?: boolean,
 ): ChannelIconConfig {
+  // A serving-team channel is a `custom` channel flagged `isServingTeam`. It
+  // gets the green calendar glyph used for serving-team rows in the group
+  // channels list, so the icon persists into Channel Info (plain custom
+  // channels keep the chat bubble).
+  if (channelType === "custom" && isServingTeam) {
+    return {
+      icon: "calendar-outline",
+      color: "#10B981",
+      bg: "#10B98115",
+      defaultName: "Serving Team",
+    };
+  }
   switch (channelType) {
     case "main":
       return { icon: "chatbubbles", color: brand, bg: brand + "15", defaultName: "General" };
@@ -86,19 +163,29 @@ function getChannelIconConfig(
       return { icon: "star", color: "#FFA500", bg: "#FFA50015", defaultName: "Leaders" };
     case "reach_out":
       return { icon: "hand-left", color: "#8E44AD", bg: "#8E44AD15", defaultName: "Reach Out" };
+    case "announcements":
+      return { icon: "megaphone", color: "#E11D48", bg: "#E11D4815", defaultName: "Announcements" };
     case "pco_services":
       return { icon: "sync", color: "#2196F3", bg: "#2196F315", defaultName: "PCO Channel" };
+    case "cross_team":
+      return { icon: "git-merge", color: "#00897B", bg: "#00897B15", defaultName: "Cross-team Channel" };
     default:
       return { icon: "chatbubble", color: "#00BCD4", bg: "#00BCD415", defaultName: "Channel" };
   }
 }
 
-export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
+export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { token, user } = useAuth();
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const { primaryColor } = useCommunityTheme();
+  // §1.2 dark-mode accent shift — never reuse the light-mode brand hex
+  // verbatim in dark mode. Only feeds whatsappShell-gated JSX below (see the
+  // per-usage comments); flag-off branches keep raw `primaryColor` unchanged
+  // (see MessageItem/MessageInput/ConvexChatRoomScreen/InviteKitScreen for
+  // the same split pattern in other dual-flag files).
+  const waAccent = useMemo(() => waAccentPalette(primaryColor, isDark).accent, [primaryColor, isDark]);
 
   const channel = useQuery(
     api.functions.messaging.channels.getChannelBySlug,
@@ -107,7 +194,13 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
     // can re-enable from Active state. Without this, the row is filtered out
     // and the screen shows "no longer available."
     token
-      ? { token, groupId: groupId as Id<"groups">, slug: channelSlug, includeArchived: true }
+      ? {
+          token,
+          groupId: groupId as Id<"groups">,
+          slug: channelSlug,
+          includeArchived: true,
+          ...(channelId ? { channelId: channelId as Id<"chatChannels"> } : {}),
+        }
       : "skip",
   );
 
@@ -115,6 +208,16 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
     api.functions.messaging.channels.getChannelMembers,
     token && channel
       ? { token, channelId: channel._id, limit: 50 }
+      : "skip",
+  );
+
+  // Cross-team channels split membership into two sections — manually pinned
+  // "Permanent" members and live "Synced by role" cards (one per matched role).
+  // Backend gates by group membership.
+  const crossTeamMembership = useQuery(
+    getCrossTeamChannelMembershipRef,
+    token && channel?._id && channel.channelType === "cross_team"
+      ? { token, channelId: channel._id }
       : "skip",
   );
 
@@ -155,6 +258,12 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
   const leaveChannelMutation = useAuthenticatedMutation(
     api.functions.messaging.channels.leaveChannel,
   );
+  const respondToInviteMutation = useAuthenticatedMutation(
+    api.functions.messaging.sharedChannels.respondToChannelInvite,
+  );
+  const removeGroupFromChannelMutation = useAuthenticatedMutation(
+    api.functions.messaging.sharedChannels.removeGroupFromChannel,
+  );
   const archiveCustomChannelMutation = useAuthenticatedMutation(
     api.functions.messaging.channels.archiveCustomChannel,
   );
@@ -163,6 +272,18 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
   );
   const addByPcoPersonId = useAuthenticatedMutation(
     api.functions.groupMembers.addByPcoPersonId,
+  );
+
+  // W18 mute + discoverable rows — gated behind the whatsapp-shell flag so
+  // the screen renders unchanged when it's off. Both writes target existing
+  // schema fields (chatChannelMembers.isMuted; chatChannels.discoverable),
+  // per the redesign's "additive fields only" guarantee.
+  const whatsappShell = useWhatsappShell();
+  const setChannelMutedMutation = useAuthenticatedMutation(
+    api.functions.messaging.channels.setChannelMuted,
+  );
+  const setChannelDiscoverableMutation = useAuthenticatedMutation(
+    api.functions.messaging.channels.setChannelDiscoverable,
   );
 
   // Auto channel config — drives the "Not in channel" section for PCO synced
@@ -175,19 +296,77 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
       : "skip",
   );
 
+  const updateCrossTeamChannel = useAuthenticatedMutation(
+    updateCrossTeamChannelRef,
+  );
+  const addPermanentMemberToChannel = useAuthenticatedMutation(
+    addPermanentMemberToChannelRef,
+  );
+  const removePermanentMemberFromChannel = useAuthenticatedMutation(
+    removePermanentMemberFromChannelRef,
+  );
+
   const [renameVisible, setRenameVisible] = useState(false);
   const [renameValue, setRenameValue] = useState("");
   const [renameSubmitting, setRenameSubmitting] = useState(false);
   const [renameError, setRenameError] = useState<string | null>(null);
+  const [hintVisible, setHintVisible] = useState(false);
+  const [hintValue, setHintValue] = useState("");
+  const [hintSubmitting, setHintSubmitting] = useState(false);
+  const [hintError, setHintError] = useState<string | null>(null);
   const [leaveVisible, setLeaveVisible] = useState(false);
   const [archiveVisible, setArchiveVisible] = useState(false);
+  const [pendingResponding, setPendingResponding] = useState<
+    null | "accept" | "decline"
+  >(null);
+  const [removeShareVisible, setRemoveShareVisible] = useState(false);
+  const [removingShare, setRemovingShare] = useState(false);
   const [archiving, setArchiving] = useState(false);
   const [leaving, setLeaving] = useState(false);
   const [pcoSettingsVisible, setPcoSettingsVisible] = useState(false);
+  const [crossTeamEditVisible, setCrossTeamEditVisible] = useState(false);
+  const [crossTeamDraft, setCrossTeamDraft] = useState<CrossTeamSelector[]>([]);
+  const [crossTeamSaving, setCrossTeamSaving] = useState(false);
+  const [addPermanentVisible, setAddPermanentVisible] = useState(false);
+  const [pendingRemovePermanent, setPendingRemovePermanent] = useState<{
+    userId: Id<"users">;
+    name: string;
+  } | null>(null);
+  const [removingPermanent, setRemovingPermanent] = useState(false);
   const [requestInFlight, setRequestInFlight] = useState<string | null>(null);
   const [unmatchedActionInFlight, setUnmatchedActionInFlight] = useState<
     string | null
   >(null);
+
+  // Optimistic overrides for the two W18 toggles — cleared whenever the
+  // channel identity changes so a stale override never leaks across
+  // channels (e.g. navigating Channel A -> Channel B).
+  const [mutedOverride, setMutedOverride] = useState<boolean | null>(null);
+  const [muteToggling, setMuteToggling] = useState(false);
+  const [discoverableOverride, setDiscoverableOverride] = useState<
+    boolean | null
+  >(null);
+  const [discoverableToggling, setDiscoverableToggling] = useState(false);
+  useEffect(() => {
+    setMutedOverride(null);
+    setDiscoverableOverride(null);
+  }, [channel?._id]);
+  // Once the live query catches up to the optimistic value, drop the
+  // override so later server-side changes (another device, another leader)
+  // aren't masked while this screen stays mounted.
+  useEffect(() => {
+    if (mutedOverride !== null && channel?.isMuted === mutedOverride) {
+      setMutedOverride(null);
+    }
+  }, [channel?.isMuted, mutedOverride]);
+  useEffect(() => {
+    if (
+      discoverableOverride !== null &&
+      (channel?.discoverable ?? true) === discoverableOverride
+    ) {
+      setDiscoverableOverride(null);
+    }
+  }, [channel?.discoverable, discoverableOverride]);
 
   const handleJoinMode = useCallback(() => {
     router.push(`/inbox/${groupId}/${channelSlug}/info/join-mode` as any);
@@ -246,14 +425,89 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
   const isLeadersChannel = channelType === "leaders";
   const isReachOut = channelType === "reach_out";
   const isPco = channelType === "pco_services";
+  const isCrossTeam = channelType === "cross_team";
+  const isAnnouncements = channelType === "announcements";
+  // Renameable types: plain custom, serving-team (which is a `custom` channel
+  // flagged isServingTeam — renaming it also renames the team, backend-side),
+  // and cross-team. NOT pco_services or system channels (main/leaders/
+  // announcements/reach_out).
+  const isRenameable = isCustom || isCrossTeam;
 
-  const iconCfg = getChannelIconConfig(channelType, primaryColor);
+  // This channel's saved cross-team selectors, sourced BY CHANNEL ID from
+  // getChannelBySlug (the raw `crossTeamSync.selectors`). Reading it off the
+  // channel doc — rather than a group-scoped list — means the edit picker
+  // prefills correctly even for a shared channel opened from a linked group
+  // whose id differs from the channel's home group.
+  const savedCrossTeamSelectors = useMemo<CrossTeamSelector[]>(
+    () =>
+      (
+        (channel as { crossTeamSync?: { selectors?: CrossTeamSelector[] } } | undefined)
+          ?.crossTeamSync?.selectors ?? []
+      ).map((s) => ({
+        sourceTeamId: s.sourceTeamId,
+        ...(s.roleId ? { roleId: s.roleId } : {}),
+      })),
+    [channel],
+  );
+
+  // Seed the picker draft ONLY on the modal open transition — read the latest
+  // saved selectors from a ref so the effect doesn't depend on them. The saved
+  // selectors come off the reactive `channel`, whose object identity changes on
+  // every incoming message (lastMessageAt is patched). Depending on them here
+  // would re-fire mid-edit and silently clobber the leader's unsaved picker
+  // selection. The selectors are always available at open time (they're read
+  // off the already-loaded `channel` the screen can't render without), so the
+  // old late-arrival problem no longer applies.
+  const savedSelectorsRef = useRef(savedCrossTeamSelectors);
+  useEffect(() => {
+    savedSelectorsRef.current = savedCrossTeamSelectors;
+  }, [savedCrossTeamSelectors]);
+  useEffect(() => {
+    if (crossTeamEditVisible) {
+      setCrossTeamDraft(savedSelectorsRef.current);
+    }
+  }, [crossTeamEditVisible]);
+
+  const iconCfg = getChannelIconConfig(
+    channelType,
+    primaryColor,
+    (channel as { isServingTeam?: boolean } | undefined)?.isServingTeam,
+  );
   const channelDisplayName = channel?.name?.trim() || iconCfg.defaultName;
 
   const sharedGroupCount = useMemo(() => {
     if (!channel?.sharedGroups) return 0;
     return channel.sharedGroups.filter((sg: any) => sg.status === "accepted").length;
   }, [channel?.sharedGroups]);
+
+  // Shared-channel relationship of THIS group (the URL group) to the channel.
+  // `pendingShareForGroup` / `primaryGroupName` come from getChannelBySlug.
+  const isPendingShareInvite =
+    (channel as { pendingShareForGroup?: boolean } | undefined)
+      ?.pendingShareForGroup === true;
+  const primaryGroupName = (
+    channel as { primaryGroupName?: string | null } | undefined
+  )?.primaryGroupName;
+  // True when this group is a *secondary* participant on a shared channel it
+  // owns by acceptance (not the owning group). Leaders here can remove the
+  // whole group from the channel — distinct from an individual "leave".
+  const isSecondaryShare = useMemo(() => {
+    if (!channel?.groupId || channel.groupId === groupId) return false;
+    return (channel.sharedGroups ?? []).some(
+      (sg: any) => sg.groupId === groupId && sg.status === "accepted",
+    );
+  }, [channel?.groupId, channel?.sharedGroups, groupId]);
+
+  // Only fetched while reviewing a pending ANNOUNCEMENTS invite (leader-gated
+  // on the backend): tells us whether this group already receives
+  // announcements through another share, so the accept confirmation can warn
+  // about the automatic switch.
+  const activeSharedChannels = useQuery(
+    api.functions.messaging.sharedChannels.listActiveSharedChannelsForGroup,
+    token && isPendingShareInvite && channel?.channelType === "announcements"
+      ? { token, groupId: groupId as Id<"groups"> }
+      : "skip",
+  );
 
   const handleBack = useCallback(() => {
     if (router.canGoBack()) {
@@ -270,6 +524,57 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
   const handleManageMembers = useCallback(() => {
     router.push(`/inbox/${groupId}/${channelSlug}/members` as any);
   }, [router, groupId, channelSlug]);
+
+  // `isMuted` comes from the caller's chatChannelMembers row, surfaced by
+  // getChannelBySlug alongside `role`; `mutedOverride` keeps the switch
+  // optimistic while the mutation is in flight.
+  const isChannelMuted =
+    mutedOverride ??
+    ((channel as { isMuted?: boolean } | undefined)?.isMuted ?? false);
+  const handleToggleMuted = useCallback(
+    async (value: boolean) => {
+      if (!channel?._id) return;
+      setMutedOverride(value);
+      setMuteToggling(true);
+      try {
+        await setChannelMutedMutation({ channelId: channel._id, muted: value });
+      } catch (e: any) {
+        setMutedOverride(!value);
+        Alert.alert("Error", errorMessage(e, "Failed to update mute setting"));
+      } finally {
+        setMuteToggling(false);
+      }
+    },
+    [channel?._id, setChannelMutedMutation],
+  );
+
+  // Discoverable: undefined/true = listed in the group's channel directory
+  // ("Channels you can join"), false = hidden. Custom channels only.
+  const isChannelDiscoverable =
+    discoverableOverride ??
+    ((channel as { discoverable?: boolean } | undefined)?.discoverable ?? true);
+  const handleToggleDiscoverable = useCallback(
+    async (value: boolean) => {
+      if (!channel?._id) return;
+      setDiscoverableOverride(value);
+      setDiscoverableToggling(true);
+      try {
+        await setChannelDiscoverableMutation({
+          channelId: channel._id,
+          discoverable: value,
+        });
+      } catch (e: any) {
+        setDiscoverableOverride(!value);
+        Alert.alert(
+          "Error",
+          errorMessage(e, "Failed to update discoverable setting"),
+        );
+      } finally {
+        setDiscoverableToggling(false);
+      }
+    },
+    [channel?._id, setChannelDiscoverableMutation],
+  );
 
   const handleActiveState = useCallback(() => {
     router.push(`/inbox/${groupId}/${channelSlug}/info/active-state` as any);
@@ -329,6 +634,98 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
     }
   }, [channel?._id, leaveChannelMutation, groupId, router]);
 
+  const performAcceptInvite = useCallback(async () => {
+    if (!channel?._id) return;
+    setPendingResponding("accept");
+    try {
+      await respondToInviteMutation({
+        channelId: channel._id,
+        groupId: groupId as Id<"groups">,
+        response: "accepted",
+      });
+      // Stay on the screen — getChannelBySlug now re-resolves the channel as an
+      // accepted shared channel and the normal management UI takes over.
+    } catch (e: any) {
+      // ConvexError payloads (e.g. OWN_CHANNEL_SHARED) carry the readable
+      // message on `.data.message`; `.message` is generic in production.
+      Alert.alert("Couldn't accept", errorMessage(e, "Please try again."));
+    } finally {
+      setPendingResponding(null);
+    }
+  }, [channel?._id, respondToInviteMutation, groupId]);
+
+  const handleAcceptInvite = useCallback(() => {
+    // Accepting an announcements share has group-wide side effects (member
+    // backfill + this group's own Announcements channel turned off), so it
+    // gets an explicit confirmation. Other channel types accept immediately.
+    if (channel?.channelType === "announcements") {
+      const currentShare = (activeSharedChannels ?? []).find(
+        (c: any) =>
+          c.channelType === "announcements" && c.channelId !== channel._id,
+      );
+      confirmAnnouncementsShareAccept({
+        ownerName: primaryGroupName ?? "the owning group",
+        switchFromGroupName: currentShare?.primaryGroupName,
+        onConfirm: () => void performAcceptInvite(),
+      });
+      return;
+    }
+    void performAcceptInvite();
+  }, [
+    channel?.channelType,
+    channel?._id,
+    primaryGroupName,
+    activeSharedChannels,
+    performAcceptInvite,
+  ]);
+
+  const handleDeclineInvite = useCallback(() => {
+    Alert.alert(
+      "Decline invitation",
+      "Decline this shared channel invitation?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Decline",
+          style: "destructive",
+          onPress: async () => {
+            if (!channel?._id) return;
+            setPendingResponding("decline");
+            try {
+              await respondToInviteMutation({
+                channelId: channel._id,
+                groupId: groupId as Id<"groups">,
+                response: "declined",
+              });
+              router.replace(`/groups/${groupId}` as any);
+            } catch (e: any) {
+              Alert.alert("Couldn't decline", e?.message || "Please try again.");
+            } finally {
+              setPendingResponding(null);
+            }
+          },
+        },
+      ],
+    );
+  }, [channel?._id, respondToInviteMutation, groupId, router]);
+
+  const handleRemoveShare = useCallback(async () => {
+    if (!channel?._id) return;
+    setRemovingShare(true);
+    try {
+      await removeGroupFromChannelMutation({
+        channelId: channel._id,
+        groupId: groupId as Id<"groups">,
+      });
+      setRemoveShareVisible(false);
+      router.replace(`/groups/${groupId}` as any);
+    } catch (e: any) {
+      Alert.alert("Couldn't remove", e?.message || "Please try again.");
+    } finally {
+      setRemovingShare(false);
+    }
+  }, [channel?._id, removeGroupFromChannelMutation, groupId, router]);
+
   const handleArchiveChannel = useCallback(async () => {
     if (!channel?._id) return;
     setArchiving(true);
@@ -342,6 +739,68 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
       setArchiving(false);
     }
   }, [channel?._id, archiveCustomChannelMutation, groupId, router]);
+
+  const handleSaveCrossTeam = useCallback(async () => {
+    if (!channel?._id || crossTeamSaving) return;
+    if (crossTeamDraft.length === 0) {
+      Alert.alert(
+        "Pick at least one role",
+        "A cross-team channel needs at least one team + role selector.",
+      );
+      return;
+    }
+    setCrossTeamSaving(true);
+    try {
+      const result = await updateCrossTeamChannel({
+        channelId: channel._id,
+        selectors: crossTeamDraft,
+      });
+      setCrossTeamEditVisible(false);
+      const { addedCount, removedCount } = result;
+      const message =
+        addedCount === 0 && removedCount === 0
+          ? "Synced roles updated. Membership is unchanged."
+          : `Synced roles updated. ${addedCount} added, ${removedCount} removed.`;
+      Alert.alert("Saved", message);
+    } catch (e: any) {
+      Alert.alert("Couldn't save", e?.message || "Please try again.");
+    } finally {
+      setCrossTeamSaving(false);
+    }
+  }, [channel?._id, crossTeamSaving, crossTeamDraft, updateCrossTeamChannel]);
+
+  // Pin a permanent member on a cross-team channel. The modal stays open; the
+  // reactive membership query drops the person from the picker once added.
+  const handleAddPermanentMember = useCallback(
+    async (member: CommunityMember) => {
+      if (!channel?._id) return;
+      try {
+        await addPermanentMemberToChannel({
+          channelId: channel._id,
+          userId: member.user_id as Id<"users">,
+        });
+      } catch (e: any) {
+        Alert.alert("Couldn't add member", e?.message || "Please try again.");
+      }
+    },
+    [channel?._id, addPermanentMemberToChannel],
+  );
+
+  const handleRemovePermanentMember = useCallback(async () => {
+    if (!channel?._id || !pendingRemovePermanent) return;
+    setRemovingPermanent(true);
+    try {
+      await removePermanentMemberFromChannel({
+        channelId: channel._id,
+        userId: pendingRemovePermanent.userId,
+      });
+      setPendingRemovePermanent(null);
+    } catch (e: any) {
+      Alert.alert("Couldn't remove member", e?.message || "Please try again.");
+    } finally {
+      setRemovingPermanent(false);
+    }
+  }, [channel?._id, pendingRemovePermanent, removePermanentMemberFromChannel]);
 
   const handleAddUnmatchedToGroup = useCallback(
     async (person: UnsyncedPerson) => {
@@ -409,6 +868,12 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
     [channelDisplayName, groupData?.name, groupData?.shortId],
   );
 
+  const openRename = useCallback(() => {
+    setRenameValue(channelDisplayName);
+    setRenameError(null);
+    setRenameVisible(true);
+  }, [channelDisplayName]);
+
   const handleRename = useCallback(async () => {
     const trimmed = renameValue.trim();
     if (!trimmed) {
@@ -430,6 +895,24 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
       setRenameSubmitting(false);
     }
   }, [renameValue, channel?._id, updateChannelMutation]);
+
+  const handleSaveHint = useCallback(async () => {
+    if (!channel?._id) return;
+    setHintSubmitting(true);
+    try {
+      // Empty value clears the hint (composer falls back to "Message...").
+      await updateChannelMutation({
+        channelId: channel._id,
+        hint: hintValue.trim(),
+      });
+      setHintVisible(false);
+      setHintError(null);
+    } catch (e: any) {
+      setHintError(e?.message || "Could not save hint");
+    } finally {
+      setHintSubmitting(false);
+    }
+  }, [hintValue, channel?._id, updateChannelMutation]);
 
   if (channel === undefined) {
     return (
@@ -465,26 +948,6 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
     );
   }
 
-  // Main channel never reaches the rendered body — the route shim
-  // redirects to the group page. This is a defensive fallback.
-  if (isMain) {
-    return (
-      <View
-        style={[
-          styles.container,
-          { paddingTop: insets.top, backgroundColor: colors.surface },
-        ]}
-      >
-        <Header onBack={handleBack} colors={colors} />
-        <View style={styles.centered}>
-          <Text style={[styles.errorText, { color: colors.textSecondary }]}>
-            The General channel uses the group page for info.
-          </Text>
-        </View>
-      </View>
-    );
-  }
-
   const memberRows = channelMembers?.members ?? [];
   const totalMemberCount = channelMembers?.totalCount ?? channel.memberCount ?? 0;
   const ownerId = (channel as { createdById?: Id<"users"> }).createdById;
@@ -493,14 +956,37 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
       | UnsyncedPerson[]
       | undefined) ?? [];
 
+  // Members (+ Add people) share these gates across both the whatsapp-shell
+  // WaInsetGroup rendering and the flag-off original cards below.
+  const showMemberRows = !isCrossTeam && memberRows.length > 0;
+  const showViewAll = showMemberRows && totalMemberCount > memberRows.length;
+  const showAddPeople = isLeader && !isMain;
+  // §3.2 "hairlines align with the label's leading edge" — leading padding
+  // (16) + this section's 40pt avatar + avatar-to-text gap (12).
+  const waMemberRowSeparatorInset = 16 + 40 + 12;
+  // §3.2 muted pastel entity disc — only read flag-on (see the hero JSX).
+  const heroPastel = waAvatarPalette(channelDisplayName, isDark);
+
   return (
     <View
       style={[
         styles.container,
-        { paddingTop: insets.top, backgroundColor: colors.surface },
+        {
+          paddingTop: insets.top,
+          backgroundColor: whatsappShell ? colors.backgroundGrouped : colors.surface,
+        },
       ]}
     >
-      <Header onBack={handleBack} colors={colors} />
+      {/* §3.1 — flag-on drops the opaque bar entirely for a floating back
+          circle + centered 17pt title over the grouped-gray canvas. Flag-off
+          keeps the original `Header` bar byte-identical. (The loading/error
+          branches above stay on `Header` in both states: they paint
+          `colors.surface`, not the grouped canvas the floating chrome needs.) */}
+      {whatsappShell ? (
+        <WaSubScreenHeader title="Channel info" onBack={handleBack} />
+      ) : (
+        <Header onBack={handleBack} colors={colors} />
+      )}
 
       <ScrollView
         style={styles.scroll}
@@ -509,29 +995,88 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
         {/* Asymmetric-view banner — only when the viewer is here because
             they're a group leader and isn't actually a member of the
             channel itself (custom / PCO disabled / Leaders for non-leader-channel-members). */}
-        {isViewingAsLeaderOnly && (
+        {isViewingAsLeaderOnly && !isPendingShareInvite && (
           <AdminViewNote
             variant="banner"
             text="You can see this channel as a group leader. Members not in the channel don't see it."
           />
         )}
 
-        {/* Hero */}
+        {/* Hero — §3.2/§8: same anatomy (icon, #name + rename pencil,
+            member count, shared pill) either way; whatsapp-shell on scales
+            the icon circle to the kit's WA_AVATAR_PROFILE (108pt) and the
+            member-count subtitle to §2's 15pt-regular hero-subtitle scale,
+            with the shared pill recolored onto `bg.card`/`separator`
+            tokens instead of the flag-off `surfaceSecondary`/`border`. */}
         <View style={styles.heroSection}>
-          <View style={[styles.heroIconCircle, { backgroundColor: iconCfg.bg }]}>
-            <Ionicons name={iconCfg.icon} size={48} color={iconCfg.color} />
+          <View
+            style={[
+              whatsappShell ? styles.heroIconCircleWa : styles.heroIconCircle,
+              // §3.2: flag-on swaps the per-type tinted disc (pale green for
+              // General, pale red for Announcements…) for a muted pastel
+              // entity disc — S5.2 bans brand-green fallback avatars, and the
+              // channel's own glyph still carries the type signal.
+              { backgroundColor: whatsappShell ? heroPastel.background : iconCfg.bg },
+            ]}
+            testID="channel-hero-disc"
+          >
+            <Ionicons
+              name={iconCfg.icon}
+              size={48}
+              color={whatsappShell ? heroPastel.foreground : iconCfg.color}
+            />
           </View>
-          <Text style={[styles.heroName, { color: colors.text }]} numberOfLines={2}>
-            {isCustom || isPco ? `#${channelDisplayName}` : channelDisplayName}
-          </Text>
-          <Text style={[styles.heroSubtitle, { color: colors.textSecondary }]}>
+          {isRenameable && isLeader ? (
+            <TouchableOpacity
+              activeOpacity={0.6}
+              onPress={openRename}
+              accessibilityRole="button"
+              accessibilityLabel="Rename channel"
+            >
+              <View style={styles.heroTitleRow}>
+                <Text
+                  style={[
+                    whatsappShell ? styles.heroNameWa : styles.heroName,
+                    { color: colors.text, marginTop: 0 },
+                  ]}
+                  numberOfLines={2}
+                >
+                  {isCustom ? `#${channelDisplayName}` : channelDisplayName}
+                </Text>
+                <Ionicons
+                  name="create-outline"
+                  size={18}
+                  color={colors.textSecondary}
+                  style={styles.heroTitlePencil}
+                />
+              </View>
+            </TouchableOpacity>
+          ) : (
+            <Text
+              style={[
+                whatsappShell ? styles.heroNameWa : styles.heroName,
+                { color: colors.text },
+              ]}
+              numberOfLines={2}
+            >
+              {isCustom || isPco ? `#${channelDisplayName}` : channelDisplayName}
+            </Text>
+          )}
+          <Text
+            style={[
+              whatsappShell ? styles.heroSubtitleWa : styles.heroSubtitle,
+              { color: colors.textSecondary },
+            ]}
+          >
             {totalMemberCount} {totalMemberCount === 1 ? "member" : "members"}
           </Text>
           {sharedGroupCount > 0 && (
             <View
               style={[
                 styles.sharedPill,
-                { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
+                whatsappShell
+                  ? { backgroundColor: colors.surfaceGrouped, borderColor: colors.separator }
+                  : { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
               ]}
             >
               <Ionicons name="link" size={12} color={colors.textSecondary} />
@@ -542,7 +1087,129 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
           )}
         </View>
 
-        {/* Open chat */}
+        {/* Pending shared-channel invitation — this group was invited to the
+            channel but hasn't accepted. Show a focused accept/decline prompt
+            and hide the normal management surfaces until the leader responds.
+            whatsapp-shell on: §1.3/§1.4 inset-grouped anatomy — the
+            description moves into the card's `footer` slot and Accept/
+            Decline become an accent `action` row and a red `destructive`
+            row (§3.2 row variants). Both variants are plain text only (no
+            accessory slot for a spinner), so the in-flight state swaps the
+            row's own label instead of overlaying an `ActivityIndicator`. */}
+        {isPendingShareInvite && whatsappShell && (
+          <View style={styles.waSection}>
+            <WaInsetGroup
+              header="Shared channel invitation"
+              footer={
+                primaryGroupName
+                  ? `${primaryGroupName} invited your group to join this channel.`
+                  : "Your group has been invited to join this channel."
+              }
+              separatorInset={0}
+            >
+              <WaCell
+                variant="action"
+                title={pendingResponding === "accept" ? "Accepting…" : "Accept"}
+                onPress={handleAcceptInvite}
+                disabled={pendingResponding !== null}
+                accent={waAccent}
+              />
+              <WaCell
+                variant="destructive"
+                title={pendingResponding === "decline" ? "Declining…" : "Decline"}
+                onPress={handleDeclineInvite}
+                disabled={pendingResponding !== null}
+              />
+            </WaInsetGroup>
+          </View>
+        )}
+        {isPendingShareInvite && !whatsappShell && (
+          <View
+            style={[
+              styles.sectionGroup,
+              styles.inviteCard,
+              { backgroundColor: colors.surfaceSecondary },
+            ]}
+          >
+            <Text style={[styles.inviteHeading, { color: colors.text }]}>
+              Shared channel invitation
+            </Text>
+            <Text style={[styles.inviteBody, { color: colors.textSecondary }]}>
+              {primaryGroupName
+                ? `${primaryGroupName} invited your group to join this channel.`
+                : "Your group has been invited to join this channel."}
+            </Text>
+            <View style={styles.inviteButtonRow}>
+              <TouchableOpacity
+                onPress={handleAcceptInvite}
+                disabled={pendingResponding !== null}
+                style={[
+                  styles.inviteAcceptBtn,
+                  { backgroundColor: primaryColor },
+                  pendingResponding !== null && { opacity: 0.6 },
+                ]}
+              >
+                {pendingResponding === "accept" ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={styles.inviteAcceptText}>Accept</Text>
+                )}
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={handleDeclineInvite}
+                disabled={pendingResponding !== null}
+                style={[
+                  styles.inviteDeclineBtn,
+                  { borderColor: colors.destructive },
+                  pendingResponding !== null && { opacity: 0.6 },
+                ]}
+              >
+                {pendingResponding === "decline" ? (
+                  <ActivityIndicator size="small" color={colors.destructive} />
+                ) : (
+                  <Text
+                    style={[styles.inviteDeclineText, { color: colors.destructive }]}
+                  >
+                    Decline
+                  </Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+
+        {!isPendingShareInvite && (
+        <>
+        {/* Open chat + Mute channel (W18) — §3.3 promotes both out of a card
+            into the white rounded action-button row that sits between the
+            hero and the first card group ("~76px tall, green glyph + 15pt
+            dark label instead of plain cells"). Mute is member-only (a leader
+            viewing a channel they haven't joined has no membership row to
+            mute); as a button it flips on tap and its own label carries the
+            state, since an action card has no switch slot. Flag-off renders
+            the original bespoke cards unchanged. */}
+        {whatsappShell ? (
+          <View style={styles.waSection}>
+            <WaActionCardRow>
+              <WaActionCard
+                icon="chatbubbles-outline"
+                label="Open chat"
+                onPress={handleOpenChat}
+                accent={waAccent}
+              />
+              {isMemberOfChannel ? (
+                <WaActionCard
+                  icon={isChannelMuted ? "notifications-outline" : "notifications-off-outline"}
+                  label={isChannelMuted ? "Unmute" : "Mute"}
+                  onPress={() => handleToggleMuted(!isChannelMuted)}
+                  disabled={muteToggling}
+                  accent={waAccent}
+                />
+              ) : null}
+            </WaActionCardRow>
+          </View>
+        ) : (
+          <>
         <Pressable
           onPress={handleOpenChat}
           style={({ pressed }) => [
@@ -560,11 +1227,85 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
           </Text>
           <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
         </Pressable>
+          </>
+        )}
 
         {/* Pending join requests — leader-only, custom channels with
             approval-required mode. Shown above Members so leaders see
-            pending work first. */}
-        {isLeader && (pendingRequests?.length ?? 0) > 0 && (
+            pending work first. whatsapp-shell on: §3.2 inset-grouped —
+            each request is a `WaRow` (avatar/title/subtitle) whose
+            `rightAccessory` escape hatch holds the same Decline/Approve
+            pill-button pair as flag-off (WaRow has no built-in two-button
+            accessory, and the buttons' own handlers/in-flight state are
+            unchanged). */}
+        {isLeader && (pendingRequests?.length ?? 0) > 0 && whatsappShell && (
+          <View style={styles.waSection}>
+            <WaInsetGroup
+              header={`Requests · ${pendingRequests!.length}`}
+              separatorInset={16 + 40 + 12}
+            >
+              {pendingRequests!.map((req: any) => {
+                const inFlight = requestInFlight === (req._id as string);
+                const requesterName = req.displayName || "Someone";
+                return (
+                  <WaRow
+                    key={req._id}
+                    avatar={{ imageUrl: req.profilePhoto, label: requesterName, size: 40 }}
+                    title={requesterName}
+                    subtitle="Wants to join"
+                    height={64}
+                    rightAccessory={
+                      <View style={styles.requestActions}>
+                        <Pressable
+                          onPress={() => handleDeclineRequest(req._id)}
+                          disabled={inFlight}
+                          style={({ pressed }) => [
+                            styles.requestActionBtn,
+                            {
+                              backgroundColor: pressed
+                                ? colors.selectedBackground
+                                : colors.surface,
+                              opacity: inFlight ? 0.5 : 1,
+                            },
+                          ]}
+                        >
+                          <Text
+                            style={[styles.requestActionLabel, { color: colors.destructive }]}
+                          >
+                            Decline
+                          </Text>
+                        </Pressable>
+                        <Pressable
+                          onPress={() => handleApproveRequest(req._id)}
+                          disabled={inFlight}
+                          style={({ pressed }) => [
+                            styles.requestActionBtn,
+                            {
+                              backgroundColor: pressed
+                                ? waAccent + "CC"
+                                : waAccent,
+                              opacity: inFlight ? 0.6 : 1,
+                            },
+                          ]}
+                        >
+                          {inFlight ? (
+                            <ActivityIndicator size="small" color="#fff" />
+                          ) : (
+                            <Text style={[styles.requestActionLabel, { color: "#fff" }]}>
+                              Approve
+                            </Text>
+                          )}
+                        </Pressable>
+                      </View>
+                    }
+                  />
+                );
+              })}
+            </WaInsetGroup>
+          </View>
+        )}
+
+        {isLeader && (pendingRequests?.length ?? 0) > 0 && !whatsappShell && (
           <>
             <SectionHeader
               colors={colors}
@@ -657,8 +1398,84 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
           </>
         )}
 
-        {/* Members */}
-        {memberRows.length > 0 && (
+        {/* Cross-team members — two sections that distinguish role-synced from
+            manually pinned members. Replaces the flat Members list above for
+            cross-team channels. A person who is both appears in both sections. */}
+        {isCrossTeam && (
+          <CrossTeamMembersSections
+            membership={crossTeamMembership}
+            colors={colors}
+            primaryColor={primaryColor}
+            waAccent={waAccent}
+            canManage={isLeader}
+            whatsappShell={whatsappShell}
+            onAdd={() => setAddPermanentVisible(true)}
+            onRemove={(userId, name) =>
+              setPendingRemovePermanent({ userId, name })
+            }
+            onOpenProfile={(userId) =>
+              router.push(`/profile/${userId}` as any)
+            }
+          />
+        )}
+
+        {/* Members (+ Add people, §3.2/§8) — whatsapp-shell on folds both
+            into one WaInsetGroup of WaRow member rows + trailing WaCells
+            ("View all"/"Add people"); flag-off keeps the original card.
+            The flag-off "Add people" standalone card further below is
+            gated `!whatsappShell` so it doesn't double-render here. */}
+        {whatsappShell && (showMemberRows || showAddPeople) && (
+          <View style={styles.waSection}>
+            <WaInsetGroup
+              header={showMemberRows ? "Members" : undefined}
+              separatorInset={waMemberRowSeparatorInset}
+            >
+              {showMemberRows &&
+                memberRows.map((m: any) => {
+                  const displayName = m.displayName || "Member";
+                  const isOwner = !!ownerId && m.userId === ownerId;
+                  const isSelf = m.userId === user?.id;
+                  return (
+                    <WaRow
+                      key={m.id}
+                      avatar={{ imageUrl: m.profilePhoto, label: displayName, size: 40 }}
+                      title={`${displayName}${isSelf ? " (you)" : ""}`}
+                      // §3.5: the role reads as right-aligned gray TEXT beside
+                      // the chevron, not as a subtitle under the name (which
+                      // also grew the row to the 76pt two-line height).
+                      // `rightAccessory` is used rather than the default right
+                      // column because that column top-aligns its contents —
+                      // the accessory slot centers them (S3.3).
+                      rightAccessory={
+                        <MemberRoleAccessory
+                          role={isOwner ? "Owner" : undefined}
+                          colors={colors}
+                        />
+                      }
+                      onPress={() => router.push(`/profile/${m.userId}` as any)}
+                    />
+                  );
+                })}
+              {showViewAll && (
+                <WaCell
+                  variant="navigational"
+                  title={`View all ${totalMemberCount} members`}
+                  onPress={handleManageMembers}
+                />
+              )}
+              {showAddPeople && (
+                <WaCell
+                  icon="person-add-outline"
+                  title="Add people"
+                  onPress={isCrossTeam ? () => setAddPermanentVisible(true) : handleManageMembers}
+                />
+              )}
+            </WaInsetGroup>
+          </View>
+        )}
+
+        {/* Members — flag-off original card. */}
+        {!whatsappShell && showMemberRows && (
           <>
             <SectionHeader colors={colors} label="Members" />
             <View style={[styles.sectionGroup, { backgroundColor: colors.surfaceSecondary }]}>
@@ -709,7 +1526,7 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
                 );
               })}
             </View>
-            {totalMemberCount > memberRows.length && (
+            {showViewAll && (
               <Pressable
                 onPress={handleManageMembers}
                 style={({ pressed }) => [
@@ -730,8 +1547,142 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
             and quick actions. Mirrors the unmatched panel in PCO sync
             settings (image 5 in the original spec). Only renders when the
             backend returns unmatched data — leader access is enforced server
-            side via `getAutoChannelConfigByChannel`. */}
-        {isPco && isLeader && unmatchedPeople.length > 0 && (
+            side via `getAutoChannelConfigByChannel`. whatsapp-shell on:
+            §3.2 inset-grouped shell (header/footer, `bg.card` rows,
+            hairline separators) — the helper box becomes the card's
+            `footer` text; each row's internal content (warning glyph, name,
+            team/role/contact lines, reason, action buttons) has no
+            single-slot kit equivalent (WaCell/WaRow are one title + one
+            subtitle), so it stays the same bespoke layout as flag-off,
+            just placed inside the `WaInsetGroup` shell instead of a
+            hand-styled card. */}
+        {isPco && isLeader && unmatchedPeople.length > 0 && whatsappShell && (
+          <View style={styles.waSection}>
+            <WaInsetGroup
+              header={`Not in channel · ${unmatchedPeople.length}`}
+              footer="PCO matches Togather users by phone number. Make sure each person's phone in PCO matches their Togather account."
+              separatorInset={0}
+            >
+              {unmatchedPeople.map((person) => {
+                const inFlight = unmatchedActionInFlight === person.pcoPersonId;
+                const canAddToGroup = person.reason === "not_in_group";
+                const canSmsInvite = !!person.pcoPhone;
+                return (
+                  <View key={person.pcoPersonId} style={styles.unmatchedRow}>
+                    <View style={styles.unmatchedHeaderRow}>
+                      <View style={styles.unmatchedAvatarWarn}>
+                        <Ionicons name="warning" size={20} color="#B25000" />
+                      </View>
+                      <View style={styles.unmatchedTextWrap}>
+                        <Text
+                          style={[styles.memberRowName, { color: colors.text }]}
+                          numberOfLines={1}
+                        >
+                          {person.pcoName}
+                        </Text>
+                        {(person.teamName || person.position) && (
+                          <Text
+                            style={[styles.unmatchedSubLabel, { color: colors.textSecondary }]}
+                            numberOfLines={1}
+                          >
+                            {[person.teamName, person.position]
+                              .filter(Boolean)
+                              .join(" · ")}
+                          </Text>
+                        )}
+                        {person.pcoPhone ? (
+                          <Text
+                            style={[styles.unmatchedContactLine, { color: colors.textSecondary }]}
+                            numberOfLines={1}
+                          >
+                            {`📱 ${person.pcoPhone}`}
+                          </Text>
+                        ) : null}
+                        {person.pcoEmail ? (
+                          <Text
+                            style={[styles.unmatchedContactLine, { color: colors.textSecondary }]}
+                            numberOfLines={1}
+                          >
+                            {`✉️ ${person.pcoEmail}`}
+                          </Text>
+                        ) : null}
+                        <Text
+                          style={[styles.unmatchedReasonText, { color: "#B25000" }]}
+                          numberOfLines={2}
+                        >
+                          {getDebugReasonText(person.reason, person)}
+                        </Text>
+                      </View>
+                    </View>
+                    {(canAddToGroup || canSmsInvite) && (
+                      <View style={styles.unmatchedActionsRow}>
+                        {canAddToGroup && (
+                          <Pressable
+                            onPress={() => handleAddUnmatchedToGroup(person)}
+                            disabled={inFlight}
+                            style={({ pressed }) => [
+                              styles.unmatchedActionBtn,
+                              {
+                                backgroundColor: pressed
+                                  ? waAccent + "CC"
+                                  : waAccent,
+                                opacity: inFlight ? 0.6 : 1,
+                              },
+                            ]}
+                          >
+                            {inFlight ? (
+                              <ActivityIndicator size="small" color="#fff" />
+                            ) : (
+                              <>
+                                <Ionicons name="person-add" size={14} color="#fff" />
+                                <Text style={styles.unmatchedActionLabelLight}>
+                                  Add to group
+                                </Text>
+                              </>
+                            )}
+                          </Pressable>
+                        )}
+                        {canSmsInvite && (
+                          <Pressable
+                            onPress={() => handleInviteUnmatchedBySMS(person)}
+                            disabled={inFlight}
+                            style={({ pressed }) => [
+                              styles.unmatchedActionBtn,
+                              {
+                                backgroundColor: pressed
+                                  ? colors.selectedBackground
+                                  : colors.surface,
+                                borderWidth: StyleSheet.hairlineWidth,
+                                borderColor: colors.border,
+                                opacity: inFlight ? 0.6 : 1,
+                              },
+                            ]}
+                          >
+                            <Ionicons
+                              name="chatbubble-ellipses-outline"
+                              size={14}
+                              color={colors.text}
+                            />
+                            <Text
+                              style={[
+                                styles.unmatchedActionLabel,
+                                { color: colors.text },
+                              ]}
+                            >
+                              Invite via SMS
+                            </Text>
+                          </Pressable>
+                        )}
+                      </View>
+                    )}
+                  </View>
+                );
+              })}
+            </WaInsetGroup>
+          </View>
+        )}
+
+        {isPco && isLeader && unmatchedPeople.length > 0 && !whatsappShell && (
           <>
             <SectionHeader
               colors={colors}
@@ -878,13 +1829,20 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
           </>
         )}
 
-        {/* Add people — for now this routes to the existing manage-members
-            sub-route. TODO: fold the in-screen picker (mirror of DM
-            ChatInfoScreen.AddPeopleModal) inline once we have a
-            channel-scoped search query. */}
-        {isLeader && (
+        {/* Add people — for a cross-team channel this opens the in-screen
+            people picker to pin a PERMANENT member (its roster is otherwise
+            auto-synced, so there's no manage-members sub-route). Other channel
+            types route to the existing manage-members screen. General's
+            membership is the group itself, so there's nothing to add here.
+            Flag-off only — whatsapp-shell on folds this into the Members
+            WaInsetGroup above (`showAddPeople`) instead. */}
+        {!whatsappShell && showAddPeople && (
           <Pressable
-            onPress={handleManageMembers}
+            onPress={
+              isCrossTeam
+                ? () => setAddPermanentVisible(true)
+                : handleManageMembers
+            }
             style={({ pressed }) => [
               styles.actionCard,
               {
@@ -901,49 +1859,229 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
           </Pressable>
         )}
 
-        {/* CHANNEL ACTIONS */}
-        <SectionHeader colors={colors} label="Channel actions" />
-        <View style={[styles.sectionGroup, { backgroundColor: colors.surfaceSecondary }]}>
-          {isLeader && isCustom && (
-            <Pressable
-              onPress={handleShareInvite}
-              style={({ pressed }) => [
-                styles.actionRowFlat,
-                pressed && { backgroundColor: colors.selectedBackground },
-              ]}
-            >
-              <Ionicons name="share-outline" size={20} color={colors.icon} />
-              <Text style={[styles.actionLabel, { color: colors.text }]}>
-                Share invite link
-              </Text>
-            </Pressable>
-          )}
-          <Pressable
-            onPress={() => setLeaveVisible(true)}
-            style={({ pressed }) => [
-              styles.actionRowFlat,
-              isLeader && isCustom && {
-                borderTopWidth: StyleSheet.hairlineWidth,
-                borderTopColor: colors.border,
-              },
-              pressed && { backgroundColor: colors.selectedBackground },
-            ]}
-          >
-            <Ionicons name="exit-outline" size={20} color={colors.destructive} />
-            <Text style={[styles.actionLabel, { color: colors.destructive }]}>
-              Leave channel
-            </Text>
-          </Pressable>
-        </View>
+        {/* CHANNEL ACTIONS — General has no invite link and can't be left
+            (its membership is the group itself), so hide the whole section.
+            §1.4/§3.3: Leave/Remove are red WaCell destructive rows (no
+            icon, no chevron) when whatsapp-shell is on. */}
+        {!isMain && whatsappShell && (
+          <View style={styles.waSection}>
+            <WaInsetGroup header="Channel actions" separatorInset={0}>
+              {isLeader && isCustom && (
+                <WaCell icon="share-outline" title="Share invite link" onPress={handleShareInvite} />
+              )}
+              <WaCell variant="destructive" title="Leave channel" onPress={() => setLeaveVisible(true)} />
+              {/* Remove shared channel — leader-only opt-out for a group that
+                  participates in this channel as a secondary (non-owning)
+                  group. Removes the whole group from the share, distinct from
+                  an individual leave. The owning group keeps the channel. */}
+              {isLeader && isSecondaryShare && (
+                <WaCell
+                  variant="destructive"
+                  title="Remove shared channel"
+                  onPress={() => setRemoveShareVisible(true)}
+                />
+              )}
+            </WaInsetGroup>
+          </View>
+        )}
+        {!isMain && !whatsappShell && (
+          <>
+            <SectionHeader colors={colors} label="Channel actions" />
+            <View style={[styles.sectionGroup, { backgroundColor: colors.surfaceSecondary }]}>
+              {isLeader && isCustom && (
+                <Pressable
+                  onPress={handleShareInvite}
+                  style={({ pressed }) => [
+                    styles.actionRowFlat,
+                    pressed && { backgroundColor: colors.selectedBackground },
+                  ]}
+                >
+                  <Ionicons name="share-outline" size={20} color={colors.icon} />
+                  <Text style={[styles.actionLabel, { color: colors.text }]}>
+                    Share invite link
+                  </Text>
+                </Pressable>
+              )}
+              <Pressable
+                onPress={() => setLeaveVisible(true)}
+                style={({ pressed }) => [
+                  styles.actionRowFlat,
+                  isLeader && isCustom && {
+                    borderTopWidth: StyleSheet.hairlineWidth,
+                    borderTopColor: colors.border,
+                  },
+                  pressed && { backgroundColor: colors.selectedBackground },
+                ]}
+              >
+                <Ionicons name="exit-outline" size={20} color={colors.destructive} />
+                <Text style={[styles.actionLabel, { color: colors.destructive }]}>
+                  Leave channel
+                </Text>
+              </Pressable>
 
-        {/* LEADER CONTROLS */}
-        {isLeader && (
+              {/* Remove shared channel — leader-only opt-out for a group that
+                  participates in this channel as a secondary (non-owning)
+                  group. Removes the whole group from the share, distinct from
+                  an individual leave. The owning group keeps the channel. */}
+              {isLeader && isSecondaryShare && (
+                <Pressable
+                  onPress={() => setRemoveShareVisible(true)}
+                  style={({ pressed }) => [
+                    styles.actionRowFlat,
+                    {
+                      borderTopWidth: StyleSheet.hairlineWidth,
+                      borderTopColor: colors.border,
+                    },
+                    pressed && { backgroundColor: colors.selectedBackground },
+                  ]}
+                >
+                  <Ionicons
+                    name="remove-circle-outline"
+                    size={20}
+                    color={colors.destructive}
+                  />
+                  <Text style={[styles.actionLabel, { color: colors.destructive }]}>
+                    Remove shared channel
+                  </Text>
+                </Pressable>
+              )}
+            </View>
+          </>
+        )}
+
+        {/* LEADER CONTROLS — §3.2/§8: one WaInsetGroup of WaCells when
+            whatsapp-shell is on. Every row keeps its exact per-type gating
+            logic (isCustom/isPco/isCrossTeam/isReachOut/…) — only the
+            visual shell changes. The Reach Out / Leaders helper text moves
+            into the group's `footer` slot (§3.2 "section footers sit below
+            their card"). */}
+        {isLeader && whatsappShell && (
+          <View style={styles.waSection}>
+            <WaInsetGroup
+              header="Leader controls"
+              footer={
+                isReachOut
+                  ? "Reach Out requires the Leaders channel to be active."
+                  : isLeadersChannel
+                    ? "Leaders channel is private to group leaders and admins."
+                    : undefined
+              }
+            >
+              {/* Active state — common to main/leaders/reach_out/custom/pco.
+                  For General this is the only leader control: it's how a
+                  leader disables and (from the disabled row) re-enables it. */}
+              <WaCell icon="toggle-outline" title="Active state" onPress={handleActiveState} />
+
+              {/* Join mode — custom channels only. Routes to an explicit
+                  picker (Open / Approval required) so leaders don't have to
+                  dive into Share with groups → swap-icon to change it. */}
+              {isCustom && (
+                <WaCell
+                  icon="key-outline"
+                  title="Join mode"
+                  value={(inviteInfo?.joinMode ?? "open") === "open" ? "Open" : "Approval required"}
+                  onPress={handleJoinMode}
+                />
+              )}
+
+              {/* Discoverable — W17/W18. Custom channels only; undefined/true
+                  means listed in the group's "Channels you can join" directory,
+                  false hides it (invite-link / leader-add still work either
+                  way). */}
+              {isCustom && (
+                <WaCell
+                  icon="compass-outline"
+                  title="Discoverable"
+                  description='Listed in "Channels you can join"'
+                  variant="toggle"
+                  toggleValue={isChannelDiscoverable}
+                  onToggleChange={handleToggleDiscoverable}
+                  disabled={discoverableToggling}
+                  accent={waAccent}
+                />
+              )}
+
+              {/* PCO Sync Settings — open the existing AutoChannelSettings
+                  modal. Only meaningful for PCO synced channels. */}
+              {isPco && (
+                <WaCell
+                  icon="sync-outline"
+                  title="PCO sync settings"
+                  onPress={() => setPcoSettingsVisible(true)}
+                />
+              )}
+
+              {/* Edit synced roles — cross-team channels. Reopens the
+                  selector picker prefilled from the current config and
+                  saves via updateCrossTeamChannel. */}
+              {isCrossTeam && (
+                <WaCell
+                  icon="git-merge-outline"
+                  title="Edit synced roles"
+                  onPress={() => setCrossTeamEditVisible(true)}
+                />
+              )}
+
+              {/* No "set up as serving team" here — ADR-024/ADR-025 removed
+                  the channel→team conversion path. Teams are created only in
+                  the Rostering hub via `createServingTeam`, and a team's
+                  roster is managed there, not from its chat channel. */}
+
+              {/* Composer hint — guidance text shown as the message-box
+                  placeholder (e.g. "put experience updates here"). Editing is
+                  authorized by `updateChannel` against the owning group, so we
+                  hide it for secondary-share viewers (a linked group's leader
+                  would otherwise open the modal only to hit "Not authorized").
+                  The owning group's leaders manage the shared hint. */}
+              {!isSecondaryShare && (
+                <WaCell
+                  icon="bulb-outline"
+                  title="Composer hint"
+                  value={channel?.hint || undefined}
+                  onPress={() => {
+                    setHintValue(channel?.hint ?? "");
+                    setHintError(null);
+                    setHintVisible(true);
+                  }}
+                />
+              )}
+
+              {/* Rename — custom, serving-team, and cross-team channels
+                  (backend gates the rest, and mirrors serving-team → team). */}
+              {isRenameable && (
+                <WaCell icon="create-outline" title="Rename" onPress={openRename} />
+              )}
+
+              {/* Share with groups — custom + pco_services + announcements.
+                  Announcements can only be shared by the OWNING group's
+                  leaders (a secondary group receives the share; it has
+                  nothing to share out). */}
+              {(isCustom || isPco || (isAnnouncements && !isSecondaryShare)) && (
+                <WaCell icon="people-outline" title="Share with groups" onPress={handleManageMembers} />
+              )}
+
+              {/* Archive — custom only (Leaders/Reach Out are toggled via
+                  Active state; archive is a stronger op). */}
+              {isCustom && (
+                <WaCell
+                  variant="destructive"
+                  title="Archive channel"
+                  onPress={() => setArchiveVisible(true)}
+                />
+              )}
+            </WaInsetGroup>
+          </View>
+        )}
+
+        {isLeader && !whatsappShell && (
           <>
             <SectionHeader colors={colors} label="Leader controls" />
             <View
               style={[styles.sectionGroup, { backgroundColor: colors.surfaceSecondary }]}
             >
-              {/* Active state — common to leaders/reach_out/custom/pco */}
+              {/* Active state — common to main/leaders/reach_out/custom/pco.
+                  For General this is the only leader control: it's how a
+                  leader disables and (from the disabled row) re-enables it. */}
               <Pressable
                 onPress={handleActiveState}
                 style={({ pressed }) => [
@@ -1027,14 +2165,91 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
                 </Pressable>
               )}
 
-              {/* Rename — custom channels only (backend gates the rest). */}
-              {isCustom && (
+              {/* Edit synced roles — cross-team channels. Reopens the
+                  selector picker prefilled from the current config and
+                  saves via updateCrossTeamChannel. */}
+              {isCrossTeam && (
+                <Pressable
+                  onPress={() => setCrossTeamEditVisible(true)}
+                  style={({ pressed }) => [
+                    styles.actionRowFlat,
+                    {
+                      borderTopWidth: StyleSheet.hairlineWidth,
+                      borderTopColor: colors.border,
+                    },
+                    pressed && { backgroundColor: colors.selectedBackground },
+                  ]}
+                >
+                  <Ionicons
+                    name="git-merge-outline"
+                    size={20}
+                    color={colors.icon}
+                  />
+                  <Text style={[styles.actionLabel, { color: colors.text }]}>
+                    Edit synced roles
+                  </Text>
+                  <Ionicons
+                    name="chevron-forward"
+                    size={18}
+                    color={colors.textTertiary}
+                    style={{ marginLeft: "auto" }}
+                  />
+                </Pressable>
+              )}
+
+              {/* No "set up as serving team" here — ADR-024/ADR-025 removed
+                  the channel→team conversion path. Teams are created only in
+                  the Rostering hub via `createServingTeam`, and a team's
+                  roster is managed there, not from its chat channel. */}
+
+              {/* Composer hint — guidance text shown as the message-box
+                  placeholder (e.g. "put experience updates here"). Editing is
+                  authorized by `updateChannel` against the owning group, so we
+                  hide it for secondary-share viewers (a linked group's leader
+                  would otherwise open the modal only to hit "Not authorized").
+                  The owning group's leaders manage the shared hint. */}
+              {!isSecondaryShare && (
                 <Pressable
                   onPress={() => {
-                    setRenameValue(channelDisplayName);
-                    setRenameError(null);
-                    setRenameVisible(true);
+                    setHintValue(channel?.hint ?? "");
+                    setHintError(null);
+                    setHintVisible(true);
                   }}
+                  style={({ pressed }) => [
+                    styles.actionRowFlat,
+                    {
+                      borderTopWidth: StyleSheet.hairlineWidth,
+                      borderTopColor: colors.border,
+                    },
+                    pressed && { backgroundColor: colors.selectedBackground },
+                  ]}
+                >
+                  <Ionicons name="bulb-outline" size={20} color={colors.icon} />
+                  <Text style={[styles.actionLabel, { color: colors.text }]}>
+                    Composer hint
+                  </Text>
+                  {channel?.hint ? (
+                    <Text
+                      style={[styles.actionRowValue, { color: colors.textSecondary }]}
+                      numberOfLines={1}
+                    >
+                      {channel.hint}
+                    </Text>
+                  ) : null}
+                  <Ionicons
+                    name="chevron-forward"
+                    size={18}
+                    color={colors.textTertiary}
+                    style={{ marginLeft: channel?.hint ? 0 : "auto" }}
+                  />
+                </Pressable>
+              )}
+
+              {/* Rename — custom, serving-team, and cross-team channels
+                  (backend gates the rest, and mirrors serving-team → team). */}
+              {isRenameable && (
+                <Pressable
+                  onPress={openRename}
                   style={({ pressed }) => [
                     styles.actionRowFlat,
                     {
@@ -1057,8 +2272,11 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
                 </Pressable>
               )}
 
-              {/* Share with groups — custom + pco_services */}
-              {(isCustom || isPco) && (
+              {/* Share with groups — custom + pco_services + announcements.
+                  Announcements can only be shared by the OWNING group's
+                  leaders (a secondary group receives the share; it has
+                  nothing to share out). */}
+              {(isCustom || isPco || (isAnnouncements && !isSecondaryShare)) && (
                 <Pressable
                   onPress={handleManageMembers}
                   style={({ pressed }) => [
@@ -1146,6 +2364,8 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
             </View>
           </>
         )}
+        </>
+        )}
       </ScrollView>
 
       {/* Rename modal */}
@@ -1215,6 +2435,77 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
         </View>
       </CustomModal>
 
+      {/* Composer hint modal */}
+      <CustomModal
+        visible={hintVisible}
+        onClose={() => {
+          if (!hintSubmitting) {
+            setHintVisible(false);
+            setHintError(null);
+          }
+        }}
+        title="Composer hint"
+      >
+        <View>
+          <Text style={[styles.helperText, { color: colors.textSecondary, marginBottom: 12 }]}>
+            Shown as the message-box placeholder to guide what people post here.
+            Leave empty to use the default.
+          </Text>
+          <TextInput
+            value={hintValue}
+            onChangeText={setHintValue}
+            placeholder="e.g. put experience updates here"
+            placeholderTextColor={colors.textSecondary}
+            maxLength={100}
+            autoFocus
+            style={[
+              styles.renameInput,
+              {
+                color: colors.text,
+                backgroundColor: colors.inputBackground,
+                borderColor: colors.inputBorder,
+              },
+            ]}
+          />
+          {hintError ? (
+            <Text style={[styles.errorText, { color: colors.destructive, marginTop: 8 }]}>
+              {hintError}
+            </Text>
+          ) : null}
+          <View style={styles.modalButtonRow}>
+            <TouchableOpacity
+              onPress={() => {
+                setHintVisible(false);
+                setHintError(null);
+              }}
+              disabled={hintSubmitting}
+              style={[styles.modalButton, { backgroundColor: colors.surfaceSecondary }]}
+            >
+              <Text style={[styles.modalButtonText, { color: colors.text }]}>
+                Cancel
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={handleSaveHint}
+              disabled={hintSubmitting}
+              style={[
+                styles.modalButton,
+                { backgroundColor: primaryColor },
+                hintSubmitting && { opacity: 0.6 },
+              ]}
+            >
+              {hintSubmitting ? (
+                <ActivityIndicator size="small" color="#ffffff" />
+              ) : (
+                <Text style={[styles.modalButtonText, { color: "#ffffff" }]}>
+                  Save
+                </Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
+      </CustomModal>
+
       <ConfirmModal
         visible={leaveVisible}
         title="Leave channel"
@@ -1237,6 +2528,17 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
         isLoading={archiving}
       />
 
+      <ConfirmModal
+        visible={removeShareVisible}
+        title="Remove shared channel"
+        message={`Remove #${channelDisplayName} from this group? Members who are only here through this group will lose access. The owning group keeps the channel.`}
+        onConfirm={handleRemoveShare}
+        onCancel={() => setRemoveShareVisible(false)}
+        confirmText="Remove"
+        destructive
+        isLoading={removingShare}
+      />
+
       {/* PCO Sync Settings — full-screen modal mounting the existing
           AutoChannelSettings UI for PCO synced channels. */}
       <Modal
@@ -1255,6 +2557,152 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
           />
         )}
       </Modal>
+
+      {/* Edit synced roles — cross-team channels. Full-screen modal mounting
+          the same selector picker used in channel creation. */}
+      <Modal
+        visible={crossTeamEditVisible}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => {
+          if (!crossTeamSaving) setCrossTeamEditVisible(false);
+        }}
+      >
+        <View
+          style={[
+            styles.container,
+            { paddingTop: insets.top, backgroundColor: colors.surface },
+          ]}
+        >
+          <View
+            style={[
+              styles.headerBar,
+              {
+                backgroundColor: colors.surface,
+                borderBottomColor: colors.border,
+              },
+            ]}
+          >
+            <TouchableOpacity
+              onPress={() => setCrossTeamEditVisible(false)}
+              disabled={crossTeamSaving}
+              style={styles.headerBackButton}
+              hitSlop={12}
+            >
+              <Ionicons name="close" size={26} color={colors.text} />
+            </TouchableOpacity>
+            <Text style={[styles.headerTitle, { color: colors.text }]}>
+              Edit synced roles
+            </Text>
+            <TouchableOpacity
+              onPress={handleSaveCrossTeam}
+              disabled={crossTeamSaving}
+              style={styles.headerBackButton}
+              hitSlop={12}
+            >
+              {crossTeamSaving ? (
+                <ActivityIndicator size="small" color={primaryColor} />
+              ) : (
+                <Text
+                  style={[styles.crossTeamSaveLabel, { color: primaryColor }]}
+                >
+                  Save
+                </Text>
+              )}
+            </TouchableOpacity>
+          </View>
+          <ScrollView
+            style={styles.scroll}
+            contentContainerStyle={{
+              padding: 16,
+              paddingBottom: insets.bottom + 24,
+            }}
+          >
+            <CrossTeamSelectorPicker
+              groupId={groupId as Id<"groups">}
+              selectors={crossTeamDraft}
+              onChange={setCrossTeamDraft}
+              disabled={crossTeamSaving}
+            />
+          </ScrollView>
+        </View>
+      </Modal>
+
+      {/* Add permanent members — cross-team channels. Tapping a person pins
+          them immediately; the reactive membership query removes them from the
+          list. */}
+      <Modal
+        visible={addPermanentVisible}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setAddPermanentVisible(false)}
+      >
+        <View
+          style={[
+            styles.container,
+            { paddingTop: insets.top, backgroundColor: colors.surface },
+          ]}
+        >
+          <View
+            style={[
+              styles.headerBar,
+              {
+                backgroundColor: colors.surface,
+                borderBottomColor: colors.border,
+              },
+            ]}
+          >
+            <TouchableOpacity
+              onPress={() => setAddPermanentVisible(false)}
+              style={styles.headerBackButton}
+              hitSlop={12}
+            >
+              <Ionicons name="close" size={26} color={colors.text} />
+            </TouchableOpacity>
+            <Text style={[styles.headerTitle, { color: colors.text }]}>
+              Add members
+            </Text>
+            <TouchableOpacity
+              onPress={() => setAddPermanentVisible(false)}
+              style={styles.headerBackButton}
+              hitSlop={12}
+            >
+              <Text style={[styles.crossTeamSaveLabel, { color: primaryColor }]}>
+                Done
+              </Text>
+            </TouchableOpacity>
+          </View>
+          <MemberSearch
+            mode="single"
+            groupId={groupId}
+            excludeUserIds={(crossTeamMembership?.permanentMembers ?? []).map(
+              (m) => m.userId as string,
+            )}
+            onSelect={handleAddPermanentMember}
+            placeholder="Search group members to add..."
+            showEmptyState
+            showActionButton
+            actionIcon="add-circle-outline"
+            clearOnSelect={false}
+            style={styles.scroll}
+          />
+        </View>
+      </Modal>
+
+      <ConfirmModal
+        visible={pendingRemovePermanent !== null}
+        title="Remove member"
+        message={
+          pendingRemovePermanent
+            ? `Remove ${pendingRemovePermanent.name} from this channel? If they're still on the roster they'll stay via their role.`
+            : ""
+        }
+        onConfirm={handleRemovePermanentMember}
+        onCancel={() => setPendingRemovePermanent(null)}
+        confirmText="Remove"
+        destructive
+        isLoading={removingPermanent}
+      />
     </View>
   );
 }
@@ -1285,6 +2733,34 @@ function Header({
   );
 }
 
+/**
+ * MemberRoleAccessory — §3.5's member-row trailing cluster: the role as
+ * right-aligned gray text followed by a vertically-centered chevron.
+ *
+ * `WaRow`'s default right column top-aligns its stack (it's built for a
+ * timestamp above a badge), which is what left chevrons hugging the row corner
+ * across the info screens. The `rightAccessory` slot centers instead, so
+ * member rows route through it.
+ */
+function MemberRoleAccessory({
+  role,
+  colors,
+}: {
+  role?: string;
+  colors: ReturnType<typeof useTheme>["colors"];
+}) {
+  return (
+    <View style={styles.memberRoleAccessory} testID="member-role-accessory">
+      {role ? (
+        <Text style={[styles.memberRoleText, { color: colors.textTertiary }]} numberOfLines={1}>
+          {role}
+        </Text>
+      ) : null}
+      <Ionicons name="chevron-forward" size={WA_CHEVRON_SIZE} color={colors.textTertiary} />
+    </View>
+  );
+}
+
 function SectionHeader({
   colors,
   label,
@@ -1296,6 +2772,294 @@ function SectionHeader({
     <Text style={[styles.sectionHeader, { color: colors.textSecondary }]}>
       {label.toUpperCase()}
     </Text>
+  );
+}
+
+/**
+ * Cross-team channel membership, rendered as two sections:
+ *   - "Synced by role" — one read-only card per (person, role) they currently
+ *     match from the roster (Team · Role), managed via Edit synced roles.
+ *   - "Permanent" — manually pinned members ("Added manually"), each with a
+ *     remove action; a header [+ Add] opens the people picker.
+ * A person who is both pinned AND role-matched appears in both sections.
+ *
+ * whatsapp-shell on: §3.2 inset-grouped — both sections become
+ * `WaInsetGroup`s of `WaRow`s (avatar/title/subtitle, trailing sync glyph
+ * or remove button via `rightAccessory`). `WaInsetGroup`'s `header` is a
+ * plain string with no trailing element slot, so the "PERMANENT" + [+ Add]
+ * header stays the same bespoke row as flag-off, restyled to the kit's
+ * §2 header type scale (13pt uppercase, `WA_GROUP_MARGIN` leading padding)
+ * instead of the flag-off `sectionHeader` style — matching the precedent in
+ * `GroupInfoScreen`'s `SettingsToggleRow` for slots the kit doesn't cover.
+ */
+function CrossTeamMembersSections({
+  membership,
+  colors,
+  primaryColor,
+  waAccent,
+  canManage,
+  whatsappShell,
+  onAdd,
+  onRemove,
+  onOpenProfile,
+}: {
+  membership: CrossTeamChannelMembership | undefined;
+  colors: ReturnType<typeof useTheme>["colors"];
+  primaryColor: string;
+  waAccent: string;
+  canManage: boolean;
+  whatsappShell: boolean;
+  onAdd: () => void;
+  onRemove: (userId: Id<"users">, name: string) => void;
+  onOpenProfile: (userId: Id<"users">) => void;
+}) {
+  const syncedRoleMembers = membership?.syncedRoleMembers ?? [];
+  const permanentMembers = membership?.permanentMembers ?? [];
+
+  if (whatsappShell) {
+    return (
+      <>
+        {syncedRoleMembers.length > 0 && (
+          <View style={styles.waSection}>
+            <WaInsetGroup header="Synced by role" separatorInset={16 + 40 + 12}>
+              {syncedRoleMembers.map((m) => (
+                <WaRow
+                  key={`${m.userId}:${m.roleId}`}
+                  avatar={{ imageUrl: m.avatarUrl, label: m.name, size: 40 }}
+                  title={m.name}
+                  subtitle={`${m.teamName} · ${m.roleName}`}
+                  onPress={() => onOpenProfile(m.userId)}
+                  rightAccessory={
+                    <Ionicons name="sync" size={16} color={colors.textTertiary} />
+                  }
+                />
+              ))}
+            </WaInsetGroup>
+          </View>
+        )}
+
+        {(permanentMembers.length > 0 || canManage) && (
+          <View style={styles.waSection}>
+            <View style={styles.waPermanentHeaderRow}>
+              <Text style={[styles.waPermanentHeaderLabel, { color: colors.textSecondary }]}>
+                Permanent
+              </Text>
+              {canManage && (
+                <TouchableOpacity
+                  onPress={onAdd}
+                  style={styles.waPermanentAddButton}
+                  hitSlop={8}
+                >
+                  <Ionicons name="add" size={18} color={waAccent} />
+                  <Text style={[styles.waPermanentAddLabel, { color: waAccent }]}>
+                    Add
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
+            {permanentMembers.length > 0 ? (
+              <WaInsetGroup separatorInset={16 + 40 + 12}>
+                {permanentMembers.map((m) => (
+                  <WaRow
+                    key={m.userId}
+                    avatar={{ imageUrl: m.avatarUrl, label: m.name, size: 40 }}
+                    title={m.name}
+                    subtitle="Added manually"
+                    onPress={() => onOpenProfile(m.userId)}
+                    rightAccessory={
+                      canManage ? (
+                        <TouchableOpacity
+                          onPress={() => onRemove(m.userId, m.name)}
+                          style={[styles.waRemoveButton, { backgroundColor: colors.surfaceGrouped }]}
+                          hitSlop={8}
+                        >
+                          <Ionicons name="remove" size={18} color={colors.textSecondary} />
+                        </TouchableOpacity>
+                      ) : undefined
+                    }
+                  />
+                ))}
+              </WaInsetGroup>
+            ) : (
+              <Text style={[styles.waPermanentEmptyText, { color: colors.textTertiary }]}>
+                No permanent members yet. Add people who should always be in this
+                channel.
+              </Text>
+            )}
+          </View>
+        )}
+      </>
+    );
+  }
+
+  return (
+    <>
+      {syncedRoleMembers.length > 0 && (
+        <>
+          <SectionHeader colors={colors} label="Synced by role" />
+          <View
+            style={[
+              styles.sectionGroup,
+              { backgroundColor: colors.surfaceSecondary },
+            ]}
+          >
+            {syncedRoleMembers.map((m, idx) => (
+              <Pressable
+                key={`${m.userId}:${m.roleId}`}
+                onPress={() => onOpenProfile(m.userId)}
+                style={({ pressed }) => [
+                  styles.memberRow,
+                  idx > 0 && {
+                    borderTopWidth: StyleSheet.hairlineWidth,
+                    borderTopColor: colors.border,
+                  },
+                  pressed && { backgroundColor: colors.selectedBackground },
+                ]}
+              >
+                <Avatar name={m.name} imageUrl={m.avatarUrl} size={40} />
+                <View style={styles.memberRowText}>
+                  <Text
+                    style={[styles.memberRowName, { color: colors.text }]}
+                    numberOfLines={1}
+                  >
+                    {m.name}
+                  </Text>
+                  <Text
+                    style={[
+                      styles.memberRowSubtitle,
+                      {
+                        color: colors.textSecondary,
+                        textTransform: "none",
+                        letterSpacing: 0,
+                        fontWeight: "500",
+                      },
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {m.teamName} · {m.roleName}
+                  </Text>
+                </View>
+                <Ionicons name="sync" size={16} color={colors.textTertiary} />
+              </Pressable>
+            ))}
+          </View>
+        </>
+      )}
+
+      {/* Permanent section — always shown for leaders so they can add. */}
+      {(permanentMembers.length > 0 || canManage) && (
+        <>
+          <View
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "space-between",
+              paddingHorizontal: 20,
+              marginTop: 24,
+              marginBottom: 8,
+            }}
+          >
+            <Text
+              style={[styles.sectionHeader, { color: colors.textSecondary, paddingHorizontal: 0, marginTop: 0, marginBottom: 0 }]}
+            >
+              PERMANENT
+            </Text>
+            {canManage && (
+              <TouchableOpacity
+                onPress={onAdd}
+                style={{ flexDirection: "row", alignItems: "center", gap: 2 }}
+                hitSlop={8}
+              >
+                <Ionicons name="add" size={18} color={primaryColor} />
+                <Text
+                  style={{ fontSize: 14, fontWeight: "600", color: primaryColor }}
+                >
+                  Add
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
+          {permanentMembers.length > 0 ? (
+            <View
+              style={[
+                styles.sectionGroup,
+                { backgroundColor: colors.surfaceSecondary },
+              ]}
+            >
+              {permanentMembers.map((m, idx) => (
+                <Pressable
+                  key={m.userId}
+                  onPress={() => onOpenProfile(m.userId)}
+                  style={({ pressed }) => [
+                    styles.memberRow,
+                    idx > 0 && {
+                      borderTopWidth: StyleSheet.hairlineWidth,
+                      borderTopColor: colors.border,
+                    },
+                    pressed && { backgroundColor: colors.selectedBackground },
+                  ]}
+                >
+                  <Avatar name={m.name} imageUrl={m.avatarUrl} size={40} />
+                  <View style={styles.memberRowText}>
+                    <Text
+                      style={[styles.memberRowName, { color: colors.text }]}
+                      numberOfLines={1}
+                    >
+                      {m.name}
+                    </Text>
+                    <Text
+                      style={[
+                        styles.memberRowSubtitle,
+                        {
+                          color: colors.textSecondary,
+                          textTransform: "none",
+                          letterSpacing: 0,
+                          fontWeight: "500",
+                        },
+                      ]}
+                    >
+                      Added manually
+                    </Text>
+                  </View>
+                  {canManage && (
+                    <TouchableOpacity
+                      onPress={() => onRemove(m.userId, m.name)}
+                      style={{
+                        width: 28,
+                        height: 28,
+                        borderRadius: 14,
+                        alignItems: "center",
+                        justifyContent: "center",
+                        backgroundColor: colors.surface,
+                      }}
+                      hitSlop={8}
+                    >
+                      <Ionicons
+                        name="remove"
+                        size={18}
+                        color={colors.textSecondary}
+                      />
+                    </TouchableOpacity>
+                  )}
+                </Pressable>
+              ))}
+            </View>
+          ) : (
+            <Text
+              style={{
+                paddingHorizontal: 20,
+                paddingVertical: 4,
+                fontSize: 13,
+                color: colors.textTertiary,
+              }}
+            >
+              No permanent members yet. Add people who should always be in this
+              channel.
+            </Text>
+          )}
+        </>
+      )}
+    </>
   );
 }
 
@@ -1322,6 +3086,10 @@ const styles = StyleSheet.create({
   },
   headerSpacer: {
     width: 36,
+  },
+  crossTeamSaveLabel: {
+    fontSize: 16,
+    fontWeight: "600",
   },
   scroll: {
     flex: 1,
@@ -1351,14 +3119,94 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  // whatsapp-shell hero — sized to the kit's WA_AVATAR_PROFILE (§6).
+  heroIconCircleWa: {
+    width: WA_AVATAR_PROFILE,
+    height: WA_AVATAR_PROFILE,
+    borderRadius: WA_AVATAR_PROFILE / 2,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   heroName: {
     marginTop: 16,
     fontSize: 22,
     fontWeight: "700",
     textAlign: "center",
   },
+  // §3.2 hero name — 28pt bold (S7's hero-name step), vs the flag-off 22pt.
+  heroNameWa: {
+    marginTop: WA_HERO_NAME_GAP,
+    fontSize: WA_TYPE_HERO_NAME,
+    fontWeight: WA_WEIGHT_BOLD,
+    textAlign: "center",
+  },
+  memberRoleAccessory: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: WA_CHEVRON_GAP,
+  },
+  memberRoleText: {
+    fontSize: WA_TYPE_SUBTITLE,
+    fontWeight: "400",
+  },
+  heroTitleRow: {
+    marginTop: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  heroTitlePencil: {
+    marginLeft: 6,
+  },
   heroSubtitle: {
     marginTop: 4,
+    fontSize: 13,
+  },
+  // §2 "Community/group member count, hero subtitle": 15pt Regular.
+  heroSubtitleWa: {
+    marginTop: 4,
+    fontSize: 15,
+    fontWeight: "400",
+  },
+  waSection: {
+    marginTop: WA_GROUP_SPACING,
+  },
+  // "PERMANENT" header + [+ Add] — WaInsetGroup's `header` has no trailing
+  // element slot, so this stays a bespoke row (§2 header type scale: 13pt
+  // uppercase, WA_GROUP_MARGIN leading padding) rather than a WaSectionLabel.
+  waPermanentHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: WA_GROUP_MARGIN,
+    marginBottom: 8,
+  },
+  // S3.5 — matches WaSectionLabel's own header treatment (15pt sentence-case
+  // gray, no tracking) so this bespoke row can't drift from the kit labels
+  // sitting above the other cards.
+  waPermanentHeaderLabel: {
+    fontSize: WA_SECTION_LABEL_SIZE,
+    fontWeight: "400",
+  },
+  waPermanentAddButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 2,
+  },
+  waPermanentAddLabel: {
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  waRemoveButton: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  waPermanentEmptyText: {
+    paddingHorizontal: WA_GROUP_MARGIN,
+    paddingTop: 4,
     fontSize: 13,
   },
   sharedPill: {
@@ -1387,6 +3235,47 @@ const styles = StyleSheet.create({
     marginHorizontal: 12,
     borderRadius: 12,
     overflow: "hidden",
+  },
+  inviteCard: {
+    padding: 16,
+    gap: 8,
+  },
+  inviteHeading: {
+    fontSize: 16,
+    fontWeight: "700",
+  },
+  inviteBody: {
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  inviteButtonRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 8,
+  },
+  inviteAcceptBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  inviteAcceptText: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: "#fff",
+  },
+  inviteDeclineBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  inviteDeclineText: {
+    fontSize: 15,
+    fontWeight: "600",
   },
   memberRow: {
     flexDirection: "row",
@@ -1454,6 +3343,13 @@ const styles = StyleSheet.create({
     fontWeight: "500",
     marginLeft: "auto",
     marginRight: 4,
+  },
+  discoverableText: {
+    flexShrink: 1,
+  },
+  discoverableSubtitle: {
+    fontSize: 12,
+    marginTop: 2,
   },
   requestRow: {
     flexDirection: "row",

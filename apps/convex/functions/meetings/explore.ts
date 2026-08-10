@@ -12,6 +12,10 @@ import { now, getMediaUrl } from "../../lib/utils";
 import { getOptionalAuth } from "../../lib/auth";
 import { isLeaderRole } from "../../lib/helpers";
 import { isMeetingHost } from "../../lib/meetingPermissions";
+import {
+  isMeetingVisibleTo,
+  resolveInvitedMeetingIds,
+} from "../../lib/meetingAudience";
 
 /**
  * Resolve effective cover images for a batch of meetings, using the CWE
@@ -210,17 +214,14 @@ export const communityEvents = query({
     }
 
     // Filter by visibility
+    const userInvitedIds = await resolveInvitedMeetingIds(ctx, meetings, userId);
     meetings = meetings.filter((m) => {
-      const visibility = m.visibility || "group";
-      if (visibility === "public") return true;
-      if (visibility === "community") {
-        // User must be authenticated AND a member of this community
-        return userId !== null && userCommunityIds.has(args.communityId);
-      }
-      if (visibility === "group") {
-        return userGroupIds.has(m.groupId);
-      }
-      return false;
+      return isMeetingVisibleTo(m, {
+        userId,
+        groupIds: userGroupIds,
+        invitedMeetingIds: userInvitedIds,
+        isCommunityMember: userCommunityIds.has(args.communityId),
+      });
     });
 
     // Sort by scheduledAt ascending
@@ -591,6 +592,11 @@ export const searchEvents = query({
 
     // Filter by date range and visibility
     const currentTime = now();
+    const userInvitedIds = await resolveInvitedMeetingIds(
+      ctx,
+      searchResults,
+      userId
+    );
     const filtered = searchResults.filter((meeting) => {
       if (!nonArchivedGroupIds.has(meeting.groupId)) return false;
       if (meeting.status === "cancelled") return false;
@@ -600,12 +606,13 @@ export const searchEvents = query({
       if (meeting.scheduledAt < afterCutoff) return false;
       if (args.startBefore && meeting.scheduledAt > args.startBefore) return false;
 
-      // Visibility filtering
-      const visibility = meeting.visibility ?? "group";
-      if (visibility === "public") return true;
-      if (visibility === "community") return isCommunityMember;
-      // Default "group" visibility: must be member
-      return userGroupIds.has(meeting.groupId);
+      // Visibility filtering — shared rule, see lib/meetingAudience.ts
+      return isMeetingVisibleTo(meeting, {
+        userId,
+        groupIds: userGroupIds,
+        invitedMeetingIds: userInvitedIds,
+        isCommunityMember,
+      });
     });
 
     // Take only the requested number

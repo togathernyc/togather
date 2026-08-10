@@ -13,7 +13,7 @@ import { query, mutation, internalMutation, internalQuery } from "../_generated/
 import { internal } from "../_generated/api";
 import { Id } from "../_generated/dataModel";
 import { requireAuth } from "../lib/auth";
-import { requireCommunityAdmin } from "../lib/permissions";
+import { requireCommunityAdmin, isCommunityAdmin } from "../lib/permissions";
 import { VALID_CUSTOM_SLOTS } from "../lib/followupConstants";
 import { normalizePhone, buildSearchText, now } from "../lib/utils";
 import { syncUserChannelMembershipsLogic } from "./sync/memberships";
@@ -109,6 +109,32 @@ export const getConfigBySlugInternal = internalQuery({
     if (!landingPage || !landingPage.isEnabled) return null;
 
     return { community, landingPage };
+  },
+});
+
+/**
+ * Whether `userId` is an admin of the community that owns the landing page at
+ * `slug`. Used by the extractFormFromImage action to gate the OCR autofill
+ * (an OpenAI-billed call) to community admins only.
+ */
+export const isAdminForSlugInternal = internalQuery({
+  args: { slug: v.string(), userId: v.id("users") },
+  returns: v.boolean(),
+  handler: async (ctx, args) => {
+    let community = await ctx.db
+      .query("communities")
+      .withIndex("by_slug", (q) => q.eq("slug", args.slug))
+      .first();
+
+    if (!community) {
+      community = await ctx.db
+        .query("communities")
+        .withIndex("by_subdomain", (q) => q.eq("subdomain", args.slug))
+        .first();
+    }
+
+    if (!community) return false;
+    return await isCommunityAdmin(ctx, community._id, args.userId);
   },
 });
 
@@ -337,17 +363,22 @@ export const joinCommunityInternal = internalMutation({
       )
       .first();
 
+    // A user becomes (or re-becomes) an active community member on either of
+    // two paths: a brand-new insert, or reactivation of a previously inactive
+    // membership. Both should trigger marketing sync — without the reactivation
+    // case, someone who left and rejoined via the landing page would skip the
+    // marketing destinations the other join paths handle.
+    let membershipBecameActive = false;
     if (existing) {
       if (existing.status !== 1) {
-        // Reactivate
         await ctx.db.patch(existing._id, {
           status: 1,
           updatedAt: timestamp,
         });
+        membershipBecameActive = true;
       }
       // If already active, still ensure announcement group membership below
     } else {
-      // Create new membership
       await ctx.db.insert("userCommunities", {
         communityId: args.communityId,
         userId: args.userId,
@@ -356,6 +387,21 @@ export const joinCommunityInternal = internalMutation({
         createdAt: timestamp,
         updatedAt: timestamp,
       });
+      membershipBecameActive = true;
+    }
+
+    if (membershipBecameActive) {
+      // Schedule marketing integration syncs (no-op if not connected)
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.marketing.clearstream.syncUser,
+        { communityId: args.communityId, userId: args.userId },
+      );
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.marketing.flodesk.syncUser,
+        { communityId: args.communityId, userId: args.userId },
+      );
     }
 
     // Add to announcement group (handles defensive creation)
@@ -680,10 +726,14 @@ export const setCustomFieldsAndNotes = internalMutation({
       }
     }
 
-    // Schedule communityPeople upsert so the People table is immediately populated
+    // Schedule communityPeople upsert so the People table is immediately
+    // populated. This is the genuine public form submission, so reactivate the
+    // person if they were previously archived (the leader-driven import /
+    // quick-add callers deliberately do not pass this).
     await ctx.scheduler.runAfter(0, internal.functions.communityPeople.upsertFromSubmission, {
       communityId: args.communityId,
       userId: args.userId,
+      reactivate: true,
     });
 
     return { smsSnippets, followupNoteId };

@@ -9,7 +9,6 @@
 
 import { DOMAIN_CONFIG } from "@togather/shared";
 
-const BRAND_NAME = DOMAIN_CONFIG.brandName;
 const BASE_DOMAIN = DOMAIN_CONFIG.baseDomain;
 
 // Bot user agents that need link previews
@@ -64,42 +63,23 @@ function getSubdomain(hostname: string): string | null {
   return null;
 }
 
-interface CommunityData {
-  name?: string;
-  logo?: string;
-  logoFallback?: string;
+// Flat meta shape returned by GET /link-preview/meta — see
+// apps/convex/functions/linkPreviewMeta.ts for the source of truth. All
+// fields are already final/ready to render.
+interface LinkPreviewMeta {
+  title: string;
+  description: string;
+  image: string | null;
+  url: string;
+  siteName: string;
+  imageAlt?: string;
 }
 
-interface GroupTypeData {
-  name?: string;
-  slug?: string;
-}
-
-interface LinkPreviewData {
-  community?: CommunityData;
-  groupType?: GroupTypeData;
-  error?: string;
-}
-
-function generateNearmeOgHtml(
-  data: LinkPreviewData,
-  subdomain: string,
-  originalUrl: string
-): string {
-  const communityName = escapeHtml(data.community?.name || "Community");
-  const groupTypeName = data.groupType?.name;
-
-  // Build title: "Find a [GroupType] Near You" or "Find a Group Near You"
-  const title = groupTypeName
-    ? `Find a ${escapeHtml(groupTypeName)} Near You`
-    : "Find a Group Near You";
-
-  const description = groupTypeName
-    ? `Discover ${escapeHtml(groupTypeName)} groups in ${communityName}`
-    : `Discover groups near you in ${communityName}`;
-
-  // Use original S3 bucket URL - compressed bucket may return 403 for community logos
-  const imageUrl = data.community?.logo || data.community?.logoFallback || "";
+function generateOgHtml(meta: LinkPreviewMeta): string {
+  const title = escapeHtml(meta.title);
+  const description = escapeHtml(meta.description);
+  const siteName = escapeHtml(meta.siteName);
+  const imageUrl = meta.image || "";
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -108,16 +88,16 @@ function generateNearmeOgHtml(
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
   <!-- Primary Meta Tags -->
-  <title>${title} | ${communityName}</title>
-  <meta name="title" content="${title} | ${communityName}">
+  <title>${title}</title>
+  <meta name="title" content="${title}">
   <meta name="description" content="${description}">
 
   <!-- Open Graph / Facebook -->
   <meta property="og:type" content="website">
-  <meta property="og:url" content="${originalUrl}">
-  <meta property="og:title" content="${title} | ${communityName}">
+  <meta property="og:url" content="${meta.url}">
+  <meta property="og:title" content="${title}">
   <meta property="og:description" content="${description}">
-  <meta property="og:site_name" content="${communityName}">
+  <meta property="og:site_name" content="${siteName}">
   ${imageUrl ? `<meta property="og:image" content="${imageUrl}">` : ""}
   ${imageUrl ? `<meta property="og:image:secure_url" content="${imageUrl}">` : ""}
   ${imageUrl ? `<meta property="og:image:type" content="image/jpeg">` : ""}
@@ -126,13 +106,13 @@ function generateNearmeOgHtml(
 
   <!-- Twitter -->
   <meta name="twitter:card" content="summary">
-  <meta name="twitter:url" content="${originalUrl}">
-  <meta name="twitter:title" content="${title} | ${communityName}">
+  <meta name="twitter:url" content="${meta.url}">
+  <meta name="twitter:title" content="${title}">
   <meta name="twitter:description" content="${description}">
   ${imageUrl ? `<meta name="twitter:image" content="${imageUrl}">` : ""}
 
   <!-- Redirect real users to the app -->
-  <meta http-equiv="refresh" content="0;url=${originalUrl}">
+  <meta http-equiv="refresh" content="0;url=${meta.url}">
 
   <style>
     body {
@@ -151,9 +131,9 @@ function generateNearmeOgHtml(
 </head>
 <body>
   <h1>${title}</h1>
-  <p>${communityName}</p>
+  <p>${siteName}</p>
   <p class="loading">Redirecting to the app...</p>
-  <p><a href="${originalUrl}">Click here if not redirected</a></p>
+  <p><a href="${meta.url}">Click here if not redirected</a></p>
 </body>
 </html>`;
 }
@@ -200,9 +180,6 @@ export async function GET(request: Request): Promise<Response | undefined> {
     });
   }
 
-  // Get group type from query parameter
-  const groupTypeSlug = url.searchParams.get("type");
-
   // Get Convex URL from environment
   const convexCloudUrl = process.env.EXPO_PUBLIC_CONVEX_URL;
 
@@ -219,34 +196,26 @@ export async function GET(request: Request): Promise<Response | undefined> {
   const convexSiteUrl = convexCloudUrl.replace('.convex.cloud', '.convex.site');
 
   try {
-    // Build API URL with optional group type
-    let apiUrl = `${convexSiteUrl}/link-preview/community?communitySubdomain=${encodeURIComponent(subdomain)}`;
-    if (groupTypeSlug) {
-      apiUrl += `&groupTypeSlug=${encodeURIComponent(groupTypeSlug)}`;
-    }
+    // The meta endpoint dispatches on the incoming request URL itself —
+    // hostname (subdomain) and any ?type= query param carry through
+    // unchanged, so we just forward the original request URL as-is.
+    const apiUrl = `${convexSiteUrl}/link-preview/meta?url=${encodeURIComponent(originalUrl)}`;
 
     const response = await fetch(apiUrl, {
       headers: { "Content-Type": "application/json" },
     });
 
     if (!response.ok) {
-      console.error(`Convex community fetch failed: ${response.status}`);
+      console.error(`Convex link-preview fetch failed: ${response.status}`);
       return new Response(generateErrorHtml(subdomain, originalUrl), {
         status: 200,
         headers: { "Content-Type": "text/html; charset=utf-8" },
       });
     }
 
-    const data: LinkPreviewData = await response.json();
+    const meta: LinkPreviewMeta = await response.json();
 
-    if (data.error) {
-      return new Response(generateErrorHtml(subdomain, originalUrl), {
-        status: 200,
-        headers: { "Content-Type": "text/html; charset=utf-8" },
-      });
-    }
-
-    return new Response(generateNearmeOgHtml(data, subdomain, originalUrl), {
+    return new Response(generateOgHtml(meta), {
       status: 200,
       headers: { "Content-Type": "text/html; charset=utf-8" },
     });

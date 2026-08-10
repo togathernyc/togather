@@ -1,15 +1,19 @@
 import { View } from 'react-native';
-import { Tabs } from 'expo-router';
+import { Tabs, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '@providers/AuthProvider';
+import { Avatar } from '@components/ui';
+import { WaTabBar, WA_TAB_AVATAR_SIZE } from '@components/wa';
 import { useCommunityTheme } from '@hooks/useCommunityTheme';
 import { useTheme } from '@hooks/useTheme';
 import { useIsDesktopWeb } from '../../hooks/useIsDesktopWeb';
+import { useWhatsappShell } from '../../hooks/useWhatsappShell';
 import { DesktopSideNav } from '@components/DesktopSideNav';
+import { useEventModeStore } from '@/stores/eventModeStore';
 
 export default function TabsLayout() {
   const { user, community } = useAuth();
-  const { primaryColor } = useCommunityTheme();
+  const { primaryColor, isKnicksMode } = useCommunityTheme();
   const { colors } = useTheme();
   const isDesktopWeb = useIsDesktopWeb();
   const isAdmin = user?.is_admin === true;
@@ -20,8 +24,78 @@ export default function TabsLayout() {
   // was over-engineered and introduced a stale render frame.
   const hasCommunity = !!community?.id;
 
+  // Serving mode collapses the tab bar to a focused set — ordered
+  // Runsheet · Inbox · Tasks · Exit (no Profile) — for the duration of an event.
+  // Gated on the community opting into the Event Tasks feature so communities
+  // without it never see serving tabs even if a stale persisted flag lingers.
+  const eventTasksEnabled =
+    (community?.churchFeatures as { eventTasksEnabled?: boolean } | undefined)
+      ?.eventTasksEnabled === true;
+  const isServingMode = useEventModeStore((s) => s.isServingMode);
+  const exitServingMode = useEventModeStore((s) => s.exit);
+  const inServingMode = isServingMode && eventTasksEnabled;
+  const router = useRouter();
+
+  // `whatsapp-shell`-gated island shell (Groups · Events · Chats · Prayer ·
+  // You, with Chats centred; Prayer drops out when the community has it off).
+  // Never
+  // active during serving mode — see docs/plans/church-migration-ui-redesign
+  // /README.md §5, §9.5. Flag off (or still loading) = today's 6-tab layout,
+  // byte-for-byte.
+  const whatsappShellFlag = useWhatsappShell();
+  const showWhatsappShell = whatsappShellFlag && !inServingMode;
+
+  // Chat/Inbox is shared between the serving tab bar (as "Inbox", second
+  // slot) and the normal tab bar (as "Inbox", or "Chats" + CENTER slot under
+  // the whatsapp shell) — defined once and placed at whichever JSX position
+  // produces the right visible order for the active mode. Visible order is
+  // JSX order: React Navigation ignores the `false` branch entirely, so the
+  // flag-off tab order is unaffected by where the flag-on copy sits.
+  const chatTabScreen = (
+    <Tabs.Screen
+      name="chat"
+      options={{
+        title: showWhatsappShell ? 'Chats' : 'Inbox',
+        // Only show Inbox/Chats tab when user has a community context
+        href: hasCommunity ? '/(tabs)/chat' : null,
+        tabBarIcon: ({ color, focused }) => (
+          <Ionicons
+            name={
+              isKnicksMode
+                ? focused
+                  ? 'basketball'
+                  : 'basketball-outline'
+                : focused
+                  ? 'chatbubbles'
+                  : 'chatbubbles-outline'
+            }
+            size={24}
+            color={color}
+          />
+        ),
+      }}
+    />
+  );
+
   const tabs = (
     <Tabs
+      // Expo Router's Tabs computes its visible tab set from `href` at mount and
+      // doesn't reliably re-render the bar when hrefs flip at runtime — so
+      // entering/leaving serving mode (or flipping the whatsapp-shell flag)
+      // left the OLD tabs on screen until a refresh. Keying the navigator on
+      // the mode remounts it on that (rare) transition, recomputing the tab
+      // set. Stable within each mode, so normal navigation is unaffected.
+      key={inServingMode ? 'serving' : showWhatsappShell ? 'whatsapp' : 'normal'}
+      // Flag-on: the edge-to-edge bar is replaced by the floating rounded
+      // island (WA-VISUAL-DELTAS.md S2) via the framework's own `tabBar`
+      // customization point — the navigator itself is unchanged. Flag off (or
+      // desktop web, which hides the bar entirely) keeps React Navigation's
+      // default bar, byte-for-byte.
+      tabBar={
+        showWhatsappShell && !isDesktopWeb
+          ? (props) => <WaTabBar {...props} badgeColor={primaryColor} />
+          : undefined
+      }
       screenOptions={{
         headerShown: false,
         tabBarActiveTintColor: primaryColor,
@@ -52,13 +126,31 @@ export default function TabsLayout() {
       />
 
       {/* Visible tabs - Order: Groups, Events, Inbox, (Admin for admins), Profile */}
+      {/* Groups/Events are hidden while serving mode is active. */}
       <Tabs.Screen
         name="search"
         options={{
           title: 'Groups',
+          // Visible in BOTH shells. The whatsapp-shell pass originally dropped
+          // Groups; the owner asked for it back (2026-07-29) — group discovery
+          // is the tab churches actually navigate from, and WhatsApp's own
+          // island carries five tabs comfortably. Serving-mode hiding is
+          // unchanged.
+          href: inServingMode ? null : '/(tabs)/search',
           tabBarIcon: ({ color, focused }) => (
             <Ionicons
-              name={focused ? 'map' : 'map-outline'}
+              name={
+                showWhatsappShell
+                  ? // Neutral line glyph from the same family as the rest of
+                    // the flag-on island (S2.2) — the map pin reads as a
+                    // location feature, which this tab is only partly about.
+                    focused
+                    ? 'people'
+                    : 'people-outline'
+                  : focused
+                    ? 'map'
+                    : 'map-outline'
+              }
               size={24}
               color={color}
             />
@@ -69,6 +161,7 @@ export default function TabsLayout() {
         name="events"
         options={{
           title: 'Events',
+          href: inServingMode ? null : '/(tabs)/events',
           tabBarIcon: ({ color, focused }) => (
             <Ionicons
               name={focused ? 'calendar' : 'calendar-outline'}
@@ -78,6 +171,13 @@ export default function TabsLayout() {
           ),
         }}
       />
+
+      {/* whatsapp-shell: Chats sits in the CENTRE slot, after Groups/Events and
+          before Prayer/You — Groups · Events · Chats · Prayer · You (and
+          Groups · Events · Chats · You when the community has prayer off).
+          Off (or serving mode): this renders nothing and Inbox keeps its
+          normal position below. */}
+      {showWhatsappShell && chatTabScreen}
       <Tabs.Screen
         name="tasks"
         options={{
@@ -109,15 +209,83 @@ export default function TabsLayout() {
           ),
         }}
       />
+      {/* Serving-mode Runsheet sits immediately before Inbox so the serving
+          tab order reads Runsheet · Inbox · Tasks · Exit. Normal mode hides the
+          serving tabs (href: null), so its order is unaffected. */}
       <Tabs.Screen
-        name="chat"
+        name="serving-runsheet"
         options={{
-          title: 'Inbox',
-          // Only show Inbox tab when user has a community context
-          href: hasCommunity ? '/(tabs)/chat' : null,
+          title: 'Runsheet',
+          href: inServingMode ? '/(tabs)/serving-runsheet' : null,
           tabBarIcon: ({ color, focused }) => (
             <Ionicons
-              name={focused ? 'chatbubbles' : 'chatbubbles-outline'}
+              name={focused ? 'list' : 'list-outline'}
+              size={24}
+              color={color}
+            />
+          ),
+        }}
+      />
+      {/* Normal-mode (non-whatsapp-shell) Inbox sits here, after Groups/Events,
+          matching today's tab order. Under the whatsapp shell it's rendered
+          first instead (above) — see `chatTabScreen`. */}
+      {!showWhatsappShell && chatTabScreen}
+      {/* Serving-mode Tasks + Exit sit immediately after Inbox. */}
+      <Tabs.Screen
+        name="serving-tasks"
+        options={{
+          title: 'Tasks',
+          href: inServingMode ? '/(tabs)/serving-tasks' : null,
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons
+              name={focused ? 'checkmark-done' : 'checkmark-done-outline'}
+              size={24}
+              color={color}
+            />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="serving-exit"
+        options={{
+          title: 'Exit',
+          href: inServingMode ? '/(tabs)/serving-exit' : null,
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons
+              name={focused ? 'exit' : 'exit-outline'}
+              size={24}
+              color={color}
+            />
+          ),
+        }}
+        listeners={{
+          // Exit is an action, not a destination: intercept the tap so we never
+          // focus the (about-to-be-hidden) serving-exit route. Navigate to Inbox
+          // (visible in both modes) first, then drop serving mode so the tab bar
+          // re-renders to the normal layout. Doing it here avoids the focus/blur
+          // race a screen-side effect hit (its cleanup cancelled the exit).
+          tabPress: (e) => {
+            if (!inServingMode) return;
+            e.preventDefault();
+            router.replace('/(tabs)/chat');
+            requestAnimationFrame(() => exitServingMode());
+          },
+        }}
+      />
+      <Tabs.Screen
+        name="prayer"
+        options={{
+          title: 'Prayer',
+          // Visible only when the active community has opted into the church
+          // prayer feature. Gated on community.churchFeatures.prayerEnabled.
+          // Hidden while serving mode is active.
+          href:
+            !inServingMode && hasCommunity && community?.churchFeatures?.prayerEnabled
+              ? '/(tabs)/prayer'
+              : null,
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons
+              name={focused ? 'heart' : 'heart-outline'}
               size={24}
               color={color}
             />
@@ -128,8 +296,16 @@ export default function TabsLayout() {
         name="admin"
         options={{
           title: 'Admin',
-          // Show Admin tab for community admins within a community OR Togather internal users.
-          href: (isAdmin && hasCommunity) || isInternalUser ? '/(tabs)/admin' : null,
+          // Show Admin tab for community admins within a community OR Togather
+          // internal users. Hidden while serving mode is active, and hidden
+          // under the whatsapp-shell (admin moves into You + the community
+          // page there — its route stays reachable).
+          href:
+            !inServingMode &&
+            !showWhatsappShell &&
+            ((isAdmin && hasCommunity) || isInternalUser)
+              ? '/(tabs)/admin'
+              : null,
           tabBarIcon: ({ color, focused }) => (
             <Ionicons
               name={focused ? 'shield-checkmark' : 'shield-checkmark-outline'}
@@ -142,14 +318,29 @@ export default function TabsLayout() {
       <Tabs.Screen
         name="profile"
         options={{
-          title: 'Profile',
-          tabBarIcon: ({ color, focused }) => (
-            <Ionicons
-              name={focused ? 'person' : 'person-outline'}
-              size={24}
-              color={color}
-            />
-          ),
+          // "You" under the whatsapp-shell (docs/plans/church-migration-ui
+          // -redesign/README.md §5); "Profile" otherwise.
+          title: showWhatsappShell ? 'You' : 'Profile',
+          // Hidden while serving mode is active to keep the serving tab bar to
+          // Runsheet · Inbox · Tasks · Exit.
+          href: inServingMode ? null : '/(tabs)/profile',
+          // Flag-on: the You tab's icon is the user's own avatar photo
+          // (WA-VISUAL-DELTAS.md S2.4), falling back to the person glyph when
+          // there's no photo — which is also exactly the flag-off icon.
+          tabBarIcon: ({ color, focused }) =>
+            showWhatsappShell && user?.profile_photo ? (
+              <Avatar
+                name={`${user?.first_name ?? ''} ${user?.last_name ?? ''}`.trim()}
+                imageUrl={user.profile_photo}
+                size={WA_TAB_AVATAR_SIZE}
+              />
+            ) : (
+              <Ionicons
+                name={focused ? 'person' : 'person-outline'}
+                size={24}
+                color={color}
+              />
+            ),
         }}
       />
     </Tabs>

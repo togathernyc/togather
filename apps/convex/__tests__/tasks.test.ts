@@ -751,6 +751,80 @@ describe("tasks functions", () => {
     expect(leaders.every((leader) => leader.name.length > 0)).toBe(true);
   });
 
+  test("listAssignableLeaders excludes archived (deactivated) users", async () => {
+    const t = convexTest(schema, modules);
+    const { groupId, leaderToken, secondLeaderId } = await seedData(t);
+
+    // Archive the second leader.
+    await t.run(async (ctx) => {
+      await ctx.db.patch(secondLeaderId, { isActive: false });
+    });
+
+    const leaders = await t.query(
+      api.functions.tasks.index.listAssignableLeaders,
+      {
+        token: leaderToken,
+        groupId,
+      },
+    );
+
+    expect(leaders.length).toBe(1);
+    expect(
+      leaders.some((leader) => leader.userId === secondLeaderId),
+    ).toBe(false);
+  });
+
+  test("listAssignableLeaders returns no leaders for an archived group", async () => {
+    const t = convexTest(schema, modules);
+    const { groupId, leaderToken } = await seedData(t);
+
+    // Archive the group itself.
+    await t.run(async (ctx) => {
+      await ctx.db.patch(groupId, { isArchived: true });
+    });
+
+    const leaders = await t.query(
+      api.functions.tasks.index.listAssignableLeaders,
+      {
+        token: leaderToken,
+        groupId,
+      },
+    );
+
+    expect(leaders.length).toBe(0);
+  });
+
+  test("searchAssignableLeaders returns no leaders for an archived group", async () => {
+    const t = convexTest(schema, modules);
+    const { groupId, leaderToken } = await seedData(t);
+
+    // Sanity check: the search returns leaders while the group is active.
+    const before = await t.query(
+      api.functions.tasks.index.searchAssignableLeaders,
+      {
+        token: leaderToken,
+        groupId,
+        searchText: "leader",
+      },
+    );
+    expect(before.length).toBeGreaterThan(0);
+
+    // Archive the group — search must not surface its leaders.
+    await t.run(async (ctx) => {
+      await ctx.db.patch(groupId, { isArchived: true });
+    });
+
+    const after = await t.query(
+      api.functions.tasks.index.searchAssignableLeaders,
+      {
+        token: leaderToken,
+        groupId,
+        searchText: "leader",
+      },
+    );
+    expect(after.length).toBe(0);
+  });
+
   test("task detail, history, and search helpers support task editing flows", async () => {
     const t = convexTest(schema, modules);
     const { groupId, leaderToken, leaderId, memberId } = await seedData(t);
@@ -982,6 +1056,12 @@ describe("tasks functions", () => {
         content: "Can someone follow up with me this week?",
       },
     );
+    // submitTaskRequest posts the reach-out card via sendMessage, which
+    // schedules onMessageSent via runAfter(0, ...). Left running, the
+    // still-open transaction trips convex-test's guard on the next
+    // convexTest() call — possibly in an unrelated later test file, since
+    // global.Convex outlives this one.
+    await t.finishInProgressScheduledFunctions();
 
     const linkedTask = await t.run(async (ctx) => ctx.db.get(reachOutTaskId));
     expect(linkedTask?.sourceType).toBe("reach_out");

@@ -66,6 +66,14 @@ h1, h2, h3, h4 {
   text-wrap: balance;
 }
 
+/* Hide scrollbars inside device mockups (PhoneFrame) while keeping scroll. */
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
 /* FAQ Accordion */
 details summary {
   cursor: pointer;

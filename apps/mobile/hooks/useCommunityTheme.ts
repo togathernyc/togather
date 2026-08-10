@@ -9,7 +9,16 @@
  */
 import { useMemo } from 'react';
 import { useAuth } from '@providers/AuthProvider';
+import { useTheme } from '@hooks/useTheme';
 import { DEFAULT_PRIMARY_COLOR, DEFAULT_SECONDARY_COLOR } from '@utils/styles';
+
+/**
+ * "Knicks mode" — New York Knicks orange + blue. Overrides community brand
+ * colors app-wide. OFF by default; flipped app-wide via the "knicks-mode"
+ * feature flag in /admin/features.
+ */
+export const KNICKS_ORANGE = '#F58426';
+export const KNICKS_BLUE = '#006BB6';
 
 interface CommunityTheme {
   /** Primary accent color (for buttons, links, active states) */
@@ -22,6 +31,8 @@ interface CommunityTheme {
   primaryColorDark: string;
   /** Whether the theme is using custom community colors vs defaults */
   isCustomTheme: boolean;
+  /** Whether Knicks mode is currently overriding the brand colors */
+  isKnicksMode: boolean;
 }
 
 /**
@@ -53,8 +64,24 @@ export function darkenColor(hex: string, factor: number = 0.4): string {
 
 export function useCommunityTheme(): CommunityTheme {
   const { user } = useAuth();
+  // Knicks mode is an app-wide feature flag (OFF by default). The single live
+  // subscription lives in <KnicksModeSync />, which pushes the value into
+  // ThemeProvider; we read it from there so flipping the flag in
+  // /admin/features re-themes the running app immediately.
+  const { knicksMode: isKnicksMode } = useTheme();
 
   return useMemo(() => {
+    if (isKnicksMode) {
+      return {
+        primaryColor: KNICKS_ORANGE,
+        secondaryColor: KNICKS_BLUE,
+        accentLight: hexToRgba(KNICKS_ORANGE, 0.1),
+        primaryColorDark: darkenColor(KNICKS_ORANGE, 0.4),
+        isCustomTheme: true,
+        isKnicksMode: true,
+      };
+    }
+
     const primaryColor = user?.community_primary_color || DEFAULT_PRIMARY_COLOR;
     const secondaryColor = user?.community_secondary_color || DEFAULT_SECONDARY_COLOR;
     const isCustomTheme = !!(user?.community_primary_color || user?.community_secondary_color);
@@ -65,6 +92,11 @@ export function useCommunityTheme(): CommunityTheme {
       accentLight: hexToRgba(primaryColor, 0.1),
       primaryColorDark: darkenColor(primaryColor, 0.4),
       isCustomTheme,
+      isKnicksMode: false,
     };
-  }, [user?.community_primary_color, user?.community_secondary_color]);
+  }, [
+    isKnicksMode,
+    user?.community_primary_color,
+    user?.community_secondary_color,
+  ]);
 }

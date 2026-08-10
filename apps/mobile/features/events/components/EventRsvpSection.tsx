@@ -18,25 +18,23 @@ import { useTheme } from "@hooks/useTheme";
 export const DEFAULT_MAX_GUESTS_PER_RSVP = 3;
 
 /**
- * Heuristic — is this RSVP option the "Going" option?
- *
- * Must reject decline variants ("Not Going", "Can't Go") before falling
- * back to a "going" substring check. Keep in sync with isGoingOption in
- * apps/convex/lib/rsvpGuests.ts.
+ * RSVP option ids are stable semantic slots — hosts can rename the labels
+ * (e.g. "I'm there 😳") but the options editor never changes the ids, so id
+ * is the label-agnostic way to identify an option's meaning. Mirrors
+ * GOING_RSVP_OPTION_ID etc. in apps/convex/lib/meetingConfig.ts.
  */
-export function isGoingOptionLabel(label: string | undefined | null): boolean {
-  if (!label) return false;
-  const lower = label.toLowerCase().trim();
-  if (
-    lower.includes("can't") ||
-    lower.includes("cannot") ||
-    lower.includes("not going") ||
-    lower.includes("not attending") ||
-    lower === "no"
-  ) {
-    return false;
-  }
-  return lower.includes("going");
+export const GOING_RSVP_OPTION_ID = 1;
+export const MAYBE_RSVP_OPTION_ID = 2;
+export const CANT_GO_RSVP_OPTION_ID = 3;
+
+/**
+ * Is this RSVP option the "Going" option (the slot that allows plus-ones)?
+ * Keep in sync with isGoingOption in apps/convex/lib/rsvpGuests.ts.
+ */
+export function isGoingRsvpOption(
+  option: { id: number } | null | undefined,
+): boolean {
+  return option?.id === GOING_RSVP_OPTION_ID;
 }
 
 // ============================================================================
@@ -99,26 +97,27 @@ interface RsvpEditModalProps {
 // ============================================================================
 
 /**
- * Get emoji for an RSVP option label.
+ * Get emoji for an RSVP option.
  * Labels may include emojis (e.g., "Going 👍") or be plain (e.g., "Going").
- * This function first tries to extract an emoji from the label,
- * then falls back to keyword-based matching.
+ * Tries to extract an emoji from the label first, then falls back to the
+ * option's id slot so custom emoji-less labels still get a matching emoji.
  */
-export function getEmojiForLabel(label: string): string {
+export function getEmojiForOption(option: { id: number; label: string }): string {
   // Try to extract emoji from the end of the label
   const emojiRegex = /(\p{Emoji_Presentation}|\p{Emoji}\uFE0F)$/u;
-  const match = label.match(emojiRegex);
+  const match = option.label.match(emojiRegex);
   if (match) {
     return match[0];
   }
 
-  // Fallback to keyword-based matching for labels without emojis
-  const lowerLabel = label.toLowerCase();
-  if (lowerLabel.includes("going") && !lowerLabel.includes("can't")) return "👍";
-  if (lowerLabel.includes("maybe")) return "🤔";
-  if (lowerLabel.includes("can't") || lowerLabel.includes("no")) return "😢";
-  if (lowerLabel.includes("yes")) return "👍";
-  return "👍"; // default
+  switch (option.id) {
+    case MAYBE_RSVP_OPTION_ID:
+      return "🤔";
+    case CANT_GO_RSVP_OPTION_ID:
+      return "😢";
+    default:
+      return "👍";
+  }
 }
 
 /**
@@ -293,7 +292,7 @@ export function FloatingRsvpButtons({
     >
       <View style={styles.buttonRow}>
         {enabledOptions.map((option) => {
-          const emoji = getEmojiForLabel(option.label);
+          const emoji = getEmojiForOption(option);
           const gradient = getGradientForLabel(option.label);
           const displayLabel = getCleanLabel(option.label);
           const isLoading = loadingOptionId === option.id;
@@ -337,9 +336,9 @@ export function FloatingRsvpCard({
 }: FloatingRsvpCardProps) {
   const { colors } = useTheme();
   const selectedOption = options.find((opt) => opt.id === response.optionId);
-  const emoji = selectedOption ? getEmojiForLabel(selectedOption.label) : "👍";
+  const emoji = selectedOption ? getEmojiForOption(selectedOption) : "👍";
   const label = selectedOption ? getCleanLabel(selectedOption.label) : "Going";
-  const isGoing = selectedOption ? isGoingOptionLabel(selectedOption.label) : false;
+  const isGoing = isGoingRsvpOption(selectedOption);
   const displayedGuestCount = response.guestCount ?? 0;
 
   return (
@@ -408,14 +407,14 @@ export function RsvpEditModal({
   }, [visible, currentOptionId, currentGuestCount]);
 
   const stagedOption = options.find((o) => o.id === stagedOptionId) ?? null;
-  const stagedIsGoing = stagedOption ? isGoingOptionLabel(stagedOption.label) : false;
+  const stagedIsGoing = isGoingRsvpOption(stagedOption);
 
   const handleStageOption = (optionId: number) => {
     if (loadingOptionId !== null || submitting) return;
     setStagedOptionId(optionId);
     // Reset guest count when switching away from Going
     const next = options.find((o) => o.id === optionId);
-    if (!next || !isGoingOptionLabel(next.label)) {
+    if (!isGoingRsvpOption(next)) {
       setStagedGuestCount(0);
     }
   };

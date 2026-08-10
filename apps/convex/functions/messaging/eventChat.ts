@@ -29,6 +29,7 @@ import {
   resolveEventAdmins,
 } from "../../lib/meetingPermissions";
 import { isActiveLeader } from "../../lib/helpers";
+import { isNotifiedRsvpOptionId, isAttendingRsvpOption } from "../../lib/meetingConfig";
 import { now } from "../../lib/utils";
 
 // ============================================================================
@@ -173,17 +174,22 @@ export const getChannelStateForEditor = query({
 // ============================================================================
 
 /**
- * Idempotently create the chat channel for an event and seat its admins.
+ * Idempotently create the chat channel for an event and seat its members.
  *
  * Call this the first time we need a channel for a meeting (e.g. when an
  * admin opens the chat UI, or on the first blast). Safe to call repeatedly —
  * if a channel already exists for the meeting, the existing id is returned.
  *
  * Seating model: admins (hosts when set, otherwise the group's active
- * leaders — see `resolveEventAdmins`) are seated here. RSVPer members are
- * added lazily by `openEventChat` (they only become subscribers after
- * explicitly opening the chat), which prevents unrelated push notifications
- * and caps the write set for this mutation regardless of RSVP scale.
+ * leaders — see `resolveEventAdmins`) are seated first. We then backfill
+ * every existing Going/Maybe RSVPer (NOTIFIED_RSVP_OPTION_IDS) as a member so
+ * they receive event updates — channels are created lazily (first open/blast),
+ * so RSVPs made before the channel existed would otherwise never be seated.
+ * Forward RSVPs are kept in sync by `addEventChannelMember` /
+ * `removeEventChannelMember` from the RSVP mutations.
+ *
+ * NOTE: backfilling all RSVPers means the write set scales with RSVP count
+ * (the previous lazy model capped it). Fine for typical event sizes.
  */
 export const ensureEventChannel = internalMutation({
   args: {
@@ -229,10 +235,12 @@ export const ensureEventChannel = internalMutation({
       isArchived: false,
       isEnabled: true,
       meetingId: args.meetingId,
+      // Patched below once members are backfilled.
       memberCount: admins.length,
     });
 
-    // Seat every admin. RSVPer members are seated lazily by openEventChat.
+    // Seat every admin.
+    const seated = new Set<string>();
     for (const userId of admins) {
       await ctx.db.insert("chatChannelMembers", {
         channelId,
@@ -242,6 +250,32 @@ export const ensureEventChannel = internalMutation({
         joinedAt: ts,
         isMuted: false,
       });
+      seated.add(String(userId));
+    }
+
+    // Backfill existing Going/Maybe RSVPers as members so they get updates.
+    // Skip stale rows whose option the host has since hidden/disabled — those
+    // users no longer have chat access, so they must not be (re-)seated.
+    const rsvps = await ctx.db
+      .query("meetingRsvps")
+      .withIndex("by_meeting", (q) => q.eq("meetingId", args.meetingId))
+      .collect();
+    for (const rsvp of rsvps) {
+      if (!isAttendingRsvpOption(rsvp.rsvpOptionId, meeting.rsvpOptions)) continue;
+      if (seated.has(String(rsvp.userId))) continue; // already an admin
+      await ctx.db.insert("chatChannelMembers", {
+        channelId,
+        userId: rsvp.userId,
+        role: "member",
+        syncSource: "event_rsvp",
+        joinedAt: ts,
+        isMuted: false,
+      });
+      seated.add(String(rsvp.userId));
+    }
+
+    if (seated.size !== admins.length) {
+      await ctx.db.patch(channelId, { memberCount: seated.size });
     }
 
     return channelId;
@@ -426,7 +460,9 @@ export const reconcileEventChannelAdmins = internalMutation({
  * no way to render a composer for a channel that doesn't exist yet.
  *
  * Access mirrors `canAccessEventChannel`: host OR any RSVPer whose option is
- * still enabled on the meeting.
+ * still enabled on the meeting. Note that access (can read) is broader than
+ * membership (gets update notifications): a "Can't Go" responder may open the
+ * chat but is not seated as a member.
  */
 export const openEventChat = mutation({
   args: {
@@ -465,6 +501,7 @@ export const openEventChat = mutation({
     }
 
     let hasAccess = isAdmin;
+    let callerOptionId: number | undefined;
     if (!hasAccess) {
       const rsvp = await ctx.db
         .query("meetingRsvps")
@@ -477,6 +514,7 @@ export const openEventChat = mutation({
           (opt) => opt.id === rsvp.rsvpOptionId,
         );
         hasAccess = Boolean(matched && matched.enabled);
+        callerOptionId = rsvp.rsvpOptionId;
       }
     }
     if (!hasAccess) {
@@ -488,12 +526,19 @@ export const openEventChat = mutation({
       { meetingId: args.meetingId },
     );
 
-    // Lazily seat the caller as a channel member if they aren't already.
-    // Admins (hosts / delegated-mode leaders) were seated by
-    // ensureEventChannel; RSVPers are seated only on their first
-    // openEventChat so they don't start receiving push notifications for
-    // events they haven't looked at.
-    if (!isAdmin) {
+    // Lazily seat the caller as a channel member only if their RSVP counts as
+    // attending (Going/Maybe — see NOTIFIED_RSVP_OPTION_IDS). A "Can't Go"
+    // responder can still open and read the chat (access is granted for any
+    // enabled option), but is not seated — so they don't receive event-chat
+    // update notifications, staying consistent with removeEventChannelMember
+    // dropping them when they switch to Can't Go. Admins (hosts /
+    // delegated-mode leaders) and attending RSVPers were already seated by
+    // ensureEventChannel; this covers any not-yet-seated attending caller.
+    if (
+      !isAdmin &&
+      callerOptionId !== undefined &&
+      isNotifiedRsvpOptionId(callerOptionId)
+    ) {
       const existingMembership = await ctx.db
         .query("chatChannelMembers")
         .withIndex("by_channel_user", (q) =>

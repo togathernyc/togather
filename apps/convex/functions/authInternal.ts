@@ -16,7 +16,11 @@ import {
 } from "../_generated/server";
 import { api, internal } from "../_generated/api";
 import { now, normalizePhone, getMediaUrl, buildSearchText } from "../lib/utils";
-import { requireAuth, requireAuthIgnoringRevocation } from "../auth";
+import {
+  requireAuth,
+  requireAuthAllowArchivedCommunity,
+  requireAuthIgnoringRevocation,
+} from "../auth";
 import {
   isRevokedForJwtSubject,
   REFRESH_TOKEN_MAX_AGE_MS,
@@ -92,6 +96,9 @@ export const getUserWithCommunitiesInternal = internalQuery({
       memberships.map(async (membership) => {
         const community = await ctx.db.get(membership.communityId);
         if (!community) return null;
+        // Archived (closed) communities are hidden — a user can neither see
+        // nor re-enter them from the login / community-selection flow.
+        if (community.isArchived) return null;
         const logoUrl = getMediaUrl(community.logo);
         console.log('[getUserWithCommunitiesInternal] Community logo resolution:', {
           communityName: community.name,
@@ -114,7 +121,7 @@ export const getUserWithCommunitiesInternal = internalQuery({
     let activeCommunity = null;
     if (user.activeCommunityId) {
       const active = await ctx.db.get(user.activeCommunityId);
-      if (active) {
+      if (active && !active.isArchived) {
         const logoUrl = getMediaUrl(active.logo);
         console.log('[getUserWithCommunitiesInternal] Active community logo resolution:', {
           communityName: active.name,
@@ -241,6 +248,99 @@ export const createUserInternal = internalMutation({
 });
 
 /**
+ * Internal: Claim a placeholder `users` row by phone, promoting it into a
+ * real account. Returns the claimed user id, or `null` when no claim is
+ * applicable.
+ *
+ * Triggered from the phone-OTP signup paths (`verifyPhoneOTP` and
+ * `registerNewUser` in `auth/phoneOtp.ts` / `auth/registration.ts`). A
+ * claim is only performed when the row is explicitly flagged
+ * `isPlaceholder === true` — we never overwrite a real existing user, even
+ * if their `isActive` is false for unrelated reasons.
+ *
+ * After a successful claim, every `roleAssignments` / `groupMembers` /
+ * `userCommunities` row that referenced the placeholder by `userId` keeps
+ * working (the `_id` is stable), so the new account inherits the
+ * memberships and assignments the leader pre-loaded.
+ *
+ * If `firstName`/`lastName`/`dateOfBirth` are provided, they overwrite the
+ * placeholder's values — the placeholder's `firstName` came from the
+ * leader; the user's own signup-form input is authoritative.
+ */
+export const claimPlaceholderByPhoneInternal = internalMutation({
+  args: {
+    phone: v.string(),
+    firstName: v.optional(v.string()),
+    lastName: v.optional(v.string()),
+    email: v.optional(v.string()),
+    dateOfBirth: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const normalized = normalizePhone(args.phone);
+    const existing = await ctx.db
+      .query("users")
+      .withIndex("by_phone", (q) => q.eq("phone", normalized))
+      .first();
+
+    if (!existing || existing.isPlaceholder !== true) {
+      // No placeholder to claim — caller falls back to its normal "create
+      // new user" / "log in existing user" branch.
+      return null;
+    }
+
+    const timestamp = now();
+
+    // Merge: keep the existing record's fields, overwrite with whatever
+    // the signup form provided. The placeholder had no email, no
+    // password, and only the leader-supplied first name.
+    const firstName = args.firstName?.trim() || existing.firstName || "";
+    const lastName = args.lastName?.trim() || existing.lastName;
+    const email =
+      args.email?.trim().toLowerCase() || existing.email?.toLowerCase();
+
+    // If a non-placeholder user happens to own this email, abort — we'd
+    // otherwise create a duplicate-email situation by claiming.
+    if (email && email !== existing.email) {
+      const conflict = await ctx.db
+        .query("users")
+        .withIndex("by_email", (q) => q.eq("email", email))
+        .first();
+      if (conflict && conflict._id !== existing._id) {
+        throw new Error("User with this email already exists");
+      }
+    }
+
+    await ctx.db.patch(existing._id, {
+      isPlaceholder: undefined,
+      isActive: true,
+      phoneVerified: true,
+      firstName,
+      lastName,
+      email,
+      dateOfBirth: args.dateOfBirth ?? existing.dateOfBirth,
+      dateJoined: existing.dateJoined ?? timestamp,
+      updatedAt: timestamp,
+      searchText: buildSearchText({
+        firstName,
+        lastName,
+        email,
+        phone: normalized,
+      }),
+    });
+
+    // Mirror `createUserInternal`'s post-commit hook so any placeholder
+    // workflow tasks tied to this phone get linked.
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.tasks.index.linkPlaceholderTasksForUser,
+      { userId: existing._id },
+    );
+
+    return existing._id;
+  },
+});
+
+/**
  * Internal: Create user with password (legacy signup)
  */
 export const createUserWithPasswordInternal = internalMutation({
@@ -256,6 +356,12 @@ export const createUserWithPasswordInternal = internalMutation({
   },
   handler: async (ctx, args) => {
     const timestamp = now();
+
+    // Cannot sign up into an archived (closed) community.
+    const community = await ctx.db.get(args.communityId);
+    if (!community || community.isArchived) {
+      throw new Error("This community is not available");
+    }
 
     // Check if email already exists
     const existingByEmail = await ctx.db
@@ -357,6 +463,12 @@ export const ensureAndActivateCommunityInternal = internalMutation({
   handler: async (ctx, args) => {
     const timestamp = now();
 
+    // Archived (closed) communities cannot be entered or activated.
+    const community = await ctx.db.get(args.communityId);
+    if (community?.isArchived) {
+      throw new Error("This community has been archived");
+    }
+
     // Check if membership already exists
     const existing = await ctx.db
       .query("userCommunities")
@@ -413,6 +525,12 @@ export const ensureUserCommunityInternal = internalMutation({
   },
   handler: async (ctx, args) => {
     const timestamp = now();
+
+    // Archived (closed) communities cannot be entered or activated.
+    const community = await ctx.db.get(args.communityId);
+    if (community?.isArchived) {
+      throw new Error("This community has been archived");
+    }
 
     // Check if membership already exists
     const existing = await ctx.db
@@ -937,12 +1055,21 @@ export const selectCommunityForUser = mutation({
     communityId: string;
     communityName: string;
   }> => {
-    const userId = await requireAuth(ctx, args.token);
+    // Escape hatch: allow switching away even when the caller's current token
+    // is scoped to an archived community. The target is archived-checked below.
+    const userId = await requireAuthAllowArchivedCommunity(ctx, args.token);
 
     // Verify community exists
     const community = await ctx.db.get(args.communityId);
     if (!community) {
       throw new Error("Community not found");
+    }
+
+    // Archived (closed) communities cannot be entered.
+    if (community.isArchived) {
+      throw new Error(
+        "This community has been archived and is no longer accessible",
+      );
     }
 
     const timestamp = now();
@@ -971,7 +1098,8 @@ export const selectCommunityForUser = mutation({
         updatedAt: timestamp,
       });
 
-      // If rejoining, trigger Planning Center sync and announcement group join
+      // If rejoining, trigger Planning Center + marketing syncs.
+      // (Announcement group sync runs unconditionally below.)
       if (isRejoining) {
         console.log("[selectCommunityForUser] User rejoining community, triggering sync", {
           userId,
@@ -984,13 +1112,27 @@ export const selectCommunityForUser = mutation({
           communityId: args.communityId,
         });
 
-        // Add to announcement group
-        await ctx.runMutation(internal.functions.sync.memberships.syncMemberships, {
-          userId,
-          syncAnnouncementGroup: true,
-          communityId: args.communityId,
-        });
+        // Schedule marketing integration syncs (no-op if not connected)
+        await ctx.scheduler.runAfter(
+          0,
+          internal.functions.marketing.clearstream.syncUser,
+          { userId, communityId: args.communityId },
+        );
+        await ctx.scheduler.runAfter(
+          0,
+          internal.functions.marketing.flodesk.syncUser,
+          { userId, communityId: args.communityId },
+        );
       }
+
+      // Always reconcile announcement group membership on community-select.
+      // Cheap, idempotent, and ensures users get added to groups created
+      // after they joined (e.g. backfilled announcement groups).
+      await ctx.runMutation(internal.functions.sync.memberships.syncMemberships, {
+        userId,
+        syncAnnouncementGroup: true,
+        communityId: args.communityId,
+      });
     } else {
       // Create new membership with lastLogin
       await ctx.db.insert("userCommunities", {
@@ -1012,6 +1154,18 @@ export const selectCommunityForUser = mutation({
         userId,
         communityId: args.communityId,
       });
+
+      // Schedule marketing integration syncs (no-op if not connected)
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.marketing.clearstream.syncUser,
+        { userId, communityId: args.communityId },
+      );
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.marketing.flodesk.syncUser,
+        { userId, communityId: args.communityId },
+      );
 
       // Add to announcement group
       await ctx.runMutation(internal.functions.sync.memberships.syncMemberships, {

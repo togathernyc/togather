@@ -16,3 +16,90 @@
 
 # Shared packages affect multiple apps
 /packages/ @togathernyc
+
+# ---------------------------------------------------------------------------
+# Human-only review paths
+#
+# CI cannot catch the failure modes here, so a green build is not evidence that
+# these changes are safe. They need a person to look.
+#
+# - Dependency graph (lockfile, mobile package.json, native-deps.json): a JS-only
+#   dependency change can silently re-key the Expo native module graph onto a
+#   second React/react-native instance, which blanks native video and GIF
+#   rendering on a real device while typecheck, tests, and the bundle all pass.
+#   See docs/architecture/ADR-013-mobile-versioning-and-ota-updates.md.
+#   apps/convex/package.json is in here for the same class of reason: its
+#   react and react-dom pins are load-bearing despite apps/convex shipping no
+#   React code. Dropping either one re-keys a second `convex` instance (which
+#   silently empties the generated api/internal types) or skews react/react-dom
+#   (which threw on every verification email in production while CI was green).
+#   CLAUDE.md spells both out.
+# - Auth: a regression locks people out or lets the wrong people in, and tests
+#   assert the code's behaviour rather than the policy it should encode.
+# - Billing / finance: moves real money. Wrong is expensive and hard to unwind.
+# - Migrations: run once against production data. There is no second attempt.
+#
+# NOTE: last matching pattern wins in CODEOWNERS, so these override the
+# defaults above.
+#
+# This is reviewer routing and documentation, NOT a merge gate. Do not turn on
+# "Require review from Code Owners" for these paths: @lilseyi is the only human
+# here, and GitHub does not count a PR author's own review, so the toggle would
+# make his own lockfile bumps and migrations unmergeable without an admin
+# override. The real gate is that only lilseyi merges these, which the agent
+# deny-rules in .claude/settings.json already enforce from the other side.
+# ---------------------------------------------------------------------------
+
+# Dependency graph / native safety (ADR-013)
+/pnpm-lock.yaml @lilseyi
+/apps/mobile/package.json @lilseyi
+/apps/mobile/native-deps.json @lilseyi
+/apps/convex/package.json @lilseyi
+
+# Auth - the directory plus the central modules that live outside it
+/apps/convex/functions/auth/ @lilseyi
+/apps/convex/auth.ts @lilseyi
+/apps/convex/lib/auth.ts @lilseyi
+/apps/convex/functions/authInternal.ts @lilseyi
+
+# Billing, payments, and the money ledger
+/apps/convex/functions/billing.ts @lilseyi
+/apps/convex/functions/ee/billing.ts @lilseyi
+/apps/convex/functions/finance/ @lilseyi
+/apps/convex/lib/finance/ @lilseyi
+
+# Migrations - run once against production data
+# (a trailing-slash pattern does not match a sibling FILE of the same name, so
+# every migrations.ts is listed explicitly)
+/apps/convex/migrations/ @lilseyi
+/apps/convex/functions/migrations/ @lilseyi
+/apps/convex/functions/migrations.ts @lilseyi
+/apps/convex/functions/admin/migrations.ts @lilseyi
+/apps/convex/functions/meetings/migrations.ts @lilseyi
+/apps/convex/functions/notifications/migrations.ts @lilseyi
+
+# Agent safety machinery - the rules that decide what an unattended run may do
+#
+# The paths above are dangerous because CI cannot vouch for the change. These
+# are dangerous for a different reason: they are the constraints themselves.
+# A change here does not break this run, it changes what the NEXT run is
+# allowed to do - loosen the completion gate, add a merge command to the allow
+# list, edit the overnight merge policy - and every later run inherits it. An
+# unattended agent must never be able to widen its own permissions, so a run
+# can never land a change to the machinery that bounds it.
+#
+# Applies to .claude/ wholesale, not just overnight.md: auto-worker.md,
+# review-cycle.md, and the hooks all steer unattended sessions too.
+/.claude/ @lilseyi
+/.github/CODEOWNERS @lilseyi
+
+# Workspace roots - reshape the dependency graph for every app at once, which
+# is the ADR-013 native-rendering hazard applied repo-wide.
+/package.json @lilseyi
+/pnpm-workspace.yaml @lilseyi
+
+# Convex schema and crons - deploy-convex.yml fires on push to main, so these
+# reach the staging backend the moment they land. There is no preview step in
+# between and no second attempt on a bad schema change.
+/apps/convex/schema.ts @lilseyi
+/apps/convex/crons.ts @lilseyi
