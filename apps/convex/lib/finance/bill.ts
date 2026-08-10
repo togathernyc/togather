@@ -62,8 +62,9 @@ export interface BillClient {
  *
  * Host comes from `BILL_API_BASE_URL` when set (dev/staging point at
  * `https://gateway.stage.bill.com/connect`), production otherwise — the same
- * convention as `INCREASE_API_BASE_URL` / `PRIVACY_API_BASE_URL`, so an
- * operator learns one rule. Deliberately NOT stored per connection: a
+ * convention as `PRIVACY_API_BASE_URL` (Increase instead requires an explicit
+ * `INCREASE_ENVIRONMENT`; see lib/finance/increase.ts).
+ * Deliberately NOT stored per connection: a
  * deployment talks to one BILL environment, and a per-row host would let a
  * staging row hold a production token.
  */

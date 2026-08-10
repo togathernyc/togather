@@ -17,9 +17,11 @@
  *
  * Base URL: the OpenAPI spec's `servers` list has TWO hosts —
  * `https://api.increase.com` (production) and `https://sandbox.increase.com`
- * (sandbox) — not one host shared by key type. `INCREASE_API_BASE_URL`
- * selects which; set it to the sandbox host alongside a sandbox API key for
- * dev/staging (see docs/secrets.md).
+ * (sandbox) — not one host shared by key type. `INCREASE_ENVIRONMENT` says
+ * which of the two this deployment is talking to; every environment must set
+ * it explicitly (see docs/secrets.md). `INCREASE_API_BASE_URL` remains an
+ * optional host override for a proxy or a local mock — it moves the host, and
+ * nothing else.
  */
 
 /**
@@ -61,9 +63,50 @@ export function getIncreaseWebhookSecret(): string {
   return secret;
 }
 
-/** https://increase.com/openapi.json `servers` — two hosts, not one shared by key type. */
+/** The two Increase environments; `https://increase.com/openapi.json` `servers` lists one host each. */
+export type IncreaseEnvironment = "sandbox" | "production";
+
+const INCREASE_HOSTS: Record<IncreaseEnvironment, string> = {
+  sandbox: "https://sandbox.increase.com",
+  production: "https://api.increase.com",
+};
+
+/**
+ * Which Increase environment this deployment talks to — the single declaration
+ * that decides both the host and the compliance path in `createEntity`.
+ *
+ * Fails closed, like `getIncreaseApiKey()`: an unset, blank, or unrecognized
+ * value throws instead of assuming anything. It used to be inferred — the host
+ * defaulted to production when unset, and the compliance branch asked whether
+ * the host string contained "sandbox" — so a forgotten variable pointed a
+ * deployment at the real banking API, and a typo'd or proxied host silently
+ * flipped which beneficial-ownership data we submitted for a real church.
+ * Neither failure is one a payment integration is allowed to have, so the
+ * environment is now stated, never guessed (issue #744,
+ * docs/finance/INCREASE-PRODUCTION-RUNBOOK.md §5.1).
+ */
+export function getIncreaseEnvironment(): IncreaseEnvironment {
+  const value = process.env.INCREASE_ENVIRONMENT?.trim();
+  if (value === "sandbox" || value === "production") {
+    return value;
+  }
+  throw new Error(
+    'INCREASE_ENVIRONMENT must be set to "sandbox" or "production" — refusing ' +
+      "to guess which Increase environment to talk to",
+  );
+}
+
+/**
+ * The host to send requests to.
+ *
+ * Derived from `INCREASE_ENVIRONMENT`. `INCREASE_API_BASE_URL` overrides the
+ * host (a proxy, a local mock) but never the environment: it cannot change
+ * which compliance path `createEntity` takes.
+ */
 function getIncreaseBaseUrl(): string {
-  return process.env.INCREASE_API_BASE_URL ?? "https://api.increase.com";
+  const environment = getIncreaseEnvironment();
+  const override = process.env.INCREASE_API_BASE_URL?.trim();
+  return override ? override : INCREASE_HOSTS[environment];
 }
 
 // ============================================================================
@@ -171,7 +214,7 @@ export async function createEntity(
     },
   };
 
-  if (getIncreaseBaseUrl().includes("sandbox")) {
+  if (getIncreaseEnvironment() === "sandbox") {
     // The exemption parameter is rejected until Increase's bank partner
     // approves it for the program (verified live: sandbox 400s with
     // "beneficial_ownership_exemption_reason: Unexpected parameter" and then

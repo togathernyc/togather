@@ -27,7 +27,10 @@ import { expect, test, describe, vi, beforeEach, afterEach } from "vitest";
 import { createCard, updateCardSpendingLimit } from "../lib/finance/increase";
 
 process.env.INCREASE_API_KEY = "test-increase-key";
-process.env.INCREASE_API_BASE_URL = "https://sandbox.increase.com";
+// The client refuses to talk to Increase without an explicit environment
+// (lib/finance/increase.ts's getIncreaseEnvironment) — see
+// __tests__/finance-increase-env.test.ts for that behavior itself.
+process.env.INCREASE_ENVIRONMENT = "sandbox";
 
 /** Captured `fetch` calls, so a test can read the exact URL/method/body sent. */
 interface CapturedRequest {

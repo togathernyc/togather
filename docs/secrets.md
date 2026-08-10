@@ -226,7 +226,8 @@ The group giving feature (ADR-032) enables communities to accept donations via S
 |--------|-------------|-------------|
 | `INCREASE_API_KEY` | Increase API key for Entity/Account/Transfer operations (required for production and staging; omit for dev-only testing) | Fund provisioning fails; allocation/payout jobs blocked |
 | `INCREASE_WEBHOOK_SECRET` | Webhook signing secret for Increase account/entity status updates (required to process bank account creation/activation) | Webhook events are accepted but unverified; status machine never transitions to "live" |
-| `INCREASE_API_BASE_URL` | Override for Increase API base URL — set to `https://sandbox.increase.com` for sandbox/staging, omit for production (defaults to `https://api.increase.com`) | Defaults to production API |
+| `INCREASE_ENVIRONMENT` | Which Increase environment this deployment talks to: exactly `sandbox` (dev/staging) or `production`. Picks the host **and** the beneficial-ownership path submitted at Entity creation. Listed as `required` in `ee/secrets-allowlist.json` — never defaulted | Every Increase call throws: unset/invalid fails closed rather than assuming production |
+| `INCREASE_API_BASE_URL` | Optional host override (a proxy, a local mock). Moves the host only — it does **not** change `INCREASE_ENVIRONMENT` or the compliance path. Normally unset | Host comes from `INCREASE_ENVIRONMENT` |
 | `STRIPE_CONNECT_WEBHOOK_SECRET` | Signing secret (`whsec_`) of the SECOND Stripe event destination, scoped "Events from: Connected accounts" | Connected-account events (donations, account verification, payouts, refunds) are rejected as unsigned; onboarding never completes |
 
 **Note on Stripe integration**: `STRIPE_SECRET_KEY` is shared with billing — no separate API key is needed. Webhooks need **two Stripe event destinations pointing at the same URL** (`https://<convex-deployment>.convex.site/stripe-webhook`), because Stripe scopes a destination at creation:
@@ -251,8 +252,8 @@ Deleting the Stripe destination alone is not sufficient if the secret leaked.
 1. Create Increase sandbox API keys at https://dashboard.increase.com/settings/api (requires account)
 2. Add to 1Password vault `Togather` with `staging` field only: `INCREASE_API_KEY` (e.g., `key_sandbox_...`)
 3. Add `INCREASE_WEBHOOK_SECRET` (from the same dashboard: Webhooks > Create test webhook subscription, copy the secret)
-4. Add `INCREASE_API_BASE_URL` = `https://sandbox.increase.com` (only set for staging; omit for production)
-5. Set `INCREASE_API_KEY` to production key for prod environment (no base URL override)
+4. Add `INCREASE_ENVIRONMENT` = `sandbox` (staging field) and `production` (production field) — both fields must exist, it is `required` and the sync aborts for the whole environment when it's missing from 1Password
+5. Set `INCREASE_API_KEY` to production key for prod environment (leave `INCREASE_API_BASE_URL` unset in both — the environment picks the host)
 
 ### Adding a New EXPO_PUBLIC_* Variable
 

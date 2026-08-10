@@ -38,14 +38,14 @@ So production access exists, but **the platform program — the only thing that
 makes churches-as-Entities legal and possible — has not been requested.** That
 request is the actual critical-path item, and §2 is how to make it.
 
-> **Live-key hazard, now confirmed rather than hypothetical.** Production
-> Convex already holds a working production `INCREASE_API_KEY`, and
-> `INCREASE_API_BASE_URL` is **unset** there, so `getIncreaseBaseUrl()` falls
-> through to `https://api.increase.com` (`lib/finance/increase.ts:52`). If
-> `group-giving` were enabled in production today, provisioning would fire
-> real Entity-creation calls against the live Commercial Banking program. The
-> feature flag being off is currently the only thing preventing that. Fix
-> landmine (a) in §5.1 before the flag is ever flipped.
+> **Live-key hazard.** Production Convex already holds a working production
+> `INCREASE_API_KEY`, so if `group-giving` were enabled in production,
+> provisioning would fire real Entity-creation calls against the live
+> Commercial Banking program. Since landmines (a)/(b) were fixed (§5.1), the
+> host is no longer inferred: `INCREASE_ENVIRONMENT` must be set to `sandbox`
+> or `production` in every environment, and every Increase call throws while
+> it is unset. That is a fail-closed refusal, not a safety net — the
+> `group-giving` flag being off is still what keeps real calls from firing.
 
 ---
 
@@ -289,45 +289,27 @@ the source of truth; never set a secret directly in GitHub or Convex.
 
 ### 5.1 Pre-cutover code changes (do these before touching any secret)
 
-- [ ] **Landmine (a) — fix the missing base-URL default.** Today,
-      `apps/convex/lib/finance/increase.ts:52` defaults `INCREASE_API_BASE_URL`
-      to `https://api.increase.com` — **production** — when the env var is
-      unset. Production Convex currently has **no `INCREASE_API_BASE_URL` set
-      at all** (`INCREASE_API_BASE_URL` is in the `optional` list in
-      `ee/secrets-allowlist.json`, meaning it's skipped, not defaulted, when
-      absent from 1Password). The practical risk: if a sandbox
-      `INCREASE_API_KEY` is ever synced to production Convex without also
-      setting `INCREASE_API_BASE_URL=https://sandbox.increase.com`, requests
-      silently go to the **production** Increase host with a sandbox key —
-      which will fail loudly (auth error) rather than silently succeed, but
-      only because the key won't authenticate against the wrong host. The
-      more dangerous direction is the mirror case at go-live: forgetting to
-      set the base URL at all when the *production* key is finally synced
-      happens to work today only because the default already points at
-      production — meaning there is currently no explicit, reviewable
-      declaration of which environment production Convex is even targeting.
-      Recommended fix: stop relying on an implicit default; require
-      `INCREASE_API_BASE_URL` to be explicitly set in every environment
-      (dev/staging → sandbox, production → production), and fail loudly if
-      it's missing, the same way `getIncreaseApiKey()` already fails loudly
-      when `INCREASE_API_KEY` is missing.
-- [ ] **Landmine (b) — stop branching on a substring of the base URL.**
-      `apps/convex/lib/finance/increase.ts:160` decides which
-      beneficial-ownership path to submit — a fabricated sandbox owner vs.
-      the real production exemption — by checking
-      `getIncreaseBaseUrl().includes("sandbox")`. A misconfigured or
-      malformed `INCREASE_API_BASE_URL` (a typo, a stray trailing slash that
-      breaks the check, or a future proxy/CDN URL in front of Increase that
-      doesn't literally contain the string `"sandbox"`) silently flips which
-      compliance path is submitted — worst case, submitting a **fabricated
-      test beneficial owner's fake SSN to the real production Increase API**
-      for a real church. Recommended fix: replace the substring check with
-      an explicit environment flag (e.g. `INCREASE_ENVIRONMENT=sandbox` /
-      `production`, validated against a fixed enum, independent of and
-      cross-checked against the base URL) so this branch can never be
-      wrong by typo. **Land this fix before the first production Increase
-      key exists anywhere in the deploy pipeline** — it's a pure
-      unforced-error risk otherwise.
+- [x] **Landmine (a) — the base URL no longer defaults to production.**
+      `apps/convex/lib/finance/increase.ts`'s `getIncreaseEnvironment()` now
+      requires `INCREASE_ENVIRONMENT` to be exactly `sandbox` or `production`
+      and throws otherwise, the same way `getIncreaseApiKey()` already fails
+      loudly on a missing key. The host is derived from that flag
+      (`sandbox` → `https://sandbox.increase.com`, `production` →
+      `https://api.increase.com`); `INCREASE_API_BASE_URL` survives only as an
+      optional host override for a proxy or a local mock. **Deploy ordering:**
+      `INCREASE_ENVIRONMENT` is now `required` in `ee/secrets-allowlist.json`,
+      so the 1Password item (with both `staging` and `production` fields) must
+      exist before the next `sync-secrets.yml` dispatch, or the sync aborts for
+      every other secret in that environment too.
+- [x] **Landmine (b) — the substring check is gone.** `createEntity` chooses
+      the beneficial-ownership path — a fabricated sandbox owner vs. the real
+      production exemption — from `getIncreaseEnvironment() === "sandbox"`, not
+      from whether the base URL happens to contain the string `"sandbox"`. A
+      typo, a stray trailing slash, or a proxy/CDN host in front of Increase
+      can no longer flip which compliance data is submitted, and an explicit
+      `INCREASE_API_BASE_URL` cannot reach that branch at all
+      (`apps/convex/__tests__/finance-increase-env.test.ts` covers both
+      directions).
 - [ ] **Add the missing community-level General Account provisioning.**
       Noticed while researching this runbook, not previously documented:
       `apps/convex/functions/finance/onboarding.ts`'s `recordProvisioned`
@@ -365,21 +347,16 @@ Per `docs/secrets.md`'s "Secret Update Flow" and its "Group giving" section:
    vice versa" — sandbox and production subscriptions are entirely separate,
    with separate signing secrets. **Do not reuse the sandbox
    `INCREASE_WEBHOOK_SECRET`.**
-3. **1Password** (per landmine (a) above, after the code fix lands): add an
-   explicit production value/flag corresponding to
-   `INCREASE_API_BASE_URL` = `https://api.increase.com` (or whatever the
-   post-fix explicit-environment variable is named) to the `production`
-   field — do not leave it implicit.
-4. **`ee/secrets-allowlist.json`**: `INCREASE_API_KEY` and
-   `INCREASE_WEBHOOK_SECRET` are already in `required`; `INCREASE_API_BASE_URL`
-   is already in `optional`. If landmine (a)'s fix renames or adds a variable
-   (e.g. `INCREASE_ENVIRONMENT`), add it here too, in `required` (an env var
-   that must always be explicit, per the fix, shouldn't be `optional` and
-   silently prunable).
+3. **1Password**: the `INCREASE_ENVIRONMENT` item must carry `staging` =
+   `sandbox` and `production` = `production`. Nothing is implicit any more —
+   an environment without it makes every Increase call throw.
+4. **`ee/secrets-allowlist.json`**: `INCREASE_API_KEY`,
+   `INCREASE_WEBHOOK_SECRET`, and `INCREASE_ENVIRONMENT` are in `required`;
+   `INCREASE_API_BASE_URL` stays in `optional` (host override only).
 5. **`ee/scripts/sync-secrets-to-convex.sh`**: `INCREASE_API_KEY`,
-   `INCREASE_WEBHOOK_SECRET`, and `INCREASE_API_BASE_URL` are already listed
-   in `SECRET_KEYS` — add any new variable from step 3 here too, or it will
-   sync to GitHub but never reach Convex.
+   `INCREASE_WEBHOOK_SECRET`, `INCREASE_ENVIRONMENT`, and
+   `INCREASE_API_BASE_URL` are all listed in `SECRET_KEYS`, so they reach
+   Convex and not just GitHub.
 6. Dispatch the sync: `gh workflow run sync-secrets.yml -f environment=both`
    (or `-f environment=production` if staging shouldn't be touched this
    round) — per `docs/secrets.md`, this is the only supported path from
@@ -434,8 +411,9 @@ independent of Increase:
 | Gate | Status | Why it matters |
 | --- | --- | --- |
 | Increase production program approved and live | ☐ Not started | Nothing below matters until this exists |
-| Landmine (a) fixed — explicit, non-defaulted `INCREASE_API_BASE_URL`/environment flag | ☐ Not done | Prevents a sandbox key silently pointing at the production host or vice versa |
-| Landmine (b) fixed — explicit environment flag instead of `.includes("sandbox")` | ☐ Not done | Prevents a misconfigured URL silently submitting fabricated beneficial-owner data to the real Increase API |
+| Landmine (a) fixed — explicit, non-defaulted `INCREASE_ENVIRONMENT` picks the host | ☑ Done | Prevents a sandbox key silently pointing at the production host or vice versa |
+| Landmine (b) fixed — explicit environment flag instead of `.includes("sandbox")` | ☑ Done | Prevents a misconfigured URL silently submitting fabricated beneficial-owner data to the real Increase API |
+| `INCREASE_ENVIRONMENT` present in 1Password for staging **and** production | ☐ Not done | It is `required`: until the item exists, `sync-secrets.yml` aborts for the whole environment, and any deployment missing the value refuses every Increase call |
 | Community General Account provisioned by code, not just documented in ADR-032 | ☐ Not done | `apps/convex/functions/finance/onboarding.ts` never creates it today — general-fund (non-group) donations have no Increase Account to land in |
 | Allocation switched from gross donation totals to Stripe balance-transaction NET amounts | ☐ Not done | **ARCHITECTURE.md understates this.** It is not "a tail of stuck-pending donations" — it is a deterministic total stall. `planAllocations` matches GROSS donation totals against a NET payout, and `break`s (not `continue`s) on the first item that doesn't fit, so in the common one-donation-per-payout case the queue never advances again. Group Accounts stay at zero while `funds.balanceCents` reports the money is there, and the nightly invariant compares gross to gross so it never fires. Money never reaches a group fund |
 | Allocation survives partial failure | ☐ Not done | `runAllocation` claims the payout in `processedStripePayouts` *before* transferring, then loops with no per-item error handling. One transient Increase error strands every remaining donation permanently — the redelivered webhook is ignored as "already processed" and `retryStaleAllocations` is alert-only |

@@ -51,9 +51,11 @@ export interface PrivacyClient {
  * Build a client from a decrypted key.
  *
  * The host comes from `PRIVACY_API_BASE_URL` when set (dev/staging point at
- * `https://sandbox.privacy.com/v1`), production otherwise — the same
- * `INCREASE_API_BASE_URL` convention, so an operator learns one rule. It is
- * deliberately NOT stored per connection: a deployment talks to one Privacy
+ * `https://sandbox.privacy.com/v1`), production otherwise. (Increase no longer
+ * works this way: it requires an explicit `INCREASE_ENVIRONMENT` and defaults
+ * to nothing — see lib/finance/increase.ts. Privacy keeps the URL-override
+ * convention because its key is per-community and BYOC, not a platform-wide
+ * banking credential.) It is deliberately NOT stored per connection: a deployment talks to one Privacy
  * environment, and a per-row host would let a staging row hold a production
  * key.
  */

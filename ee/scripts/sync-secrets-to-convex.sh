@@ -119,6 +119,13 @@ SECRET_KEYS=(
   "STRIPE_PRODUCT_ID"
   "INCREASE_API_KEY"
   "INCREASE_WEBHOOK_SECRET"
+  # Which Increase environment this deployment talks to ("sandbox" |
+  # "production"). Required, never defaulted: the Increase client refuses to
+  # send anything without it rather than assume production
+  # (apps/convex/lib/finance/increase.ts).
+  "INCREASE_ENVIRONMENT"
+  # Optional host override (proxy / local mock) — moves the host only; it does
+  # NOT change the environment above.
   "INCREASE_API_BASE_URL"
   # Master key for envelope-encrypting per-community card-provider credentials
   # (lib/finance/credentialCrypto.ts, ADR-033). 32 bytes base64; staging and
