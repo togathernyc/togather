@@ -99,8 +99,10 @@ export function isNotifiedRsvpOptionId(optionId: number): boolean {
  * The enabled check matters for historical rows: a host can hide an option
  * (e.g. Maybe) after people have RSVP'd — the editor drops the disabled option
  * from `meeting.rsvpOptions`, but old `meetingRsvps` rows keep the id. Those
- * stale responders must not keep receiving chat updates or blasts, mirroring
- * `canAccessEventChannel`, which also keys off the currently-enabled options.
+ * stale responders must not keep receiving chat updates or blasts.
+ *
+ * This is the seating rule, which is narrower than `canAccessEventChannel`:
+ * that grants *read* access for any enabled option, "Can't Go" included.
  *
  * (RSVP submit/batchUpdate don't need this — they can only set an option that
  * is currently enabled, so the id check alone suffices there.)

@@ -95,6 +95,103 @@ export async function canAccessEventChannel(
   return Boolean(matched && matched.enabled);
 }
 
+/**
+ * Drop event-channel members who would no longer be *seated* in the chat, so
+ * message fanout (unread counts + push) matches the seating rule instead of
+ * trusting seats that were written once and never re-derived.
+ *
+ * `chatChannelMembers` rows are seated when someone RSVPs and are never
+ * re-derived afterwards, so a host who hides an RSVP option after the channel
+ * exists leaves stale seats behind: those users can't open the chat any more
+ * but would keep getting badged and pushed for every new message (issue #431).
+ *
+ * IMPORTANT — this mirrors *seating*, NOT `canAccessEventChannel`'s read
+ * access. The two rules differ on purpose (see `openEventChat`: "a 'Can't Go'
+ * responder may open the chat but is not seated as a member"):
+ *   - read access: any RSVP row whose option is enabled, "Can't Go" included.
+ *   - seating (this filter, via `isAttendingRsvpOption`): an *enabled*
+ *     Going/Maybe option — see NOTIFIED_RSVP_OPTION_IDS.
+ * So this is strictly narrower than `canAccessEventChannel`, and deliberately
+ * so: notifying "Can't Go" responders is exactly what we don't want.
+ *
+ * One case makes that gap observable even when nothing is hidden:
+ * `reconcileEventChannelAdmins` demotes an ex-admin who holds *any* enabled
+ * option to "member" rather than removing them (its `hasActiveRsvp` check is
+ * read-access-shaped, not seating-shaped). A delegated-event leader who
+ * RSVP'd "Can't Go" and then lost admin when a host was named therefore keeps
+ * a seat no seating rule would ever create — she stays in the channel and can
+ * still read it, but this filter stops badging/pushing her, the same as any
+ * other "Can't Go" responder. That divergence is pre-existing and left alone;
+ * it is pinned by "a leader demoted after hosts are set…" in
+ * `__tests__/messaging/event-chat.test.ts`.
+ *
+ * This filters rather than deletes on purpose. Nobody is evicted from the
+ * channel and no history is destroyed — re-enabling the option silently
+ * restores delivery, which a destructive reconcile-on-edit could not do.
+ *
+ * COST — read honestly before reusing this on another hot path. Non-event
+ * channels pass through with zero extra reads. An event channel costs one
+ * meeting read plus a full `meetingRsvps`-by-meeting scan on *every* message:
+ * proportional to the event's RSVP count (not the recipient count), inside the
+ * sender's transaction. A community-wide event with thousands of RSVPs
+ * therefore adds thousands of document reads per message, against Convex's
+ * per-transaction read budget, on the busiest channels there are.
+ *
+ * The obvious escape — "if every option is enabled nothing can be hidden, so
+ * skip the scan" — is NOT sound: the filter also drops seats whose RSVP is
+ * "Can't Go" or missing entirely, and the `reconcileEventChannelAdmins`
+ * demotion above creates exactly such a seat with every option enabled. The
+ * "leader demoted after hosts are set" test fails if you add it. Per-member
+ * point reads are worse for typical events (N reads vs. one scan). If this
+ * ever becomes a real budget problem, the fix is to make seating cheap to
+ * re-derive — e.g. denormalize the RSVP option onto `chatChannelMembers` —
+ * not to skip the check.
+ */
+export async function filterMembersWithEventChannelAccess<
+  T extends { userId: Id<"users">; role?: string },
+>(
+  ctx: QueryCtx | MutationCtx,
+  channel: Doc<"chatChannels"> | null,
+  members: T[],
+): Promise<T[]> {
+  // Nothing to narrow: either this isn't an event channel, or the channel doc
+  // is missing so we can't tell that it is one. This helper only ever removes
+  // event-channel recipients, so with no evidence of an event channel it hands
+  // the caller's list back untouched. That is the opposite fail-direction from
+  // the missing *meeting* below, on purpose: absent evidence we stay out of the
+  // way, but a known event channel whose meeting is gone is positive evidence
+  // that nobody can open the chat.
+  if (!channel || channel.channelType !== "event" || !channel.meetingId) {
+    return members;
+  }
+
+  const meeting = await ctx.db.get(channel.meetingId);
+  // Orphaned event channel — `canAccessEventChannel` denies everyone, so
+  // notifying anyone would be delivering to a chat none of them can open.
+  if (!meeting) return [];
+
+  const rsvps = await ctx.db
+    .query("meetingRsvps")
+    .withIndex("by_meeting", (q) => q.eq("meetingId", channel.meetingId!))
+    .collect();
+  const optionIdByUser = new Map(
+    rsvps.map((rsvp) => [String(rsvp.userId), rsvp.rsvpOptionId]),
+  );
+
+  return members.filter((member) => {
+    // Admin seats (hosts, or group leaders on a delegated event) are owned by
+    // `reconcileEventChannelAdmins` and have no RSVP row to key off — hiding an
+    // RSVP option must never unseat them. The `isMeetingHost` fallback catches
+    // a host whose seat predates their promotion and still says "member".
+    if (member.role === "admin") return true;
+    if (isMeetingHost(meeting, member.userId)) return true;
+
+    const optionId = optionIdByUser.get(String(member.userId));
+    if (optionId === undefined) return false;
+    return isAttendingRsvpOption(optionId, meeting.rsvpOptions);
+  });
+}
+
 // ============================================================================
 // Queries
 // ============================================================================
