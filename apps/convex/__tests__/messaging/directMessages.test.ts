@@ -1248,6 +1248,53 @@ describe("former member display (expired 1:1 DM requests)", () => {
     await t.finishInProgressScheduledFunctions();
   });
 
+  test("resolves the departed member from the membership snapshot, not their live profile", async () => {
+    const t = convexTest(schema, modules);
+    const communityId = await createCommunity(t, "Former Member Snapshot");
+    const { accessToken: aToken } = await createUserInCommunity(t, communityId, {
+      firstName: "Alice",
+    });
+    const { userId: bId } = await createUserInCommunity(t, communityId, {
+      firstName: "David",
+      lastName: "Walker",
+    });
+
+    const { channelId } = await t.mutation(
+      api.functions.messaging.directMessages.createOrGetDirectChannel,
+      { token: aToken, communityId, recipientUserId: bId },
+    );
+    await t.mutation(api.functions.messaging.messages.sendMessage, {
+      token: aToken,
+      channelId,
+      content: "yo",
+    });
+    await t.finishInProgressScheduledFunctions();
+
+    await expirePendingRequest(t, channelId, bId);
+
+    // David edits his profile AFTER leaving. Active members in getDirectInbox
+    // are rendered from the denormalized member row, so a departed person must
+    // not get a fresher identity than one who is still there — and edits made
+    // after leaving must not keep streaming to the other party.
+    await t.run(async (ctx) => {
+      await ctx.db.patch(bId, { firstName: "Renamed", lastName: "Person" });
+    });
+
+    const inbox = await t.query(
+      api.functions.messaging.directMessages.getDirectInbox,
+      { token: aToken, communityId },
+    );
+    expect(inbox[0].formerMember?.displayName).toBe("David Walker");
+
+    const members = await t.query(
+      api.functions.messaging.directMessages.getAdHocChannelMembers,
+      { token: aToken, channelId },
+    );
+    expect(members!.formerMember?.displayName).toBe("David Walker");
+
+    await t.finishInProgressScheduledFunctions();
+  });
+
   test("does not expose a blocker's identity to the sender they blocked", async () => {
     const t = convexTest(schema, modules);
     const communityId = await createCommunity(t, "Blocked Former Member");

@@ -15,7 +15,7 @@
 import { v, ConvexError } from "convex/values";
 import { query, mutation, internalMutation } from "../../_generated/server";
 import type { QueryCtx } from "../../_generated/server";
-import type { Id } from "../../_generated/dataModel";
+import type { Doc, Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
 import { checkRateLimit } from "../../lib/rateLimit";
 import { getDisplayName, getMediaUrl, normalizePhone } from "../../lib/utils";
@@ -1370,17 +1370,16 @@ type FormerDirectMember = {
  * (`respondToChatRequest` with `response: "block"`) also ends the membership,
  * so without this guard the blocker's identity would be handed straight back
  * to the person they blocked.
+ *
+ * `memberRows` is the channel's FULL member list, departed rows included —
+ * callers already hold it, so it is passed in rather than re-queried.
  */
 async function resolveFormerDirectMember(
   ctx: QueryCtx,
-  channelId: Id<"chatChannels">,
+  memberRows: Array<Doc<"chatChannelMembers">>,
   callerId: Id<"users">,
 ): Promise<FormerDirectMember | null> {
-  const rows = await ctx.db
-    .query("chatChannelMembers")
-    .withIndex("by_channel", (q) => q.eq("channelId", channelId))
-    .collect();
-  const departed = rows
+  const departed = memberRows
     .filter((m) => m.userId !== callerId && m.leftAt !== undefined)
     .sort((a, b) => (b.leftAt ?? 0) - (a.leftAt ?? 0))[0];
   if (!departed) return null;
@@ -1396,18 +1395,16 @@ async function resolveFormerDirectMember(
     return null;
   }
 
-  // Prefer the live user doc — the denormalized row values go stale when the
-  // user edits their profile — and fall back to the row for a deleted user.
-  const user = await ctx.db.get(departed.userId);
-  const displayName =
-    (user ? getDisplayName(user.firstName, user.lastName) : "") ||
-    departed.displayName ||
-    "Member";
+  // Read the denormalized member row, NOT the live user doc. Active members in
+  // `getDirectInbox` are rendered from the row too, so resolving a departed
+  // person from their user doc would give someone who left a *fresher* identity
+  // than someone still in the thread. It also keeps this a snapshot of who they
+  // were while the thread was live: profile edits they make afterwards stop
+  // propagating to a counterpart they no longer share a channel with.
   return {
     userId: departed.userId,
-    displayName,
-    profilePhoto:
-      getMediaUrl(user?.profilePhoto ?? departed.profilePhoto) ?? null,
+    displayName: departed.displayName || "Member",
+    profilePhoto: getMediaUrl(departed.profilePhoto) ?? null,
   };
 }
 
@@ -1472,11 +1469,13 @@ export const getAdHocChannelMembers = query({
       return null;
     }
 
-    const memberRows = await ctx.db
+    // Collected unfiltered so `resolveFormerDirectMember` can reuse the rows;
+    // active members are filtered out of it in memory.
+    const allMemberRows = await ctx.db
       .query("chatChannelMembers")
       .withIndex("by_channel", (q) => q.eq("channelId", args.channelId))
-      .filter((q) => q.eq(q.field("leftAt"), undefined))
       .collect();
+    const memberRows = allMemberRows.filter((m) => m.leftAt === undefined);
 
     const others = memberRows.filter((m) => m.userId !== userId);
     // Resolve profilePhoto + displayName from each user doc — denormalized
@@ -1509,7 +1508,7 @@ export const getAdHocChannelMembers = query({
     const channelType = channel.channelType as "dm" | "group_dm";
     const formerMember =
       channelType === "dm" && otherMembers.length === 0
-        ? await resolveFormerDirectMember(ctx, args.channelId, userId)
+        ? await resolveFormerDirectMember(ctx, allMemberRows, userId)
         : null;
 
     return {
@@ -1593,11 +1592,16 @@ export const getDirectInbox = query({
       // surfacing the chat to a recipient who hasn't responded — that recipient
       // shows in the member list with their pending state, but for inbox
       // display we only need name+photo).
-      const otherMemberRows = await ctx.db
+      //
+      // Collected unfiltered so `resolveFormerDirectMember` can reuse the rows;
+      // active members are filtered out of it in memory.
+      const allMemberRows = await ctx.db
         .query("chatChannelMembers")
         .withIndex("by_channel", (q) => q.eq("channelId", channel._id))
-        .filter((q) => q.eq(q.field("leftAt"), undefined))
         .collect();
+      const otherMemberRows = allMemberRows.filter(
+        (m) => m.leftAt === undefined,
+      );
       const otherMemberIds = otherMemberRows
         .filter((m) => m.userId !== userId)
         .map((m) => m.userId);
@@ -1623,7 +1627,7 @@ export const getDirectInbox = query({
       // it doesn't degrade into a nameless "Conversation".
       const formerMember =
         channelType === "dm" && otherMembers.length === 0
-          ? await resolveFormerDirectMember(ctx, channel._id, userId)
+          ? await resolveFormerDirectMember(ctx, allMemberRows, userId)
           : null;
 
       // Read state → unread count.
