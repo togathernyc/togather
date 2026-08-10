@@ -39,6 +39,7 @@ import schema from "../../schema";
 import type { Id } from "../../_generated/dataModel";
 import { modules } from "../../test.setup";
 import { api, internal } from "../../_generated/api";
+import { drainScheduledFunctions } from "../helpers/drainScheduledFunctions";
 
 process.env.JWT_SECRET = "test-jwt-secret-for-unit-tests-minimum-32-chars";
 
@@ -247,6 +248,87 @@ async function setupTestData(t: ReturnType<typeof convexTest>): Promise<TestData
       goingToken: `test-token-${goingId}`,
       outsiderToken: `test-token-${outsiderId}`,
     };
+  });
+}
+
+/**
+ * Insert a message and run the fanout, returning the scheduled
+ * `sendMessageNotifications` args. Deliberately does NOT drain the scheduler
+ * — we only want to inspect the recipient list, not deliver pushes.
+ */
+async function fanout(
+  t: ReturnType<typeof convexTest>,
+  channelId: Id<"chatChannels">,
+  senderId: Id<"users">,
+): Promise<{ mentionRecipients: Id<"users">[]; regularRecipients: Id<"users">[] } | null> {
+  const messageId = await t.run(async (ctx) => {
+    return await ctx.db.insert("chatMessages", {
+      channelId,
+      senderId,
+      content: "Anyone bringing dessert?",
+      contentType: "text",
+      createdAt: Date.now(),
+      isDeleted: false,
+      senderName: "Going Attendee",
+    });
+  });
+
+  await t.mutation(internal.functions.messaging.events.onMessageSent, {
+    messageId,
+    channelId,
+    senderId,
+  });
+
+  return await t.run(async (ctx) => {
+    const jobs = await ctx.db.system.query("_scheduled_functions").collect();
+    const notif = jobs
+      .filter((j) => String(j.name).includes("sendMessageNotifications"))
+      .pop();
+    return notif ? (notif.args[0] as any) : null;
+  });
+}
+
+async function unreadCount(
+  t: ReturnType<typeof convexTest>,
+  channelId: Id<"chatChannels">,
+  userId: Id<"users">,
+): Promise<number> {
+  return await t.run(async (ctx) => {
+    const readState = await ctx.db
+      .query("chatReadState")
+      .withIndex("by_channel_user", (q) =>
+        q.eq("channelId", channelId).eq("userId", userId),
+      )
+      .first();
+    return readState?.unreadCount ?? 0;
+  });
+}
+
+async function channelIdForMeeting(
+  t: ReturnType<typeof convexTest>,
+  meetingId: Id<"meetings">,
+): Promise<Id<"chatChannels">> {
+  return await t.run(async (ctx) => {
+    const channel = await ctx.db
+      .query("chatChannels")
+      .withIndex("by_meetingId", (q) => q.eq("meetingId", meetingId))
+      .unique();
+    return channel!._id;
+  });
+}
+
+async function seatOf(
+  t: ReturnType<typeof convexTest>,
+  channelId: Id<"chatChannels">,
+  userId: Id<"users">,
+) {
+  return await t.run(async (ctx) => {
+    return await ctx.db
+      .query("chatChannelMembers")
+      .withIndex("by_channel_user", (q) =>
+        q.eq("channelId", channelId).eq("userId", userId),
+      )
+      .unique();
   });
 }
 
@@ -1458,66 +1540,7 @@ describe("event chat fanout when an RSVP option is hidden after the channel exis
       ],
     });
 
-    return await t.run(async (ctx) => {
-      const channel = await ctx.db
-        .query("chatChannels")
-        .withIndex("by_meetingId", (q) => q.eq("meetingId", data.meetingId))
-        .unique();
-      return channel!._id;
-    });
-  }
-
-  /**
-   * Insert a message and run the fanout, returning the scheduled
-   * `sendMessageNotifications` args. Deliberately does NOT drain the scheduler
-   * — we only want to inspect the recipient list, not deliver pushes.
-   */
-  async function fanout(
-    t: ReturnType<typeof convexTest>,
-    channelId: Id<"chatChannels">,
-    senderId: Id<"users">,
-  ): Promise<{ mentionRecipients: Id<"users">[]; regularRecipients: Id<"users">[] } | null> {
-    const messageId = await t.run(async (ctx) => {
-      return await ctx.db.insert("chatMessages", {
-        channelId,
-        senderId,
-        content: "Anyone bringing dessert?",
-        contentType: "text",
-        createdAt: Date.now(),
-        isDeleted: false,
-        senderName: "Going Attendee",
-      });
-    });
-
-    await t.mutation(internal.functions.messaging.events.onMessageSent, {
-      messageId,
-      channelId,
-      senderId,
-    });
-
-    return await t.run(async (ctx) => {
-      const jobs = await ctx.db.system.query("_scheduled_functions").collect();
-      const notif = jobs
-        .filter((j) => String(j.name).includes("sendMessageNotifications"))
-        .pop();
-      return notif ? (notif.args[0] as any) : null;
-    });
-  }
-
-  async function unreadCount(
-    t: ReturnType<typeof convexTest>,
-    channelId: Id<"chatChannels">,
-    userId: Id<"users">,
-  ): Promise<number> {
-    return await t.run(async (ctx) => {
-      const readState = await ctx.db
-        .query("chatReadState")
-        .withIndex("by_channel_user", (q) =>
-          q.eq("channelId", channelId).eq("userId", userId),
-        )
-        .first();
-      return readState?.unreadCount ?? 0;
-    });
+    return await channelIdForMeeting(t, data.meetingId);
   }
 
   test("skips push + unread for a member whose RSVP option was hidden after seating", async () => {
@@ -1580,5 +1603,158 @@ describe("event chat fanout when an RSVP option is hidden after the channel exis
 
     expect(notif!.regularRecipients).toContain(data.maybeId);
     expect(await unreadCount(t, channelId, data.maybeId)).toBe(1);
+  });
+});
+
+// ============================================================================
+// Fanout mirrors seating, not read access (issue #431)
+// ============================================================================
+
+/**
+ * `filterMembersWithEventChannelAccess` deliberately implements the *seating*
+ * rule (an enabled Going/Maybe option — `isAttendingRsvpOption`), which is
+ * stricter than `canAccessEventChannel`'s read-access rule (any enabled
+ * option, "Can't Go" included). These tests pin the two places that gap is
+ * observable, plus the delegated-mode (`hostUserIds: []`) seating path that
+ * the hidden-option tests above never reach.
+ */
+describe("event chat fanout mirrors seating, not read access", () => {
+  /** Turn the seeded event into a delegated one: no explicit hosts. */
+  async function makeDelegated(
+    t: ReturnType<typeof convexTest>,
+    data: TestData,
+  ): Promise<void> {
+    await t.run(async (ctx) => {
+      await ctx.db.patch(data.meetingId, { hostUserIds: [] });
+    });
+  }
+
+  test("delegated event: group leaders seated as admins keep getting notified after an option is hidden", async () => {
+    const t = convexTest(schema, modules);
+    const data = await setupTestData(t);
+    await makeDelegated(t, data);
+
+    // Delegated mode → `resolveEventAdmins` seats every active group leader.
+    await t.mutation("functions/messaging/eventChat:openEventChat" as any, {
+      token: data.leaderToken,
+      meetingId: data.meetingId,
+    });
+    const channelId = await channelIdForMeeting(t, data.meetingId);
+
+    await t.mutation("functions/meetings/index:update" as any, {
+      token: data.hostToken,
+      meetingId: data.meetingId,
+      rsvpOptions: [
+        { id: 1, label: "Going", enabled: true },
+        { id: 2, label: "Maybe", enabled: false },
+        { id: 3, label: "Can't Go", enabled: false },
+      ],
+    });
+
+    const notif = await fanout(t, channelId, data.goingId);
+
+    // `isMeetingHost` is false for everyone here (hostUserIds is empty), so
+    // these seats survive purely on `role === "admin"` — the delegated-mode
+    // seating that `ensureEventChannel` wrote. Neither leader has an RSVP row.
+    expect(await seatOf(t, channelId, data.leaderId)).toMatchObject({
+      role: "admin",
+    });
+    expect(notif!.regularRecipients).toContain(data.leaderId);
+    expect(notif!.regularRecipients).toContain(data.hostId);
+    expect(await unreadCount(t, channelId, data.leaderId)).toBe(1);
+
+    // The hidden-option member is still dropped in delegated mode.
+    expect(notif!.regularRecipients).not.toContain(data.maybeId);
+    expect(await unreadCount(t, channelId, data.maybeId)).toBe(0);
+  });
+
+  test("a leader demoted after hosts are set keeps chat access but stops being notified, even with every option enabled", async () => {
+    const t = convexTest(schema, modules);
+    const data = await setupTestData(t);
+    await makeDelegated(t, data);
+
+    // Every option is enabled — nothing is hidden. The leader RSVPs "Can't
+    // Go", which grants read access but never a seat of its own.
+    await t.run(async (ctx) => {
+      await ctx.db.patch(data.meetingId, {
+        rsvpOptions: [
+          { id: 1, label: "Going", enabled: true },
+          { id: 2, label: "Maybe", enabled: true },
+          { id: 3, label: "Can't Go", enabled: true },
+        ],
+      });
+      await ctx.db.insert("meetingRsvps", {
+        meetingId: data.meetingId,
+        userId: data.leaderId,
+        rsvpOptionId: 3,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+    });
+
+    await t.mutation("functions/messaging/eventChat:openEventChat" as any, {
+      token: data.leaderToken,
+      meetingId: data.meetingId,
+    });
+    const channelId = await channelIdForMeeting(t, data.meetingId);
+    expect(await seatOf(t, channelId, data.leaderId)).toMatchObject({
+      role: "admin",
+    });
+
+    // Naming an explicit host ends delegated mode. `reconcileEventChannelAdmins`
+    // demotes rather than removes the ex-admin because she has *an* enabled
+    // RSVP option — its `hasActiveRsvp` check is read-access-shaped, not
+    // seating-shaped. That leaves a "member" seat no seating rule would create.
+    await t.mutation("functions/meetings/index:update" as any, {
+      token: data.hostToken,
+      meetingId: data.meetingId,
+      hostUserIds: [data.hostId],
+    });
+    await drainScheduledFunctions(t);
+    expect(await seatOf(t, channelId, data.leaderId)).toMatchObject({
+      role: "member",
+    });
+
+    // She can still open and read the chat...
+    await expect(
+      t.mutation("functions/messaging/eventChat:openEventChat" as any, {
+        token: data.leaderToken,
+        meetingId: data.meetingId,
+      }),
+    ).resolves.toBeTruthy();
+
+    // ...but the fanout mirrors seating, so she is badged and pushed exactly
+    // like any other "Can't Go" responder: not at all. This is the documented
+    // divergence from `canAccessEventChannel` — and the reason "all options
+    // are enabled" can NOT be used to skip the RSVP scan.
+    const notif = await fanout(t, channelId, data.goingId);
+    expect(notif!.regularRecipients).not.toContain(data.leaderId);
+    expect(await unreadCount(t, channelId, data.leaderId)).toBe(0);
+    expect(notif!.regularRecipients).toContain(data.hostId);
+  });
+
+  test("a host seated with role 'member' is kept by the isMeetingHost branch", async () => {
+    const t = convexTest(schema, modules);
+    const data = await setupTestData(t);
+
+    await t.mutation("functions/messaging/eventChat:openEventChat" as any, {
+      token: data.hostToken,
+      meetingId: data.meetingId,
+    });
+    const channelId = await channelIdForMeeting(t, data.meetingId);
+
+    // A host whose seat predates their promotion (added to `hostUserIds`
+    // while the channel already had them as a plain member, before any
+    // reconcile ran). They have no RSVP row, so only `isMeetingHost` can
+    // save them from the filter.
+    const hostSeat = await seatOf(t, channelId, data.hostId);
+    await t.run(async (ctx) => {
+      await ctx.db.patch(hostSeat!._id, { role: "member" });
+    });
+
+    const notif = await fanout(t, channelId, data.goingId);
+
+    expect(notif!.regularRecipients).toContain(data.hostId);
+    expect(await unreadCount(t, channelId, data.hostId)).toBe(1);
   });
 });

@@ -186,8 +186,13 @@ export const onMessageSent = internalMutation({
       .collect();
 
     // Event channels seat members from RSVPs but never re-derive those seats,
-    // so a hidden RSVP option leaves rows behind for users `canAccessEventChannel`
-    // now denies. Re-check here rather than trusting the seat (issue #431).
+    // so a hidden RSVP option leaves rows behind for people who would no longer
+    // be seated. Re-derive seating here rather than trusting the seat (#431).
+    // NOTE: this applies the *seating* rule (an enabled Going/Maybe option),
+    // which is narrower than `canAccessEventChannel`'s read access — a "Can't
+    // Go" responder may still open the chat but is not notified about it. See
+    // `filterMembersWithEventChannelAccess` for why, and for the one case
+    // (`reconcileEventChannelAdmins` demotion) where the two visibly diverge.
     const allMembers = await filterMembersWithEventChannelAccess(
       ctx,
       channel,
