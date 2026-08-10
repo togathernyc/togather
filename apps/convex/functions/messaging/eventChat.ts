@@ -154,13 +154,20 @@ export async function filterMembersWithEventChannelAccess<
   channel: Doc<"chatChannels"> | null,
   members: T[],
 ): Promise<T[]> {
+  // Nothing to narrow: either this isn't an event channel, or the channel doc
+  // is missing so we can't tell that it is one. This helper only ever removes
+  // event-channel recipients, so with no evidence of an event channel it hands
+  // the caller's list back untouched. That is the opposite fail-direction from
+  // the missing *meeting* below, on purpose: absent evidence we stay out of the
+  // way, but a known event channel whose meeting is gone is positive evidence
+  // that nobody can open the chat.
   if (!channel || channel.channelType !== "event" || !channel.meetingId) {
     return members;
   }
 
   const meeting = await ctx.db.get(channel.meetingId);
-  // Orphaned channel — `canAccessEventChannel` denies everyone, so notifying
-  // anyone about it would be delivering to a chat none of them can open.
+  // Orphaned event channel — `canAccessEventChannel` denies everyone, so
+  // notifying anyone would be delivering to a chat none of them can open.
   if (!meeting) return [];
 
   const rsvps = await ctx.db
