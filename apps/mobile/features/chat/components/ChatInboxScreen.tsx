@@ -2347,7 +2347,8 @@ interface DirectMessageRowProps {
 }
 
 
-function DirectMessageRow({ row, primaryColor, colors, whatsappShellEnabled }: DirectMessageRowProps) {
+/** Exported for direct rendering in tests; the screen renders it internally. */
+export function DirectMessageRow({ row, primaryColor, colors, whatsappShellEnabled }: DirectMessageRowProps) {
   const router = useRouter();
 
   // Display name: for 1:1, the other member; for group_dm, the channel name
