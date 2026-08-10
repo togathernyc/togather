@@ -1365,6 +1365,11 @@ type FormerDirectMember = {
  * list, count, or fan-out — the person really did leave, and must not be
  * treated as active anywhere. Only call this for `channelType === "dm"` and
  * only when there is no active other member.
+ *
+ * Returns null when either party has blocked the other: "Block & Report"
+ * (`respondToChatRequest` with `response: "block"`) also ends the membership,
+ * so without this guard the blocker's identity would be handed straight back
+ * to the person they blocked.
  */
 async function resolveFormerDirectMember(
   ctx: QueryCtx,
@@ -1379,6 +1384,17 @@ async function resolveFormerDirectMember(
     .filter((m) => m.userId !== callerId && m.leftAt !== undefined)
     .sort((a, b) => (b.leftAt ?? 0) - (a.leftAt ?? 0))[0];
   if (!departed) return null;
+
+  // A block hides each party from the other everywhere else in this file —
+  // channel creation refuses with a generic error rather than leak who
+  // (`isBlockedEitherDirection` above), and both the new-chat member list and
+  // user search filter blocked users out. A declined-by-block membership looks
+  // exactly like an expired one, so this display fallback has to make the same
+  // check or it becomes the one place the blocker's name (and live photo)
+  // reaches the sender they blocked.
+  if (await isBlockedEitherDirection(ctx, callerId, departed.userId)) {
+    return null;
+  }
 
   // Prefer the live user doc — the denormalized row values go stale when the
   // user edits their profile — and fall back to the row for a deleted user.

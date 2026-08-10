@@ -1247,6 +1247,60 @@ describe("former member display (expired 1:1 DM requests)", () => {
 
     await t.finishInProgressScheduledFunctions();
   });
+
+  test("does not expose a blocker's identity to the sender they blocked", async () => {
+    const t = convexTest(schema, modules);
+    const communityId = await createCommunity(t, "Blocked Former Member");
+    const { accessToken: aToken } = await createUserInCommunity(t, communityId, {
+      firstName: "Alice",
+      lastName: "Anderson",
+    });
+    const { userId: bId, accessToken: bToken } = await createUserInCommunity(
+      t,
+      communityId,
+      { firstName: "Bob", lastName: "Smith" },
+    );
+
+    const { channelId } = await t.mutation(
+      api.functions.messaging.directMessages.createOrGetDirectChannel,
+      { token: aToken, communityId, recipientUserId: bId },
+    );
+    await t.mutation(api.functions.messaging.messages.sendMessage, {
+      token: aToken,
+      channelId,
+      content: "hey",
+    });
+    await t.finishInProgressScheduledFunctions();
+
+    // Bob taps "Block & Report" on the cold DM request. This marks only Bob's
+    // member row declined + leftAt; the channel stays in Alice's inbox.
+    await t.mutation(
+      api.functions.messaging.directMessages.respondToChatRequest,
+      { token: bToken, channelId, response: "block", reportReason: "spam" },
+    );
+    await t.finishInProgressScheduledFunctions();
+
+    // Alice must NOT learn who blocked her — the file's own convention
+    // (`isBlockedEitherDirection` gating creation and the member/search
+    // listings) is that a block hides the other party in both directions.
+    const inbox = await t.query(
+      api.functions.messaging.directMessages.getDirectInbox,
+      { token: aToken, communityId },
+    );
+    expect(inbox).toHaveLength(1);
+    expect(inbox[0].otherMembers).toHaveLength(0);
+    expect(inbox[0].formerMember).toBeNull();
+
+    const members = await t.query(
+      api.functions.messaging.directMessages.getAdHocChannelMembers,
+      { token: aToken, channelId },
+    );
+    expect(members).not.toBeNull();
+    expect(members!.otherMembers).toHaveLength(0);
+    expect(members!.formerMember).toBeNull();
+
+    await t.finishInProgressScheduledFunctions();
+  });
 });
 
 // ============================================================================
