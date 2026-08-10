@@ -39,7 +39,6 @@ import schema from "../../schema";
 import type { Id } from "../../_generated/dataModel";
 import { modules } from "../../test.setup";
 import { api, internal } from "../../_generated/api";
-import { drainScheduledFunctions } from "../helpers/drainScheduledFunctions";
 
 process.env.JWT_SECRET = "test-jwt-secret-for-unit-tests-minimum-32-chars";
 
@@ -1705,12 +1704,17 @@ describe("event chat fanout mirrors seating, not read access", () => {
     // demotes rather than removes the ex-admin because she has *an* enabled
     // RSVP option — its `hasActiveRsvp` check is read-access-shaped, not
     // seating-shaped. That leaves a "member" seat no seating rule would create.
-    await t.mutation("functions/meetings/index:update" as any, {
-      token: data.hostToken,
-      meetingId: data.meetingId,
-      hostUserIds: [data.hostId],
+    //
+    // `meetings:update` fires this via `ctx.scheduler.runAfter(0, ...)`; that
+    // wiring is covered in meeting-hosts.test.ts, so run it directly here and
+    // keep this test free of scheduled-job timing.
+    await t.run(async (ctx) => {
+      await ctx.db.patch(data.meetingId, { hostUserIds: [data.hostId] });
     });
-    await drainScheduledFunctions(t);
+    await t.mutation(
+      internal.functions.messaging.eventChat.reconcileEventChannelAdmins,
+      { meetingId: data.meetingId },
+    );
     expect(await seatOf(t, channelId, data.leaderId)).toMatchObject({
       role: "member",
     });
