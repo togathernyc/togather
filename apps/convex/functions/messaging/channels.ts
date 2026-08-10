@@ -4205,8 +4205,11 @@ export const toggleLeadersChannel = mutation({
 
     // Check idempotency
     const isCurrentlyArchived = leadersChannel.isArchived === true;
+    // See toggleMainChannel: an unarchived channel left at `isEnabled: false`
+    // reads as disabled everywhere, so enable must clear it. Issue #463.
+    const isCurrentlyDisabled = leadersChannel.isEnabled === false;
 
-    if (args.enabled && !isCurrentlyArchived) {
+    if (args.enabled && !isCurrentlyArchived && !isCurrentlyDisabled) {
       // Already enabled, no-op
       return { channelId: leadersChannel._id, status: "already_enabled" };
     }
@@ -4223,6 +4226,7 @@ export const toggleLeadersChannel = mutation({
       await ctx.db.patch(leadersChannel._id, {
         isArchived: false,
         archivedAt: undefined,
+        isEnabled: true,
         updatedAt: now,
       });
 
@@ -4384,16 +4388,23 @@ export const toggleReachOutChannel = mutation({
     if (args.enabled) {
       let channelId: Id<"chatChannels">;
 
-      if (existingChannel && !existingChannel.isArchived) {
+      // See toggleMainChannel: an unarchived channel left at `isEnabled: false`
+      // reads as disabled everywhere, so enable must clear it. Issue #463.
+      if (
+        existingChannel &&
+        !existingChannel.isArchived &&
+        existingChannel.isEnabled !== false
+      ) {
         // Already enabled
         return { channelId: existingChannel._id, status: "already_enabled" };
       }
 
       if (existingChannel) {
-        // Unarchive existing channel
+        // Unarchive / un-disable existing channel
         await ctx.db.patch(existingChannel._id, {
           isArchived: false,
           archivedAt: undefined,
+          isEnabled: true,
           updatedAt: now,
         });
         channelId = existingChannel._id;
@@ -4917,8 +4928,13 @@ export const toggleMainChannel = mutation({
     }
 
     const isCurrentlyArchived = mainChannel.isArchived === true;
+    // Built-in toggles only ever flip `isArchived`, but a migration or manual DB
+    // edit can leave `isEnabled: false` on an unarchived channel — which readers
+    // treat as disabled. Enable must recover from that too, or the channel stays
+    // hidden with no in-app way back. See issue #463.
+    const isCurrentlyDisabled = mainChannel.isEnabled === false;
 
-    if (args.enabled && !isCurrentlyArchived) {
+    if (args.enabled && !isCurrentlyArchived && !isCurrentlyDisabled) {
       return { channelId: mainChannel._id, status: "already_enabled" as const };
     }
 
@@ -4930,6 +4946,7 @@ export const toggleMainChannel = mutation({
       await ctx.db.patch(mainChannel._id, {
         isArchived: false,
         archivedAt: undefined,
+        isEnabled: true,
         updatedAt: now,
       });
 

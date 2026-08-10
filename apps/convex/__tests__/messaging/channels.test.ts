@@ -3246,6 +3246,108 @@ describe("toggleMainChannel", () => {
     // Drain the scheduled clear so no jobs leak past the test.
     await t.finishAllScheduledFunctions(vi.runAllTimers);
   });
+
+  test("re-enables a General channel stuck at isEnabled:false with isArchived:false", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId, accessToken } = await seedTestData(t);
+    const { accessToken: leaderToken } = await createLeaderUser(t, communityId, groupId);
+
+    const channelId = await t.mutation(api.functions.messaging.channels.createChannel, {
+      token: accessToken,
+      groupId,
+      channelType: "main",
+      name: "General",
+    });
+
+    // Only reachable via a manual DB edit or a migration, but the recovery
+    // screen treats it as disabled — so enable must actually recover it.
+    await t.run(async (ctx) => ctx.db.patch(channelId, { isEnabled: false }));
+
+    const result = await t.mutation(api.functions.messaging.channels.toggleMainChannel, {
+      token: leaderToken,
+      groupId,
+      enabled: true,
+    });
+    expect(result.status).toBe("enabled");
+
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const channel = await t.run(async (ctx) => ctx.db.get(channelId));
+    expect(channel?.isEnabled).toBe(true);
+    expect(channel?.isArchived).toBe(false);
+  });
+});
+
+describe("toggleLeadersChannel", () => {
+  test("re-enables a leaders channel stuck at isEnabled:false with isArchived:false", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId } = await seedTestData(t);
+    const { accessToken: leaderToken } = await createLeaderUser(t, communityId, groupId);
+
+    const channelId = await t.mutation(api.functions.messaging.channels.createChannel, {
+      token: leaderToken,
+      groupId,
+      channelType: "leaders",
+      name: "Leaders",
+    });
+
+    await t.run(async (ctx) => ctx.db.patch(channelId, { isEnabled: false }));
+
+    const result = await t.mutation(
+      api.functions.messaging.channels.toggleLeadersChannel,
+      { token: leaderToken, groupId, enabled: true }
+    );
+    expect(result.status).toBe("enabled");
+
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const channel = await t.run(async (ctx) => ctx.db.get(channelId));
+    expect(channel?.isEnabled).toBe(true);
+    expect(channel?.isArchived).toBe(false);
+  });
+});
+
+describe("toggleReachOutChannel", () => {
+  test("re-enables a reach out channel stuck at isEnabled:false with isArchived:false", async () => {
+    const t = convexTest(schema, modules);
+    const { userId, communityId, groupId } = await seedTestData(t);
+    const { accessToken: leaderToken } = await createLeaderUser(t, communityId, groupId);
+
+    // Reach Out requires an enabled leaders channel.
+    await t.mutation(api.functions.messaging.channels.createChannel, {
+      token: leaderToken,
+      groupId,
+      channelType: "leaders",
+      name: "Leaders",
+    });
+
+    const channelId = await t.run(async (ctx) =>
+      ctx.db.insert("chatChannels", {
+        groupId,
+        slug: "reach-out",
+        channelType: "reach_out",
+        name: "Reach Out",
+        createdById: userId,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        isArchived: false,
+        isEnabled: false,
+        memberCount: 0,
+      })
+    );
+
+    const result = await t.mutation(
+      api.functions.messaging.channels.toggleReachOutChannel,
+      { token: leaderToken, groupId, enabled: true }
+    );
+    expect(result.status).toBe("enabled");
+
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const channel = await t.run(async (ctx) => ctx.db.get(channelId));
+    expect(channel?.isEnabled).toBe(true);
+    expect(channel?.isArchived).toBe(false);
+  });
 });
 
 describe("toggleAnnouncementsChannel", () => {
