@@ -1426,3 +1426,159 @@ describe("inline RSVP chat sync", () => {
     expect(membershipAfter).toBeNull();
   });
 });
+
+// ============================================================================
+// Hidden RSVP option after the channel exists (issue #431)
+// ============================================================================
+
+describe("event chat fanout when an RSVP option is hidden after the channel exists", () => {
+  /**
+   * Materialize the channel (host seated as admin, Going/Maybe RSVPers
+   * backfilled as members), then have the host hide the "Maybe" option through
+   * the real edit mutation. `maybeId`'s chatChannelMembers row survives — the
+   * meeting edit deliberately does not evict anyone — but
+   * `canAccessEventChannel` now denies them, so the message fanout must too.
+   */
+  async function seatEveryoneThenHideMaybe(
+    t: ReturnType<typeof convexTest>,
+    data: TestData,
+  ): Promise<Id<"chatChannels">> {
+    await t.mutation("functions/messaging/eventChat:openEventChat" as any, {
+      token: data.hostToken,
+      meetingId: data.meetingId,
+    });
+
+    await t.mutation("functions/meetings/index:update" as any, {
+      token: data.hostToken,
+      meetingId: data.meetingId,
+      rsvpOptions: [
+        { id: 1, label: "Going", enabled: true },
+        { id: 2, label: "Maybe", enabled: false },
+        { id: 3, label: "Can't Go", enabled: false },
+      ],
+    });
+
+    return await t.run(async (ctx) => {
+      const channel = await ctx.db
+        .query("chatChannels")
+        .withIndex("by_meetingId", (q) => q.eq("meetingId", data.meetingId))
+        .unique();
+      return channel!._id;
+    });
+  }
+
+  /**
+   * Insert a message and run the fanout, returning the scheduled
+   * `sendMessageNotifications` args. Deliberately does NOT drain the scheduler
+   * — we only want to inspect the recipient list, not deliver pushes.
+   */
+  async function fanout(
+    t: ReturnType<typeof convexTest>,
+    channelId: Id<"chatChannels">,
+    senderId: Id<"users">,
+  ): Promise<{ mentionRecipients: Id<"users">[]; regularRecipients: Id<"users">[] } | null> {
+    const messageId = await t.run(async (ctx) => {
+      return await ctx.db.insert("chatMessages", {
+        channelId,
+        senderId,
+        content: "Anyone bringing dessert?",
+        contentType: "text",
+        createdAt: Date.now(),
+        isDeleted: false,
+        senderName: "Going Attendee",
+      });
+    });
+
+    await t.mutation(internal.functions.messaging.events.onMessageSent, {
+      messageId,
+      channelId,
+      senderId,
+    });
+
+    return await t.run(async (ctx) => {
+      const jobs = await ctx.db.system.query("_scheduled_functions").collect();
+      const notif = jobs
+        .filter((j) => String(j.name).includes("sendMessageNotifications"))
+        .pop();
+      return notif ? (notif.args[0] as any) : null;
+    });
+  }
+
+  async function unreadCount(
+    t: ReturnType<typeof convexTest>,
+    channelId: Id<"chatChannels">,
+    userId: Id<"users">,
+  ): Promise<number> {
+    return await t.run(async (ctx) => {
+      const readState = await ctx.db
+        .query("chatReadState")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", channelId).eq("userId", userId),
+        )
+        .first();
+      return readState?.unreadCount ?? 0;
+    });
+  }
+
+  test("skips push + unread for a member whose RSVP option was hidden after seating", async () => {
+    const t = convexTest(schema, modules);
+    const data = await setupTestData(t);
+    const channelId = await seatEveryoneThenHideMaybe(t, data);
+
+    const notif = await fanout(t, channelId, data.goingId);
+
+    expect(notif).not.toBeNull();
+    // The Maybe RSVPer can no longer open the chat (canAccessEventChannel is
+    // false), so they must not be pushed or badged either.
+    expect(notif!.regularRecipients).not.toContain(data.maybeId);
+    expect(await unreadCount(t, channelId, data.maybeId)).toBe(0);
+
+    // Everyone who still has access is unaffected: the host is a channel admin
+    // with no RSVP row at all, and Going is still an enabled option.
+    expect(notif!.regularRecipients).toContain(data.hostId);
+    expect(await unreadCount(t, channelId, data.hostId)).toBe(1);
+  });
+
+  test("does NOT evict the member — their chatChannelMembers row and history access survive", async () => {
+    const t = convexTest(schema, modules);
+    const data = await setupTestData(t);
+    const channelId = await seatEveryoneThenHideMaybe(t, data);
+
+    await fanout(t, channelId, data.goingId);
+
+    const membership = await t.run(async (ctx) => {
+      return await ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", channelId).eq("userId", data.maybeId),
+        )
+        .unique();
+    });
+    expect(membership).not.toBeNull();
+    expect(membership!.role).toBe("member");
+  });
+
+  test("re-enabling the option restores push + unread without a re-RSVP", async () => {
+    const t = convexTest(schema, modules);
+    const data = await setupTestData(t);
+    const channelId = await seatEveryoneThenHideMaybe(t, data);
+
+    await fanout(t, channelId, data.goingId);
+    expect(await unreadCount(t, channelId, data.maybeId)).toBe(0);
+
+    await t.mutation("functions/meetings/index:update" as any, {
+      token: data.hostToken,
+      meetingId: data.meetingId,
+      rsvpOptions: [
+        { id: 1, label: "Going", enabled: true },
+        { id: 2, label: "Maybe", enabled: true },
+        { id: 3, label: "Can't Go", enabled: false },
+      ],
+    });
+
+    const notif = await fanout(t, channelId, data.goingId);
+
+    expect(notif!.regularRecipients).toContain(data.maybeId);
+    expect(await unreadCount(t, channelId, data.maybeId)).toBe(1);
+  });
+});

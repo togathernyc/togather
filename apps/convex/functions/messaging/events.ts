@@ -25,6 +25,7 @@ import {
   type LeaderDmRelationship,
 } from "../../lib/leaderDm";
 import { truncateWithEllipsis } from "../../lib/textPreview";
+import { filterMembersWithEventChannelAccess } from "./eventChat";
 
 // ============================================================================
 // Constants
@@ -135,6 +136,8 @@ export const onMessageSent = internalMutation({
     const message = await ctx.db.get(args.messageId);
     if (!message) return;
 
+    const channel = await ctx.db.get(args.channelId);
+
     // Dev-assistant bot: if a human @mentioned the @Togather sentinel bot, hand
     // the thread to the agent. Cheap on the hot path — the username lookup only
     // runs for messages that actually carry mentions (the vast majority don't),
@@ -176,11 +179,20 @@ export const onMessageSent = internalMutation({
     // suppresses notification delivery only (see notifyMembers below);
     // otherwise messages received while muted would look already-read after
     // unmuting, and the muted-activity indicator would have nothing to show.
-    const allMembers = await ctx.db
+    const seatedMembers = await ctx.db
       .query("chatChannelMembers")
       .withIndex("by_channel", (q) => q.eq("channelId", args.channelId))
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .collect();
+
+    // Event channels seat members from RSVPs but never re-derive those seats,
+    // so a hidden RSVP option leaves rows behind for users `canAccessEventChannel`
+    // now denies. Re-check here rather than trusting the seat (issue #431).
+    const allMembers = await filterMembersWithEventChannelAccess(
+      ctx,
+      channel,
+      seatedMembers,
+    );
 
     // Filter out sender if present
     const members = args.senderId
@@ -243,7 +255,6 @@ export const onMessageSent = internalMutation({
     // Send push notifications via centralized notification system
     // Schedule an action to send notifications (actions can make external API calls)
     if (notifyMembers.length > 0) {
-      const channel = await ctx.db.get(args.channelId);
       const sender = args.senderId ? await ctx.db.get(args.senderId) : null;
 
       // Determine sender name - use override for bots, otherwise get from sender record

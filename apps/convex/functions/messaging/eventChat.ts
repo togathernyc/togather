@@ -95,6 +95,59 @@ export async function canAccessEventChannel(
   return Boolean(matched && matched.enabled);
 }
 
+/**
+ * Drop event-channel members who no longer qualify for the chat, so message
+ * fanout (unread counts + push) matches `canAccessEventChannel`.
+ *
+ * `chatChannelMembers` rows are seated when someone RSVPs and are never
+ * re-derived afterwards, so a host who hides an RSVP option after the channel
+ * exists leaves stale seats behind: those users can't open the chat any more
+ * but would keep getting badged and pushed for every new message (issue #431).
+ *
+ * This filters rather than deletes on purpose. Nobody is evicted from the
+ * channel and no history is destroyed — re-enabling the option silently
+ * restores delivery, which a destructive reconcile-on-edit could not do.
+ *
+ * Non-event channels pass through untouched. Costs one meeting read plus one
+ * RSVP scan per event-channel message — not per recipient.
+ */
+export async function filterMembersWithEventChannelAccess<
+  T extends { userId: Id<"users">; role?: string },
+>(
+  ctx: QueryCtx | MutationCtx,
+  channel: Doc<"chatChannels"> | null,
+  members: T[],
+): Promise<T[]> {
+  if (!channel || channel.channelType !== "event" || !channel.meetingId) {
+    return members;
+  }
+
+  const meeting = await ctx.db.get(channel.meetingId);
+  // Orphaned channel — `canAccessEventChannel` denies everyone, so notifying
+  // anyone about it would be delivering to a chat none of them can open.
+  if (!meeting) return [];
+
+  const rsvps = await ctx.db
+    .query("meetingRsvps")
+    .withIndex("by_meeting", (q) => q.eq("meetingId", channel.meetingId!))
+    .collect();
+  const optionIdByUser = new Map(
+    rsvps.map((rsvp) => [String(rsvp.userId), rsvp.rsvpOptionId]),
+  );
+
+  return members.filter((member) => {
+    // Admin seats (hosts, or group leaders on a delegated event) are owned by
+    // `reconcileEventChannelAdmins` and have no RSVP row to key off — hiding an
+    // RSVP option must never unseat them.
+    if (member.role === "admin") return true;
+    if (isMeetingHost(meeting, member.userId)) return true;
+
+    const optionId = optionIdByUser.get(String(member.userId));
+    if (optionId === undefined) return false;
+    return isAttendingRsvpOption(optionId, meeting.rsvpOptions);
+  });
+}
+
 // ============================================================================
 // Queries
 // ============================================================================
