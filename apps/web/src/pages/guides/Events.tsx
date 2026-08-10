@@ -38,7 +38,10 @@ const toc: TocItem[] = [
  *     meeting is created per selected date and they share a seriesId.
  *   - community-wide behavior: apps/convex/functions/communityWideEvents.ts
  *     (scope = community + group type, spawns a linked meeting for every active
- *      group; isOverridden breaks the cascade so leaders can customize a copy)
+ *      group; isOverridden breaks the cascade so leaders can customize a copy.
+ *      scheduledAt on a copy is admin-only — see the guard in
+ *      functions/meetings/index.ts — and resetChildToCommunityDefault clears
+ *      the override and re-syncs a copy to its parent)
  *
  * NOTE: Event *plans* (rostering, run sheets) are a separate feature with its
  * own guide at /guides/event-plans. This guide is strictly about the public,
@@ -301,6 +304,22 @@ export function Events() {
           You manage all of them from the{" "}
           <Term>Community-Wide Events</Term> admin screen, which flags any copy a
           leader has customized.
+        </P>
+        <P>
+          One field stays yours alone: <strong>the date</strong>. A leader can
+          change their copy's title, note, location, poster and RSVP options, but
+          only a community admin can move it in time — otherwise one group's copy
+          drifts away from the occurrence everyone else is attending. A leader
+          who needs a different date creates a separate event for their group.
+        </P>
+        <P>
+          When you edit a community-wide event, copies a leader has already
+          customized are left as they are, and Togather now <em>tells you which
+          ones</em> rather than reporting a clean success. To pull one back in
+          line, open that group's event and choose{" "}
+          <Term>Reset to community version</Term> — it restores the shared title,
+          date, note and poster, and reconnects the copy to future updates. The
+          group's own location is kept.
         </P>
 
         <Figure caption="The Community-Wide Events admin screen, showing reach and any leader overrides.">

@@ -312,6 +312,13 @@ export function CreateEventScreen() {
   const isCommunityWideContext =
     isCommunityWideEnabled || (isEditMode && !!meeting?.communityWideEventId);
 
+  // The date of a community-wide event's per-group copy is owned by the
+  // community admin who scheduled the fan-out — `meetings.update` rejects a
+  // non-admin date change outright. Lock the field rather than letting a leader
+  // pick a date and meet an error on save.
+  const isDateLockedToCommunityWide =
+    isEditMode && !!meeting?.communityWideEventId && !isAdmin;
+
   // Guard against a stale narrow-audience selection once we're in a
   // community-wide context (e.g. host enables the toggle, or a CWE child
   // loads). Falls back to "community" so we never persist a "groups" event
@@ -622,7 +629,10 @@ export function CreateEventScreen() {
     if (!meetingId) return;
 
     const hasSeries = !!meeting?.seriesId;
-    const isCommunityWide = !!meeting?.communityWideEventId;
+    // Cross-group scopes route to `communityWideEvents.*`, which are admin-only.
+    // Offering "All groups on this date" to a group leader just throws a raw
+    // permission error after they've already picked it.
+    const isCommunityWide = !!meeting?.communityWideEventId && isAdmin;
 
     if (!hasSeries && !isCommunityWide) {
       // Simple case: no series, no community-wide
@@ -848,7 +858,9 @@ export function CreateEventScreen() {
 
       if (isEditMode && meetingId) {
         const hasSeries = !!meeting?.seriesId;
-        const isCommunityWide = !!meeting?.communityWideEventId;
+        // Admin-only, for the same reason as the cancel flow above: the
+        // cross-group scopes are served by `communityWideEvents.update`.
+        const isCommunityWide = !!meeting?.communityWideEventId && isAdmin;
 
         // Event chat lives on chatChannels, not on the meeting. Flip it once
         // up front for the meeting being edited so the state persists no
@@ -894,7 +906,7 @@ export function CreateEventScreen() {
           ) {
             setIsUpdating(true);
             try {
-              await updateCommunityWideEventMutation({
+              const result = await updateCommunityWideEventMutation({
                 communityWideEventId: meeting.communityWideEventId as Id<"communityWideEvents">,
                 title: data.title,
                 scheduledAt: data.scheduledAt
@@ -917,6 +929,18 @@ export function CreateEventScreen() {
                 visibility: data.visibility,
                 scope,
               });
+              // Groups whose leader customized their copy are deliberately
+              // skipped. Say which ones — silently reporting success is how an
+              // admin ends up believing a date fix landed when it didn't.
+              if (result?.meetingsSkipped) {
+                const names = result.skippedGroupNames?.length
+                  ? result.skippedGroupNames.join(", ")
+                  : `${result.meetingsSkipped} group(s)`;
+                showAlert(
+                  "Updated, with exceptions",
+                  `${names} customized this event, so their version was left unchanged. Open that group's event and choose "Reset to community version" to bring it back in line.`
+                );
+              }
               router.back();
             } catch (error: any) {
               showAlert("Error", formatError(error, "Failed to update event"));
@@ -1533,15 +1557,24 @@ export function CreateEventScreen() {
               )}
             </>
           ) : (
-            <DatePicker
-              label="Date & Time"
-              value={scheduledAt}
-              onChange={setScheduledAt}
-              mode="datetime"
-              placeholder="Select date and time"
-              error={errors.scheduledAt}
-              required
-            />
+            <>
+              <DatePicker
+                label="Date & Time"
+                value={scheduledAt}
+                onChange={setScheduledAt}
+                mode="datetime"
+                placeholder="Select date and time"
+                error={errors.scheduledAt}
+                required
+                disabled={isDateLockedToCommunityWide}
+              />
+              {isDateLockedToCommunityWide && (
+                <Text style={[styles.helperText, { color: colors.textTertiary }]}>
+                  A community admin sets the date for this event. You can still
+                  edit everything else for your group.
+                </Text>
+              )}
+            </>
           )}
 
           {/* Title */}

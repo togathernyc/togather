@@ -13,6 +13,7 @@ import { now, generateShortId, getDisplayName, getMediaUrl } from "../../lib/uti
 import { resolveChannelCommunityId } from "../../lib/messaging/communityScope";
 import { requireAuth } from "../../lib/auth";
 import { isActiveLeader, isActiveMembership } from "../../lib/helpers";
+import { isCommunityAdmin } from "../../lib/permissions";
 import {
   canCreateInGroup,
   canEditMeeting,
@@ -445,6 +446,36 @@ export const update = mutation({
       hostsChanged =
         prev.length !== validated.length ||
         prev.some((id, i) => id !== validated[i]);
+    }
+
+    // The date of a community-wide event's per-group copy belongs to the
+    // community admin who scheduled the fan-out — a leader moving their copy
+    // desynchronises it from the parent occurrence AND latches `isOverridden`
+    // below, which permanently excludes the row from every admin cascade and
+    // from `communityWideEvents.repairCollapsedChildDates`. That combination
+    // is what let one leader drag a past occurrence (RSVPs and all) onto a
+    // future date that already had a real occurrence, with no way for an admin
+    // to put it back. Leaders keep every other field, and keep full date
+    // control over ordinary group events.
+    //
+    // Compared against the stored value, not merely `!== undefined`: the edit
+    // form always posts `scheduledAt`, so a leader saving a note change
+    // resubmits the existing date and must not trip this.
+    if (
+      meeting.communityWideEventId &&
+      updates.scheduledAt !== undefined &&
+      updates.scheduledAt !== meeting.scheduledAt
+    ) {
+      const parent = await ctx.db.get(meeting.communityWideEventId);
+      const communityId = parent?.communityId ?? meeting.communityId;
+      const canMoveDate = communityId
+        ? await isCommunityAdmin(ctx, communityId, userId)
+        : false;
+      if (!canMoveDate) {
+        throw new Error(
+          "Only a community admin can change the date of a community-wide event. Ask an admin to reschedule it, or create a separate event for your group."
+        );
+      }
     }
 
     // Series-wide scope can cascade writes to siblings the caller may not own

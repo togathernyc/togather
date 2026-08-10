@@ -13,6 +13,7 @@
 
 import { v } from "convex/values";
 import { query, mutation, internalMutation } from "../_generated/server";
+import type { MutationCtx } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { Doc, Id } from "../_generated/dataModel";
 import { now, generateShortId } from "../lib/utils";
@@ -202,7 +203,10 @@ export const create = mutation({
  * Updates the parent event and propagates changes to all child meetings
  * that have NOT been overridden by group leaders.
  *
- * @returns Count of meetings updated
+ * @returns Count of meetings updated, plus the count and group names of the
+ *   overridden children deliberately skipped — an admin needs to see those to
+ *   know why a group's copy still looks wrong. Use
+ *   `resetChildToCommunityDefault` to pull a skipped child back in.
  */
 export const update = mutation({
   args: {
@@ -315,6 +319,25 @@ export const update = mutation({
       (m) => m.isOverridden !== true && m.status !== "cancelled"
     );
 
+    // Meetings this edit deliberately leaves alone because a leader customized
+    // them. Reported back so the admin UI can say so — a silent skip reads as
+    // "the save didn't work", which is exactly how an admin discovers too late
+    // that a corrupt child is unreachable.
+    //
+    // Keyed by _id and scoped to the meetings this edit would otherwise have
+    // touched: a past all_in_series anchor contributes nothing (its children
+    // aren't in scope at all), and an all_in_series edit must also account for
+    // overrides on the *future* occurrences it cascades to — counting only the
+    // anchor's children would report 0 while silently skipping a later one.
+    const skippedById = new Map<Id<"meetings">, Doc<"meetings">>();
+    if (includeAnchor) {
+      for (const m of allDirectChildren) {
+        if (m.isOverridden === true && m.status !== "cancelled") {
+          skippedById.set(m._id, m);
+        }
+      }
+    }
+
     // Meetings that receive non-date field edits.
     let cascadeMeetings: typeof directChildren = directChildren;
     // Future, non-cancelled parent occurrences in the series — the targets of
@@ -362,11 +385,17 @@ export const update = mutation({
           for (const m of directChildren) byId.set(m._id, m);
         }
         for (const m of seriesMeetings) {
-          if (m.isOverridden === true || m.status === "cancelled") continue;
+          if (m.status === "cancelled") continue;
           if (!m.communityWideEventId) continue;
           const parent = parentById.get(m.communityWideEventId);
           if (!parent || parent.status === "cancelled") continue;
           if (parent.scheduledAt < timestamp) continue;
+          // Overridden check comes *after* the in-scope checks so the skip
+          // report only names meetings this edit would really have changed.
+          if (m.isOverridden === true) {
+            skippedById.set(m._id, m);
+            continue;
+          }
           byId.set(m._id, m);
         }
         cascadeMeetings = [...byId.values()];
@@ -379,6 +408,17 @@ export const update = mutation({
         );
       }
     }
+
+    // Resolve the skipped groups now that the full cascade scope is known.
+    // Deduplicated by name: one group with two customized occurrences is still
+    // one group for the admin to go and reset.
+    const skippedChildren = [...skippedById.values()];
+    const skippedNameSet = new Set<string>();
+    for (const m of skippedChildren) {
+      const group = await ctx.db.get(m.groupId);
+      if (group) skippedNameSet.add(group.name);
+    }
+    const skippedGroupNames = [...skippedNameSet].sort();
 
     // Non-date field updates — cascade to the scoped set.
     const cascadeUpdates: Record<string, unknown> = {};
@@ -516,8 +556,160 @@ export const update = mutation({
       }
     }
 
-    return { meetingsUpdated };
+    return {
+      meetingsUpdated,
+      meetingsSkipped: skippedChildren.length,
+      skippedGroupNames,
+    };
   },
+});
+
+/**
+ * Restore one group's copy of a community-wide event to the parent's values.
+ *
+ * `meetings.update` latches `isOverridden` the first time a leader customizes
+ * their group's copy, and every cascade — including `repairCollapsedChildDates`
+ * — skips latched rows. Without a way to clear that flag an admin has no route
+ * back: `update` reports success while leaving the diverged child untouched.
+ * This is that route.
+ *
+ * Restores only what the parent owns (title, date and its derived reminder /
+ * confirmation timing, meeting type, link, note) and drops the child's own
+ * cover so it inherits the shared one again. `locationOverride` is deliberately
+ * left alone — each group meets at its own address and the parent holds no
+ * location to restore it to.
+ *
+ * Shared by the admin-facing mutation and the internal CLI variant below, so
+ * an on-call fix and an in-app tap can never drift apart.
+ *
+ * @returns The restored date and the group whose copy was reset
+ */
+async function resetChildToParent(
+  ctx: MutationCtx,
+  meetingId: Id<"meetings">
+): Promise<{ scheduledAt: number; groupName: string | undefined }> {
+  const meeting = await ctx.db.get(meetingId);
+  if (!meeting) {
+    throw new Error("Meeting not found");
+  }
+  if (!meeting.communityWideEventId) {
+    throw new Error("This event is not part of a community-wide event");
+  }
+
+  const parent = await ctx.db.get(meeting.communityWideEventId);
+  if (!parent) {
+    throw new Error("Community-wide event not found");
+  }
+
+  if (meeting.status === "cancelled") {
+    throw new Error("Cannot reset a cancelled event");
+  }
+
+  const timestamp = now();
+
+  // Drop jobs pinned to the child's diverged date before re-syncing.
+  if (meeting.reminderJobId) {
+    try { await ctx.scheduler.cancel(meeting.reminderJobId); } catch { /* already run */ }
+  }
+  if (meeting.attendanceConfirmationJobId) {
+    try { await ctx.scheduler.cancel(meeting.attendanceConfirmationJobId); } catch { /* already run */ }
+  }
+
+  const reminderAt = parent.scheduledAt - DEFAULT_REMINDER_OFFSET_MS;
+  const attendanceConfirmationAt =
+    parent.scheduledAt + DEFAULT_MEETING_DURATION_MS + DEFAULT_ATTENDANCE_CONFIRMATION_OFFSET_MS;
+
+  const group = await ctx.db.get(meeting.groupId);
+
+  await ctx.db.patch(meetingId, {
+    isOverridden: false,
+    title: parent.title,
+    scheduledAt: parent.scheduledAt,
+    meetingType: parent.meetingType,
+    meetingLink: parent.meetingLink,
+    note: parent.note,
+    // Children render the parent's cover when they have none of their own,
+    // so clearing this restores the shared image.
+    coverImage: undefined,
+    reminderAt,
+    attendanceConfirmationAt,
+    // A window already in the past counts as handled so no sweep re-fires
+    // it; a future window stays pending for the fresh job scheduled below.
+    reminderSent: reminderAt <= timestamp,
+    attendanceConfirmationSent: attendanceConfirmationAt <= timestamp,
+    searchText: buildMeetingSearchText({
+      title: parent.title,
+      locationOverride: meeting.locationOverride,
+      groupName: group?.name,
+    }),
+  });
+
+  let reminderJobId = undefined;
+  let attendanceConfirmationJobId = undefined;
+  if (reminderAt > timestamp) {
+    reminderJobId = await ctx.scheduler.runAt(
+      reminderAt,
+      internal.functions.scheduledJobs.sendMeetingReminder,
+      { meetingId }
+    );
+  }
+  if (attendanceConfirmationAt > timestamp) {
+    attendanceConfirmationJobId = await ctx.scheduler.runAt(
+      attendanceConfirmationAt,
+      internal.functions.scheduledJobs.sendAttendanceConfirmation,
+      { meetingId }
+    );
+  }
+
+  await ctx.db.patch(meetingId, {
+    reminderJobId,
+    attendanceConfirmationJobId,
+  });
+
+  return {
+    scheduledAt: parent.scheduledAt,
+    groupName: group?.name,
+  };
+}
+
+/** Admin-facing reset. See `resetChildToParent` for what it restores. */
+export const resetChildToCommunityDefault = mutation({
+  args: {
+    token: v.string(),
+    meetingId: v.id("meetings"),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+
+    const meeting = await ctx.db.get(args.meetingId);
+    if (!meeting) {
+      throw new Error("Meeting not found");
+    }
+    if (!meeting.communityWideEventId) {
+      throw new Error("This event is not part of a community-wide event");
+    }
+    const parent = await ctx.db.get(meeting.communityWideEventId);
+    if (!parent) {
+      throw new Error("Community-wide event not found");
+    }
+
+    await requireCommunityAdmin(ctx, parent.communityId, userId);
+
+    return await resetChildToParent(ctx, args.meetingId);
+  },
+});
+
+/**
+ * CLI variant of the reset, for repairing a stuck event before the client
+ * carrying the in-app button has shipped. Backend deploys land immediately;
+ * the mobile button needs an OTA.
+ *
+ * Run with:
+ *   npx convex run functions/communityWideEvents:resetChildToCommunityDefaultInternal '{"meetingId":"<id>"}'
+ */
+export const resetChildToCommunityDefaultInternal = internalMutation({
+  args: { meetingId: v.id("meetings") },
+  handler: async (ctx, args) => await resetChildToParent(ctx, args.meetingId),
 });
 
 /**

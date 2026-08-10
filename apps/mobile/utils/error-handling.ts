@@ -24,6 +24,53 @@ export function showAlert(title: string, message: string): void {
 }
 
 /**
+ * Ask the user to confirm an action, on any platform. Same reason as
+ * `showAlert`: a confirmation built directly on `Alert.alert` silently does
+ * nothing on React Native Web, so the button appears to be broken.
+ *
+ * Resolves `false` for cancel and for an Android back-button dismissal, so a
+ * destructive action never runs just because the prompt went away.
+ */
+export function showConfirm(options: {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  cancelLabel?: string;
+  destructive?: boolean;
+}): Promise<boolean> {
+  const {
+    title,
+    message,
+    confirmLabel,
+    cancelLabel = 'Cancel',
+    destructive = false,
+  } = options;
+
+  if (Platform.OS === 'web') {
+    if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
+      return Promise.resolve(window.confirm(`${title}\n\n${message}`));
+    }
+    return Promise.resolve(false);
+  }
+
+  return new Promise((resolve) => {
+    Alert.alert(
+      title,
+      message,
+      [
+        { text: cancelLabel, style: 'cancel', onPress: () => resolve(false) },
+        {
+          text: confirmLabel,
+          style: destructive ? 'destructive' : 'default',
+          onPress: () => resolve(true),
+        },
+      ],
+      { cancelable: true, onDismiss: () => resolve(false) }
+    );
+  });
+}
+
+/**
  * Extract a readable message from a ConvexError (or plain Error).
  *
  * ConvexError carries its payload on `.data`; production `.message` is a
