@@ -58,11 +58,12 @@ movement by itself — that also needs, independently:
 - The platform program **approved** (not just requested) and live. The
   existing `Commercial Banking` program does not count: it holds Supa Media's
   own funds and cannot carry church Entities.
-- The three code landmines in §5 fixed (base-URL default, sandbox/production
-  detection, and a General Account for the community-wide fund).
-- The Phase-2 product gaps in §6 (net-amount allocation, reimbursement
-  payout destinations, card spend limits) closed enough to trust with a real
-  church's donations.
+- The two remaining code landmines in §5 fixed (base-URL default and
+  sandbox/production detection). The third — a General Account for the
+  community-wide fund — is now provisioned by code.
+- The Phase-2 product gaps still open in §6 (reimbursement payout
+  destinations, a per-community kill switch, finance notifications) closed
+  enough to trust with a real church's donations.
 - Counsel sign-off on the open items in `docs/finance/COMPLIANCE.md`.
 
 **No real donor dollar can move until all of the above are done, not just
@@ -328,22 +329,24 @@ the source of truth; never set a secret directly in GitHub or Convex.
       wrong by typo. **Land this fix before the first production Increase
       key exists anywhere in the deploy pipeline** — it's a pure
       unforced-error risk otherwise.
-- [ ] **Add the missing community-level General Account provisioning.**
-      Noticed while researching this runbook, not previously documented:
-      `apps/convex/functions/finance/onboarding.ts`'s `recordProvisioned`
-      creates the community's `funds` row of `type: "general"` in Convex, but
-      **no code path ever calls Increase's `createAccount` for it** the way
-      `provisionGroupFundAccount` does for group funds. Only the receiving
-      Account (`increaseReceivingAccountId`) is ever created at Increase.
-      `jobs.ts:184-188`'s comment claims "the community's General Account is
-      Increase's landing spot" for unearmarked donations, but there is no
-      second Account for that money to land in — it has nowhere at Increase
-      to go, contradicting ADR-032 §1's documented topology (Entity →
-      receiving + **General** + per-group Accounts). This has to be fixed
-      before any general-fund donation flow can work in production, sandbox
-      or not — flagged here because it will otherwise surface as a
-      confusing failure the first time a real donation isn't earmarked to a
-      specific group.
+- [x] **Community-level General Account provisioning — done on `main`.**
+      The community's General Account is now minted at Increase like any
+      other fund's, restoring ADR-032 §1's topology (Entity → receiving +
+      **General** + per-group Accounts). `provisionProviders` calls
+      `provisionFundAccount` for the general fund right after
+      `recordProvisioned` creates its row
+      (`apps/convex/functions/finance/onboarding.ts:386-389`), and
+      `provisionFundAccount` is the single producer of a fund's Account for
+      both fund types (`onboarding.ts:910`), keyed one-per-fund by
+      `fundAccountIdempotencyKey` (`onboarding.ts:903-909`) so no path can
+      mint a second Account under a KYB'd Entity. Two self-heal paths cover
+      communities provisioned before the fix: `enableGroupGiving` schedules
+      it for any general fund still missing an Account
+      (`onboarding.ts:865-877`) and `apps/convex/migrations/backfillGeneralFundAccounts.ts`
+      is the bulk path. Allocation treats the general fund as an ordinary
+      destination and transfers to it (`jobs.ts:708`'s
+      `executeAllocationItems`) instead of booking it settled without moving
+      money.
 
 ### 5.2 Secrets — 1Password → GitHub → Convex
 
@@ -411,9 +414,9 @@ Per `docs/secrets.md`'s "Secret Update Flow" and its "Group giving" section:
 
 ### 5.4 Rollout order
 
-1. Land the two pre-cutover code fixes (§5.1) and the General Account fix,
-   reviewed and merged, **before** any production Increase secret exists in
-   the pipeline.
+1. Land the two remaining pre-cutover code fixes (§5.1 landmines (a) and
+   (b)), reviewed and merged, **before** any production Increase secret
+   exists in the pipeline. The General Account fix is already on `main`.
 2. Sync production secrets (§5.2).
 3. Smoke-test against production with a **single internal/test church**
    (Togather's own demo/staging community, or a controlled real one) end to
@@ -436,14 +439,14 @@ independent of Increase:
 | Increase production program approved and live | ☐ Not started | Nothing below matters until this exists |
 | Landmine (a) fixed — explicit, non-defaulted `INCREASE_API_BASE_URL`/environment flag | ☐ Not done | Prevents a sandbox key silently pointing at the production host or vice versa |
 | Landmine (b) fixed — explicit environment flag instead of `.includes("sandbox")` | ☐ Not done | Prevents a misconfigured URL silently submitting fabricated beneficial-owner data to the real Increase API |
-| Community General Account provisioned by code, not just documented in ADR-032 | ☐ Not done | `apps/convex/functions/finance/onboarding.ts` never creates it today — general-fund (non-group) donations have no Increase Account to land in |
-| Allocation switched from gross donation totals to Stripe balance-transaction NET amounts | ☐ Not done | **ARCHITECTURE.md understates this.** It is not "a tail of stuck-pending donations" — it is a deterministic total stall. `planAllocations` matches GROSS donation totals against a NET payout, and `break`s (not `continue`s) on the first item that doesn't fit, so in the common one-donation-per-payout case the queue never advances again. Group Accounts stay at zero while `funds.balanceCents` reports the money is there, and the nightly invariant compares gross to gross so it never fires. Money never reaches a group fund |
-| Allocation survives partial failure | ☐ Not done | `runAllocation` claims the payout in `processedStripePayouts` *before* transferring, then loops with no per-item error handling. One transient Increase error strands every remaining donation permanently — the redelivered webhook is ignored as "already processed" and `retryStaleAllocations` is alert-only |
+| Community General Account provisioned by code, not just documented in ADR-032 | ☑ Fixed on `main` | `provisionProviders` mints it through the same `provisionFundAccount` action every other fund uses (`functions/finance/onboarding.ts:386-389`, producer at `:910`, one key per fund at `:903-909`), with self-heal on `enableGroupGiving` (`:865-876`) and `migrations/backfillGeneralFundAccounts.ts` for communities provisioned earlier. General-fund donations now have an Account to land in |
+| Allocation switched from gross donation totals to Stripe balance-transaction NET amounts | ☑ Fixed on `main` | `runAllocation` reads the payout's real composition from Stripe balance transactions (`lib/finance/stripeConnect.ts:288` `getPayoutComposition`) and hands `planAllocations` per-PaymentIntent NET cents, which it matches donation-by-donation (`functions/finance/jobs.ts:323-336`, `:405-416`). The stall is gone too: an item that would overrun the payout is `continue`d and counted, never `break`ed (`jobs.ts:429-435`), so one outlier cannot wedge the queue behind it. The nightly pending sum values gifts through the same `allocationAmountCents` helper (`jobs.ts:160`, `:1207`), so planner and invariant can no longer disagree |
+| Allocation survives partial failure | ☑ Fixed on `main` | `executeAllocationItems` (`functions/finance/jobs.ts:708`) wraps each item, and each item's transfer and recording, in its own try — a failed transfer costs exactly that donation, which stays `pending` with its payout stamp so the next pass re-selects it (`jobs.ts:777-786`). Exactly-once across those retries comes from the per-donation lease, `recordAllocation`'s no-op on an already-allocated donation, and the `alloc:{donationId}` Increase idempotency key. `retryStaleAllocations` (`jobs.ts:1546`) now re-runs the same executor rather than only alerting |
 | Per-community kill switch exists | ☐ Not done | Only the app-wide `group-giving` flag ships. One church's incident cannot be contained without disabling giving for every community — unacceptable blast radius once more than one church is live (see §7.2) |
 | Finance notifications exist (push + email) | ☐ Not done | There are **no** notifications anywhere in finance — a finance admin learns an expense needs approval only by opening the app; an admin learns onboarding went live only by re-checking the screen. ADR-032 §2 explicitly promises "push + email when live" |
 | No UI claims an unenforced control | ☐ Not done | Card creation advertises limits that "reset every Monday" and a "Require receipts" toggle, and the hub says charges over $200 need a second approver — none of which exist for card spend. Shipping copy that overstates financial controls to a church is a trust and liability problem, not a polish issue |
-| Group leaders cannot self-escalate to `finance_admin` | ☐ Not done | `requireFundRoleOrGroupLeader` returns early for any active group leader regardless of `minRole`, so a leader can grant themselves `finance_admin`, issue themselves a card, and spend the fund — and can defeat the two-approver rule by granting `manager` to a second account they control |
-| Card spend limits enforced at the bank | ☑ Fixed on `finance/card-controls-truth` | **The "advisory only" premise in `cards.ts` was simply wrong.** Increase supports declarative per-card limits via `authorization_controls.usage.multi_use.spending_limits` and "enforces these controls at authorization time without a round trip to your server" ([launch-a-card-program](https://increase.com/documentation/launch-a-card-program)) — no real-time-decisioning webhook required. `createCard` was posting only `{account_id, description}`, so every stored limit was dead data while the UI advertised it as enforced. Limits now reach the bank at provisioning and on change. Intervals reset at UTC midnight (`per_week` Mondays, `per_month` the 1st) — surface that in any copy stating a reset day |
+| Group leaders cannot self-escalate to `finance_admin` | ☑ Fixed on `main` | The permission helpers now report *which* path allowed a call (`FundAccessVia`: `community_admin` / `fund_role` / `group_leader`) and `grantFundRole` refuses a self-targeted grant when the answer is `group_leader`; granting to another member — the ADR-032 §4 bootstrap — still works (`docs/finance/COMPLIANCE.md:91`, `functions/finance/roles.ts`). ADR-033 tightened it further: `createFundCard` / `grantFundRole` / `revokeFundRole` now gate on `requireCommunityFinanceAccess` (`lib/finance/communityFinanceAccess.ts`). **Residual, deliberately not closed:** a leader can still be granted `manager` alongside a second account they control, which defeats the two-approver rule — see the sock-puppet entry in `COMPLIANCE.md` |
+| Card spend limits enforced at the bank | ☑ Fixed on `main` (`lib/finance/increase.ts:391-415` `buildAuthorizationControls`, sent by `createCard` at `:417-432` and `updateCardSpendingLimit` at `:450-461`) | **The "advisory only" premise in `cards.ts` was simply wrong.** Increase supports declarative per-card limits via `authorization_controls.usage.multi_use.spending_limits` and "enforces these controls at authorization time without a round trip to your server" ([launch-a-card-program](https://increase.com/documentation/launch-a-card-program)) — no real-time-decisioning webhook required. `createCard` was posting only `{account_id, description}`, so every stored limit was dead data while the UI advertised it as enforced. Limits now reach the bank at provisioning and on change. Intervals reset at UTC midnight (`per_week` Mondays, `per_month` the 1st) — surface that in any copy stating a reset day |
 | Backfill limits onto cards provisioned before the fix | ☐ Not done | Cards already issued carry limits Increase never received, and the bank will not enforce them retroactively. Interim signal is the `card.limit_exceeded` audit raised at settlement. Any card issued before this fix must be re-provisioned or cancelled before real money |
 | Reimbursement ACH payout destination wired up | ☐ Not done | `expenses.ts`'s `getPayoutDestination` **returns `null` unconditionally** — every reimbursement blocks at "no destination found" until the member bank-linking UI ships |
 | Nightly reconcile shows zero drift for at least one production community over a real billing cycle | ☐ Not started | Proves the ledger-vs-bank invariant actually holds outside the smoke test |

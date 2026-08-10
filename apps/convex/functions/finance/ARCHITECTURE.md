@@ -136,8 +136,9 @@ Ledger posting adds `:debit` or `:credit` suffix to distinguish the paired trans
 - Defense-in-depth beyond signature verification: donation-crediting/refunding events (`payment_intent.succeeded`, `charge.refunded`) additionally cross-check the event's Connect `account` against the target fund's own `communityFinance.stripeConnectedAccountId` server-side before writing anything — a mismatch is rejected and audited (`webhook.rejected_account_mismatch`), never silently trusted off event metadata alone (see `functions/finance/webhooks.ts`'s `getFundFinanceForWebhook` / `getDonationFundForWebhook`)
 
 **Increase (/increase-webhook, routed in http.ts)**
-- Signature verification via Increase's `Idempotency-Key` echo and HTTP 200 ACK (documented in lib/finance/increase.ts)
-- No additional X-signature header — Increase API is bearer-token auth only; webhook authenticity relies on Transport Layer Security + the bank's own request origin
+- Signature verification via HMAC-SHA256 over `{webhook-id}.{webhook-timestamp}.{raw body}`, keyed on `INCREASE_WEBHOOK_SECRET` directly (no prefix/decode step), base64-encoded and prefixed `v1,` — `verifyIncreaseWebhookSignature` in lib/finance/increase.ts. Web Crypto, not Node `crypto`, for the same isolate reason as the Stripe verifier
+- Signature headers: `webhook-id`, `webhook-timestamp`, `webhook-signature`. All three are required — a request missing any of them is rejected `401` before the body is parsed, as is one whose signature doesn't verify (`handleIncreaseWebhookRequest` in functions/finance/webhooks.ts)
+- `webhook-signature` may carry several space-separated `v1,…` values during secret rotation; any timing-safe match passes. `webhook-timestamp` more than 300s from now is rejected (replay window, same tolerance as Stripe)
 - Webhook retries on non-200; Increase stops retrying after successful ACK (per docs: `https://increase.com/documentation/webhooks`)
 - Event types routed in functions/finance/webhooks.ts to category handlers (entity.created, account.created, account.updated, transfer.created)
 
