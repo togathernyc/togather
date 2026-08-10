@@ -648,10 +648,11 @@ function groupRolesByTeam(roles: EventRole[]): Array<{
 /**
  * A team's section: header (name + chat toggle + "Open chat" shortcut) and
  * its role assignment cards. Fetches the team via `getTeam` so it has the
- * `hasChannel` / `channelSlug` / `memberCount` fields the toggle and
- * shortcut both need.
+ * `hasChannel` / `channelSlug` fields the toggle and shortcut both need.
+ *
+ * Exported for tests only — the screen renders it internally.
  */
-function TeamRoleGroup({
+export function TeamRoleGroup({
   groupId,
   teamId,
   roles,
@@ -675,13 +676,13 @@ function TeamRoleGroup({
         name: string;
         hasChannel: boolean;
         channelSlug: string | null;
-        memberCount: number;
       }
     | undefined;
 
-  // Fall back to the role's embedded team-less name while `getTeam` resolves.
-  const fallbackName = roles[0]?.roleName ?? "Team";
-  const teamName = team?.name ?? fallbackName;
+  // Neutral placeholder while `getTeam` resolves — falling back to the first
+  // role's name made the header flash as if the team were called "Greeter"
+  // (issue #403).
+  const teamName = team?.name ?? "Team";
 
   return (
     <View style={styles.teamGroup}>
@@ -698,7 +699,6 @@ function TeamRoleGroup({
               teamId={team._id}
               teamName={team.name}
               hasChannel={team.hasChannel}
-              channelMemberCount={team.memberCount}
             />
             {team.hasChannel && team.channelSlug ? (
               <Pressable

@@ -27,16 +27,10 @@ export function TeamChannelToggle({
   teamId,
   teamName,
   hasChannel,
-  /**
-   * Auto-synced channel member count, used in the "turn off" confirm so the
-   * leader can see the human impact before unlinking.
-   */
-  channelMemberCount = 0,
 }: {
   teamId: Id<"teams">;
   teamName: string;
   hasChannel: boolean;
-  channelMemberCount?: number;
 }) {
   const { colors } = useTheme();
   const linkChannel = useAuthenticatedMutation(
@@ -74,9 +68,11 @@ export function TeamChannelToggle({
     if (hasChannel) {
       const ok = await confirmAsync({
         title: `Turn off chat for ${teamName}?`,
-        message: `The team's chat channel will be unlinked. ${channelMemberCount} auto-synced ${
-          channelMemberCount === 1 ? "member is" : "members are"
-        } removed from it; the channel itself stays in the inbox as a regular custom channel. You can turn chat back on later. This affects every event this team is on.`,
+        // No count here on purpose: `unlinkChannel` only purges rows with
+        // `syncSource: "event_plan"`, so the channel's total membership would
+        // overstate what actually gets removed (issue #402).
+        message:
+          "The team's chat channel will be unlinked. Auto-synced members will be removed from it; any permanent members you added stay, and the channel itself stays in the inbox as a regular custom channel. You can turn chat back on later. This affects every event this team is on.",
         confirmText: "Turn off",
         destructive: true,
       });
@@ -90,7 +86,7 @@ export function TeamChannelToggle({
       });
       if (ok) void performToggle(true);
     }
-  }, [busy, hasChannel, teamName, channelMemberCount, performToggle]);
+  }, [busy, hasChannel, teamName, performToggle]);
 
   const tint = hasChannel ? colors.success : colors.textTertiary;
   const bg = hasChannel ? colors.success + "22" : colors.border;

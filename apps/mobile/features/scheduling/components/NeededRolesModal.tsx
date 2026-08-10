@@ -46,7 +46,6 @@ type Team = {
   _id: Id<"teams">;
   name: string;
   hasChannel: boolean;
-  memberCount: number;
 };
 type Role = {
   _id: Id<"teamRoles">;
@@ -461,7 +460,6 @@ function TeamSection({
             teamId={team._id}
             teamName={team.name}
             hasChannel={team.hasChannel}
-            channelMemberCount={team.memberCount}
           />
           {totalNeeded > 0 ? (
             <Text

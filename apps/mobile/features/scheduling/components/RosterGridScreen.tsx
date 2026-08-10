@@ -143,7 +143,6 @@ type RosterTeam = {
   teamId: Id<"teams">;
   teamName: string;
   hasChannel: boolean;
-  channelMemberCount: number;
   /** Whether the viewer is an explicit manager of this team (ADR-025). */
   isManagedByMe: boolean;
 };
@@ -243,7 +242,6 @@ type RoleRow =
       teamId: Id<"teams">;
       teamName: string;
       hasChannel: boolean;
-      channelMemberCount: number;
     }
   | { kind: "addTeam" };
 
@@ -960,7 +958,6 @@ export function RosterGridScreen() {
         teamId: team.teamId,
         teamName: team.teamName,
         hasChannel: team.hasChannel,
-        channelMemberCount: team.channelMemberCount,
       });
     }
     // Trailing "＋ Add team". Hidden whenever the grid is narrowed, so the rows
@@ -1991,7 +1988,6 @@ export function RosterGridScreen() {
                 teamId={r.teamId}
                 teamName={r.teamName}
                 hasChannel={r.hasChannel}
-                channelMemberCount={r.channelMemberCount}
               />
             </View>
           );
