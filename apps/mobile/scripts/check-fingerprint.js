@@ -206,6 +206,15 @@ function getCurrentFingerprint() {
     sources.push({ path: "eas.json", hash: easJsonHash });
   }
 
+  // Firebase/FCM client config (baked into the Android native build).
+  // Tracking the file itself — not just the app.config.js reference — so a
+  // key rotation or project change in google-services.json triggers a native
+  // build instead of being silently treated as OTA-safe.
+  const googleServicesHash = getGitHash("google-services.json");
+  if (googleServicesHash) {
+    sources.push({ path: "google-services.json", hash: googleServicesHash });
+  }
+
   // Create final fingerprint from all sources
   const fingerprint = crypto
     .createHash("sha1")

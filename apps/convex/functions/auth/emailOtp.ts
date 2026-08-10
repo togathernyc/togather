@@ -8,7 +8,6 @@
  * Uses Resend for email delivery with custom verification code templates.
  */
 
-import { Resend } from "resend";
 import { render } from "@react-email/render";
 import {
   VerificationCodeEmail,
@@ -18,24 +17,13 @@ import { internal } from "../../_generated/api";
 import { ActionCtx } from "../../_generated/server";
 import { MAGIC_CODE, isTestEmail } from "./helpers";
 import { DOMAIN_CONFIG } from "@togather/shared/config";
+import { getResendClient } from "../../lib/resend";
 
 /** Which auth flow the email OTP belongs to (stored and verified with the code). */
 export type EmailOtpPurpose = "account_claim" | "password_reset";
 
 // Email sender address - use shared config (notifications@togather.nyc)
 const EMAIL_FROM = DOMAIN_CONFIG.emailFrom;
-
-// Lazy-initialize Resend client to avoid throwing if API key is missing at module load
-let resendClient: Resend | null = null;
-function getResendClient(): Resend | null {
-  if (!process.env.RESEND_API_KEY) {
-    return null;
-  }
-  if (!resendClient) {
-    resendClient = new Resend(process.env.RESEND_API_KEY);
-  }
-  return resendClient;
-}
 
 /**
  * Generate a random 6-digit code

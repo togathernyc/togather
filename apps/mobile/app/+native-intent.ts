@@ -1,9 +1,36 @@
 import { Linking } from "react-native";
 import { parseSubdomainFromLinkUrl } from "@/features/auth/utils/communitySubdomain";
 
-// Web-only paths that should never be handled by the app.
-// If iOS universal links intercept these, bounce them to the browser.
-const WEB_ONLY_PREFIXES = ["/onboarding/", "/admin/", "/billing/"];
+// Web-only pages served entirely by the Vite web app (apps/web), not the Expo
+// app. If a universal link intercepts one (e.g. because iOS is still using a
+// stale cached AASA), bounce it to the browser instead of rendering a "Page Not
+// Found" screen. Matched against the exact path OR any sub-path, so both
+// "/guides" and "/guides/branding" bounce. Keep in sync with the AASA
+// exclusions in apps/link-preview/cloudflare-worker.js and the web routes in
+// apps/web/src/main.tsx.
+const WEB_ONLY_ROOTS = [
+  "/contribute",
+  "/guides",
+  "/developers",
+  "/issue",
+  "/legal",
+];
+
+// Roots whose SUB-paths are web-only but whose bare root is a real app route —
+// e.g. "/admin" is the native admin tab ((tabs)/admin) that guide CTAs deep-link
+// into. Only sub-paths (with a trailing slash) bounce; the root is left alone.
+const WEB_ONLY_SUBPATH_PREFIXES = ["/onboarding/", "/admin/", "/billing/"];
+
+function isWebOnlyPath(pathname: string): boolean {
+  if (
+    WEB_ONLY_ROOTS.some(
+      (root) => pathname === root || pathname.startsWith(`${root}/`),
+    )
+  ) {
+    return true;
+  }
+  return WEB_ONLY_SUBPATH_PREFIXES.some((prefix) => pathname.startsWith(prefix));
+}
 
 /**
  * Intercepts incoming universal link URLs before Expo Router strips the hostname.
@@ -26,14 +53,14 @@ export function redirectSystemPath({
   // Bounce web-only URLs back to the browser
   try {
     const url = new URL(path);
-    if (WEB_ONLY_PREFIXES.some((p) => url.pathname.startsWith(p))) {
+    if (isWebOnlyPath(url.pathname)) {
       Linking.openURL(path);
       // Return root so the app doesn't navigate to a broken route
       return "/";
     }
   } catch {
     // Not a full URL — check raw path
-    if (WEB_ONLY_PREFIXES.some((p) => path.startsWith(p))) {
+    if (isWebOnlyPath(path)) {
       return "/";
     }
   }

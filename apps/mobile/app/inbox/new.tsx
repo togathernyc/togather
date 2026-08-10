@@ -35,9 +35,18 @@ import { Avatar } from "@components/ui/Avatar";
 import { useAuth } from "@providers/AuthProvider";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useTheme } from "@hooks/useTheme";
+import { useWhatsappShell } from "@hooks/useWhatsappShell";
+import {
+  WaRow,
+  WaSeparator,
+  WA_SEPARATOR_INSET,
+  WA_SEARCH_PILL_HEIGHT,
+  WA_SEARCH_PILL_ICON_SIZE,
+  WA_TYPE_SECTION_HEADER,
+  WA_WEIGHT_SEMIBOLD,
+} from "@components/wa";
 import { useQuery, useMutation, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
-import { DmFeatureGate } from "@features/chat/components/DmFeatureGate";
 import {
   RequireProfilePhotoSheet,
   classifyProfilePhotoError,
@@ -55,11 +64,7 @@ const SEARCH_LIMIT = 30;
 const MAX_GROUP_RECIPIENTS = 19; // matches MAX_GROUP_DM_RECIPIENTS in directMessages.ts
 
 export default function StartChatScreenRoute() {
-  return (
-    <DmFeatureGate>
-      <StartChatScreen />
-    </DmFeatureGate>
-  );
+  return <StartChatScreen />;
 }
 
 // Spring-y feel without bringing in Reanimated. LayoutAnimation handles the
@@ -82,6 +87,7 @@ function StartChatScreen() {
   const { token, community, user } = useAuth();
   const { primaryColor, accentLight } = useCommunityTheme();
   const { colors, isDark } = useTheme();
+  const whatsappShellEnabled = useWhatsappShell();
   const communityId = community?.id as Id<"communities"> | undefined;
 
   const [query, setQuery] = useState("");
@@ -138,6 +144,18 @@ function StartChatScreen() {
       : "skip",
   );
 
+  // WhatsApp-shell (flag-gated) §6.3: WhatsApp lists your contacts the moment
+  // the sheet opens — an empty search-first screen is a structural miss. The
+  // search query above deliberately returns [] for an empty term, so browsing
+  // has its own endpoint. Flag off keeps the iMessage "nothing until you type"
+  // behavior, and this query never fires.
+  const directory = useQuery(
+    api.functions.messaging.directMessages.listCommunityMembersForNewChat,
+    whatsappShellEnabled && token && communityId && !hasQuery
+      ? { token, communityId }
+      : "skip",
+  );
+
   const createOrGetDirectChannel = useMutation(
     api.functions.messaging.directMessages.createOrGetDirectChannel,
   );
@@ -145,7 +163,16 @@ function StartChatScreen() {
     api.functions.messaging.directMessages.createGroupChat,
   );
 
-  const isLoadingResults = hasQuery && results === undefined && token != null;
+  /** Whether the list is showing the at-rest directory rather than search hits. */
+  const isBrowsing = whatsappShellEnabled && !hasQuery;
+  const listData: SearchResult[] = hasQuery
+    ? (results ?? [])
+    : isBrowsing
+      ? (directory ?? [])
+      : [];
+  const isLoadingResults =
+    token != null &&
+    (hasQuery ? results === undefined : isBrowsing && directory === undefined);
   const selectedCount = selected.size;
   const isGroupMode = selectedCount >= 2;
 
@@ -276,6 +303,42 @@ function StartChatScreen() {
   const renderItem = ({ item }: { item: SearchResult }) => {
     const isSelected = selected.has(item.userId);
     const subtitle = item.sharedCommunityNames.slice(0, 2).join(" • ");
+
+    // WhatsApp-shell (flag-gated): flat full-bleed WaRow anatomy (§3.1 "New-
+    // chat contact list" shares the same row geometry as the Chats list —
+    // 56pt circular avatar, hairline separators via WA_SEPARATOR_INSET below)
+    // with the existing selection checkmark as the row's rightAccessory
+    // instead of a trailing chevron. Flag off renders the original bordered
+    // row unchanged.
+    if (whatsappShellEnabled) {
+      return (
+        <WaRow
+          avatar={{ imageUrl: item.profilePhoto, label: item.displayName, shape: "circle" }}
+          title={item.displayName}
+          subtitle={subtitle.length > 0 ? subtitle : undefined}
+          accent={primaryColor}
+          onPress={() => toggleSelect(item)}
+          disabled={isSubmitting}
+          style={isSubmitting ? styles.rowDimmed : undefined}
+          rightAccessory={
+            <View
+              style={[
+                styles.checkmark,
+                {
+                  borderColor: isSelected ? primaryColor : colors.separator,
+                  backgroundColor: isSelected ? primaryColor : "transparent",
+                },
+              ]}
+            >
+              {isSelected ? (
+                <Ionicons name="checkmark" size={16} color="#ffffff" />
+              ) : null}
+            </View>
+          }
+        />
+      );
+    }
+
     return (
       <TouchableOpacity
         style={[
@@ -339,7 +402,9 @@ function StartChatScreen() {
       return (
         <View style={styles.emptyContainer}>
           <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-            Search for someone in your community{"\n"}to start a chat.
+            {isBrowsing
+              ? "No one else in your community yet."
+              : `Search for someone in your community\nto start a chat.`}
           </Text>
         </View>
       );
@@ -361,6 +426,7 @@ function StartChatScreen() {
     return null;
   }, [
     hasQuery,
+    isBrowsing,
     isLoadingResults,
     results,
     colors.textSecondary,
@@ -388,24 +454,51 @@ function StartChatScreen() {
         style={[
           styles.header,
           {
-            paddingTop: insets.top + 16,
+            paddingTop: insets.top + (whatsappShellEnabled ? 8 : 16),
+            paddingBottom: whatsappShellEnabled ? 10 : 12,
+            // S1: WA screens carry no bar hairline. Flag off keeps its rule.
+            borderBottomWidth: whatsappShellEnabled ? 0 : StyleSheet.hairlineWidth,
             borderBottomColor: colors.border,
           },
         ]}
       >
-        <TouchableOpacity
-          onPress={handleClose}
-          style={styles.headerSide}
-          hitSlop={12}
-          accessibilityLabel="Close"
-          accessibilityRole="button"
-        >
-          <Ionicons name="close" size={26} color={colors.text} />
-        </TouchableOpacity>
+        {whatsappShellEnabled ? (
+          // §6.1: centered 17pt semibold title with an ×-in-a-light-circle on
+          // the RIGHT — the reference has no "Cancel" text button. The left
+          // slot is an equal-width spacer so the title stays optically centered.
+          <View style={styles.headerSide} />
+        ) : (
+          <TouchableOpacity
+            onPress={handleClose}
+            style={styles.headerSide}
+            hitSlop={12}
+            accessibilityLabel="Close"
+            accessibilityRole="button"
+          >
+            <Ionicons name="close" size={26} color={colors.text} />
+          </TouchableOpacity>
+        )}
         <Text style={[styles.headerTitle, { color: colors.text }]}>
           {headerTitle}
         </Text>
-        <View style={styles.headerSide} />
+        {whatsappShellEnabled ? (
+          <View style={styles.headerSide}>
+            <TouchableOpacity
+              onPress={handleClose}
+              style={[
+                styles.headerDismissCircle,
+                { backgroundColor: colors.backgroundGrouped },
+              ]}
+              hitSlop={12}
+              accessibilityLabel="Close"
+              accessibilityRole="button"
+            >
+              <Ionicons name="close" size={20} color={colors.text} />
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <View style={styles.headerSide} />
+        )}
       </View>
 
       {/* Selected chips */}
@@ -417,84 +510,153 @@ function StartChatScreen() {
           contentContainerStyle={styles.chipsContent}
           keyboardShouldPersistTaps="handled"
         >
-          {Array.from(selected.values()).map((row) => (
-            <View
-              key={row.userId}
-              style={[
-                styles.chip,
-                { backgroundColor: accentLight },
-              ]}
-            >
-              <Avatar
-                name={row.displayName}
-                imageUrl={row.profilePhoto}
-                size={24}
-              />
-              <Text
-                style={[styles.chipText, { color: chipTextColor }]}
-                numberOfLines={1}
+          {Array.from(selected.values()).map((row) =>
+            whatsappShellEnabled ? (
+              // §7 "never colored category chips": the filled pill below
+              // becomes a plain avatar token — a small × overlay on the
+              // avatar itself, first name below it, no background fill.
+              <View key={row.userId} style={styles.waToken}>
+                <View style={styles.waTokenAvatarWrap}>
+                  <Avatar
+                    name={row.displayName}
+                    imageUrl={row.profilePhoto}
+                    size={48}
+                  />
+                  <TouchableOpacity
+                    onPress={() => removeSelected(row.userId)}
+                    accessibilityLabel={`Remove ${row.displayName}`}
+                    accessibilityRole="button"
+                    hitSlop={8}
+                    style={[styles.waTokenRemove, { backgroundColor: colors.textTertiary }]}
+                  >
+                    <Ionicons name="close" size={12} color="#ffffff" />
+                  </TouchableOpacity>
+                </View>
+                <Text
+                  style={[styles.waTokenName, { color: colors.text }]}
+                  numberOfLines={1}
+                >
+                  {row.displayName.split(" ")[0]}
+                </Text>
+              </View>
+            ) : (
+              <View
+                key={row.userId}
+                style={[
+                  styles.chip,
+                  { backgroundColor: accentLight },
+                ]}
               >
-                {row.displayName.split(" ")[0]}
-              </Text>
-              <TouchableOpacity
-                onPress={() => removeSelected(row.userId)}
-                accessibilityLabel={`Remove ${row.displayName}`}
-                accessibilityRole="button"
-                hitSlop={12}
-                style={styles.chipRemoveHit}
-              >
-                <Ionicons
-                  name="close-circle"
-                  size={18}
-                  color={colors.textSecondary}
+                <Avatar
+                  name={row.displayName}
+                  imageUrl={row.profilePhoto}
+                  size={24}
                 />
-              </TouchableOpacity>
-            </View>
-          ))}
+                <Text
+                  style={[styles.chipText, { color: chipTextColor }]}
+                  numberOfLines={1}
+                >
+                  {row.displayName.split(" ")[0]}
+                </Text>
+                <TouchableOpacity
+                  onPress={() => removeSelected(row.userId)}
+                  accessibilityLabel={`Remove ${row.displayName}`}
+                  accessibilityRole="button"
+                  hitSlop={12}
+                  style={styles.chipRemoveHit}
+                >
+                  <Ionicons
+                    name="close-circle"
+                    size={18}
+                    color={colors.textSecondary}
+                  />
+                </TouchableOpacity>
+              </View>
+            )
+          )}
         </ScrollView>
       ) : null}
 
       {/* Optional chat name (only when 2+ selected) */}
       {isGroupMode ? (
         <View style={styles.searchContainer}>
-          <TextInput
-            value={chatName}
-            onChangeText={setChatName}
-            placeholder="Chat name (optional)"
-            placeholderTextColor={colors.textSecondary}
-            maxLength={100}
-            style={[
-              styles.searchInput,
-              {
-                color: colors.text,
-                backgroundColor: colors.surfaceSecondary,
-                borderColor: colors.border,
-              },
-            ]}
-          />
+          {whatsappShellEnabled ? (
+            <View style={[styles.waPill, { backgroundColor: colors.backgroundGrouped }]}>
+              <TextInput
+                value={chatName}
+                onChangeText={setChatName}
+                placeholder="Chat name (optional)"
+                placeholderTextColor={colors.textTertiary}
+                maxLength={100}
+                style={[styles.waPillInput, { color: colors.text }]}
+              />
+            </View>
+          ) : (
+            <TextInput
+              value={chatName}
+              onChangeText={setChatName}
+              placeholder="Chat name (optional)"
+              placeholderTextColor={colors.textSecondary}
+              maxLength={100}
+              style={[
+                styles.searchInput,
+                {
+                  color: colors.text,
+                  backgroundColor: colors.surfaceSecondary,
+                  borderColor: colors.border,
+                },
+              ]}
+            />
+          )}
         </View>
       ) : null}
 
       {/* Search input */}
       <View style={styles.searchContainer}>
-        <TextInput
-          value={query}
-          onChangeText={setQuery}
-          onFocus={() => setIsFocused(true)}
-          onBlur={() => setIsFocused(false)}
-          placeholder="Search by name…"
-          placeholderTextColor={colors.textSecondary}
-          autoCorrect={false}
-          autoCapitalize="none"
-          style={[
-            styles.searchInput,
-            {
-              color: colors.text,
-              backgroundColor: colors.surfaceSecondary,
-              borderColor: isFocused ? primaryColor : colors.border,
-            },
-          ]}
-        />
+        {whatsappShellEnabled ? (
+          // §4 search pill: fully rounded, `bg.grouped` fill, magnifying-
+          // glass icon inset, `text.tertiary` placeholder — no focus border
+          // (WhatsApp's own search pill has none).
+          <View style={[styles.waPill, { backgroundColor: colors.backgroundGrouped }]}>
+            <Ionicons
+              name="search"
+              size={WA_SEARCH_PILL_ICON_SIZE}
+              color={colors.textTertiary}
+              style={styles.waPillIcon}
+            />
+            <TextInput
+              value={query}
+              onChangeText={setQuery}
+              onFocus={() => setIsFocused(true)}
+              onBlur={() => setIsFocused(false)}
+              // §6.2 placeholder style.
+              placeholder="Name, number…"
+              placeholderTextColor={colors.textTertiary}
+              autoCorrect={false}
+              autoCapitalize="none"
+              style={[styles.waPillInput, { color: colors.text }]}
+            />
+          </View>
+        ) : (
+          <TextInput
+            value={query}
+            onChangeText={setQuery}
+            onFocus={() => setIsFocused(true)}
+            onBlur={() => setIsFocused(false)}
+            placeholder="Search by name…"
+            placeholderTextColor={colors.textSecondary}
+            autoCorrect={false}
+            autoCapitalize="none"
+            style={[
+              styles.searchInput,
+              {
+                color: colors.text,
+                backgroundColor: colors.surfaceSecondary,
+                borderColor: isFocused ? primaryColor : colors.border,
+              },
+            ]}
+          />
+        )}
         {errorMessage ? (
           <Text style={[styles.errorText, { color: colors.error }]}>
             {errorMessage}
@@ -504,16 +666,28 @@ function StartChatScreen() {
 
       {/* Results */}
       <FlatList
-        data={hasQuery ? results ?? [] : []}
+        data={listData}
         keyExtractor={(item) => item.userId}
         renderItem={renderItem}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
         ListEmptyComponent={emptyState}
+        // §6.3: the at-rest directory gets a sentence-case gray header, so
+        // it reads as a section of the sheet rather than as search results.
+        ListHeaderComponent={
+          isBrowsing && listData.length > 0 ? (
+            <Text style={[styles.directoryHeader, { color: colors.textSecondary }]}>
+              Community members
+            </Text>
+          ) : null
+        }
         contentContainerStyle={
-          !hasQuery || (results?.length ?? 0) === 0
-            ? styles.emptyListContent
-            : undefined
+          listData.length === 0 ? styles.emptyListContent : undefined
+        }
+        // §3.1 hairline separators, inset to the text column — WaRow rows
+        // carry no border of their own (unlike the flag-off bordered row).
+        ItemSeparatorComponent={
+          whatsappShellEnabled ? () => <WaSeparator inset={WA_SEPARATOR_INSET} /> : undefined
         }
       />
 
@@ -522,11 +696,14 @@ function StartChatScreen() {
         <View
           style={[
             styles.ctaBar,
+            // §7 "never cards-with-shadows" — the flag-on bar keeps its
+            // hairline top border only, no drop shadow/elevation.
+            !whatsappShellEnabled && styles.ctaBarShadow,
             {
               backgroundColor: colors.surface,
-              borderTopColor: colors.border,
+              borderTopColor: whatsappShellEnabled ? colors.separator : colors.border,
               paddingBottom: insets.bottom + 12,
-              shadowColor: colors.shadow,
+              ...(whatsappShellEnabled ? {} : { shadowColor: colors.shadow }),
             },
           ]}
         >
@@ -580,6 +757,14 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: "600",
   },
+  // §6.1 dismiss — an × inside a light circle, right-aligned (flag-on only).
+  headerDismissCircle: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   chipsRow: {
     flexGrow: 0,
   },
@@ -609,6 +794,32 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  // WhatsApp-shell selected-recipient token (flag-gated) — §7 "never colored
+  // category chips": an avatar + small × overlay instead of a filled pill.
+  waToken: {
+    alignItems: "center",
+    width: 56,
+  },
+  waTokenAvatarWrap: {
+    width: 48,
+    height: 48,
+    position: "relative",
+  },
+  waTokenRemove: {
+    position: "absolute",
+    top: -2,
+    right: -2,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  waTokenName: {
+    marginTop: 4,
+    fontSize: 12,
+    fontWeight: "400",
+  },
   searchContainer: {
     paddingHorizontal: 16,
     paddingVertical: 8,
@@ -621,9 +832,35 @@ const styles = StyleSheet.create({
     fontSize: 16,
     minHeight: 44,
   },
+  // §4 search pill — fully rounded, `bg.grouped` fill, no border. Reused for
+  // the optional "Chat name" field too (same input family, icon omitted).
+  // S6.5: the search pill is ~44pt tall — the pre-pass 37pt read as too thin.
+  waPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    height: WA_SEARCH_PILL_HEIGHT,
+    borderRadius: WA_SEARCH_PILL_HEIGHT / 2,
+    paddingHorizontal: 14,
+  },
+  waPillIcon: {
+    marginRight: 8,
+  },
+  waPillInput: {
+    flex: 1,
+    fontSize: 17,
+    paddingVertical: 0,
+  },
   errorText: {
     marginTop: 8,
     fontSize: 13,
+  },
+  // §6.3/S3.5 — sentence-case gray section header, never ALL-CAPS.
+  directoryHeader: {
+    fontSize: WA_TYPE_SECTION_HEADER,
+    fontWeight: WA_WEIGHT_SEMIBOLD,
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 6,
   },
   row: {
     flexDirection: "row",
@@ -682,8 +919,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 12,
     borderTopWidth: StyleSheet.hairlineWidth,
-    // Subtle separation from list content. iOS/web pick up the shadow,
-    // Android falls back to elevation.
+  },
+  // Subtle separation from list content. iOS/web pick up the shadow,
+  // Android falls back to elevation. Flag-off only — §7 "never
+  // cards-with-shadows" drops this on the flag-on path (hairline border only).
+  ctaBarShadow: {
     ...Platform.select({
       ios: {
         shadowOffset: { width: 0, height: -2 },

@@ -25,6 +25,8 @@ export type FollowupCsvExportMember = {
   lastActiveAt?: number;
   addedAt?: number;
   alerts?: string[];
+  // Archived state. `isActive === false` = archived; undefined/true = active.
+  isActive?: boolean;
   customText1?: string;
   customText2?: string;
   customText3?: string;
@@ -184,6 +186,8 @@ export function cellValueForColumn(
       return formatTimestampMs(member.lastActiveAt);
     case "alerts":
       return (member.alerts ?? []).join("; ");
+    case "archived":
+      return member.isActive === false ? "Archived" : "Active";
     default:
       if (colKey.startsWith("custom")) {
         return formatCustomSlotValue(member, colKey, customFields);

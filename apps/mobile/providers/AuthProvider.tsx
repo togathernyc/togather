@@ -20,6 +20,13 @@ import { useMessageCache } from "../stores/messageCache";
 import { useGroupCache } from "../stores/groupCache";
 import { useChannelsCache } from "../stores/channelsCache";
 import { useRunSheetCache } from "../stores/runSheetCache";
+import { useServingRunSheetCache } from "../stores/servingRunSheetCache";
+import { useServingTasksCache } from "../stores/servingTasksCache";
+import { useServingTaskQueue } from "../stores/servingTaskQueue";
+import { useServingPlansCache } from "../stores/servingPlansCache";
+import { useGridColumnWidths } from "../stores/gridColumnWidths";
+import { useInboxGroupCollapse } from "../stores/inboxGroupCollapse";
+import { useEventModeStore } from "../stores/eventModeStore";
 import type { User, Community } from "@/types/shared";
 import type { Id } from "@services/api/convex";
 
@@ -88,6 +95,8 @@ interface AuthContextType {
   refreshUser: () => Promise<void>;
   setCommunity: (community: Community) => Promise<void>;
   clearCommunity: () => Promise<void>;
+  /** Resolves `true` only if the community-less token re-mint actually succeeded. */
+  exitToCommunitySelection: () => Promise<boolean>;
   signIn: (userId: string, tokens?: { accessToken?: string; refreshToken?: string }) => Promise<void>;
 }
 
@@ -402,6 +411,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         location: convexUser.location ?? undefined,
         community_primary_color: convexUser.activeCommunityPrimaryColor ?? undefined,
         community_secondary_color: convexUser.activeCommunitySecondaryColor ?? undefined,
+        // Knicks mode is an app-wide feature flag (flipped in /admin/features).
+        // Read it live via useConvexFeatureFlag, not from this cached snapshot —
+        // see KnicksModeSync / useCommunityTheme.
       };
 
       // Derive community from server response (no caching needed)
@@ -409,6 +421,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         ? {
             id: convexUser.activeCommunityId,
             name: convexUser.activeCommunityName ?? undefined,
+            churchFeatures: convexUser.activeCommunityChurchFeatures ?? undefined,
           }
         : null;
 
@@ -642,6 +655,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       "group-cache",
       "channels-cache",
       "runsheet-cache",
+      "serving-runsheet-cache",
+      "serving-tasks-cache",
+      "serving-task-queue",
+      "serving-plans-cache",
+      "grid-column-widths",
+      "inbox-group-collapse",
+      "event-mode",
     ];
 
     await Promise.all(
@@ -658,6 +678,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     useGroupCache.getState().clearAll();
     useChannelsCache.getState().clearAll();
     useRunSheetCache.getState().clearAll();
+    useServingRunSheetCache.getState().clearAll();
+    useServingTasksCache.getState().clearAll();
+    useServingTaskQueue.getState().clear();
+    useServingPlansCache.getState().clearAll();
+    useGridColumnWidths.getState().clearAll();
+    useInboxGroupCollapse.getState().clearAll();
+    // Serving mode + the early-opened preview plan are persisted, so on a
+    // shared device the next user would otherwise land in the previous one's
+    // serving state.
+    useEventModeStore.getState().clearAll();
 
     // On web, clear localStorage
     if (Platform.OS === "web" && typeof window !== "undefined" && window.localStorage) {
@@ -794,6 +824,77 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     console.log("🔄 AuthProvider: Community context cleared");
   }, [queryClient, token]);
+
+  /**
+   * Leave the current community WITHOUT logging out of the app — used when the
+   * active community becomes archived (closed). Unlike `clearCommunity`, this
+   * also re-mints a community-less access token (so requests stop being scoped
+   * to the archived community, which the server now hard-rejects) and wipes the
+   * per-community caches so no stale, archived content stays browsable. The
+   * caller is responsible for navigating to community selection afterward.
+   *
+   * Returns `true` only if the token re-mint actually succeeded — callers that
+   * need to detect a failed recovery (e.g. AuthErrorBoundary, which must not
+   * treat a transient network failure as success and remount into a repeat
+   * COMMUNITY_ARCHIVED throw) should check this instead of assuming success
+   * just because the call didn't throw.
+   */
+  const exitToCommunitySelection = useCallback(async (): Promise<boolean> => {
+    console.log("🔄 AuthProvider: Exiting to community selection (archived)");
+
+    // Clear the server-side active community (tolerated for archived).
+    await clearCommunity();
+
+    // Re-mint a token with NO community so requireAuth stops rejecting requests
+    // as COMMUNITY_ARCHIVED while the user is on the selection screen.
+    // refreshAuthTokens() catches internally and returns false on failure
+    // (e.g. transient network error) rather than throwing — propagate that
+    // result so the caller can tell a genuinely failed recovery apart from
+    // success instead of the token silently staying poisoned.
+    const refreshed = await refreshAuthTokens();
+
+    // Wipe per-community caches (mirror logout's cache teardown, minus the auth
+    // tokens/user) so archived-community data isn't left browsable offline.
+    await clearCachedProfile();
+    await Promise.all(
+      [
+        "inbox-cache",
+        "message-cache",
+        "group-cache",
+        "channels-cache",
+        "runsheet-cache",
+        "serving-runsheet-cache",
+        "serving-tasks-cache",
+        "serving-task-queue",
+        "serving-plans-cache",
+        "grid-column-widths",
+        "inbox-group-collapse",
+        "event-mode",
+      ].map((key) =>
+        AsyncStorage.removeItem(key).catch((err) =>
+          console.warn(`Failed to remove ${key}:`, err)
+        )
+      )
+    );
+    useInboxCache.getState().clear();
+    useMessageCache.getState().clearAll();
+    useGroupCache.getState().clearAll();
+    useChannelsCache.getState().clearAll();
+    useRunSheetCache.getState().clearAll();
+    useServingRunSheetCache.getState().clearAll();
+    useServingTasksCache.getState().clearAll();
+    useServingTaskQueue.getState().clear();
+    useServingPlansCache.getState().clearAll();
+    useGridColumnWidths.getState().clearAll();
+    useInboxGroupCollapse.getState().clearAll();
+    // Serving mode and the early-opened preview plan are scoped to plans in the
+    // community being left — carrying them across would leave the user in a
+    // serving state for an event they can no longer see.
+    useEventModeStore.getState().clearAll();
+
+    setCommunityState(null);
+    return refreshed;
+  }, [clearCommunity, refreshAuthTokens]);
 
   /**
    * Initialize auth state on mount
@@ -1072,6 +1173,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       refreshUser,
       setCommunity,
       clearCommunity,
+      exitToCommunitySelection,
       signIn,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- token excluded to prevent app-wide re-renders on JWT refresh
@@ -1084,6 +1186,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       refreshUser,
       setCommunity,
       clearCommunity,
+      exitToCommunitySelection,
       signIn,
     ]
   );
@@ -1121,6 +1224,9 @@ export function useAuth() {
         throw new Error("AuthProvider not available");
       },
       clearCommunity: async () => {
+        throw new Error("AuthProvider not available");
+      },
+      exitToCommunitySelection: async () => {
         throw new Error("AuthProvider not available");
       },
       signIn: async () => {

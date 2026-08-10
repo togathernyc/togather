@@ -26,7 +26,13 @@ import {
 import { checkRateLimit } from "../../lib/rateLimit";
 import { DOMAIN_CONFIG } from "@togather/shared/config";
 import { canAccessEventChannel } from "./eventChat";
+import {
+  isCommunityAdminForChannel,
+  isParticipatingGroupLeader,
+} from "./helpers";
+import { resolveChannelCommunityId } from "../../lib/messaging/communityScope";
 import { getUsersWithNotificationsDisabled } from "../../lib/notifications/enabledStatus";
+import { truncateChars } from "../../lib/textPreview";
 
 /**
  * Decorate a list of message rows with `senderNotificationsDisabled` so chat
@@ -139,7 +145,11 @@ async function canAccessMeetingChat(
 // Constants
 // ============================================================================
 
-const MAX_PREVIEW_LENGTH = 100;
+/**
+ * Stored `lastMessagePreview` budget. Inbox rows render 2 lines of this, so it
+ * needs enough text to fill them — the row itself clamps what's visible.
+ */
+const MAX_PREVIEW_LENGTH = 200;
 const DEFAULT_PAGE_SIZE = 50;
 
 // Message type for preview generation (minimal interface for preview logic)
@@ -162,7 +172,7 @@ interface MessageForPreview {
  * Used for channel lastMessagePreview to show user-friendly strings like
  * "Sent a photo", "Sent a file", "Shared an event", etc.
  */
-function generateMessagePreview(message: MessageForPreview): string {
+export function generateMessagePreview(message: MessageForPreview): string {
   const content = message.content;
   const attachments = message.attachments;
 
@@ -176,7 +186,7 @@ function generateMessagePreview(message: MessageForPreview): string {
 
     if (imageCount > 0 && content.trim()) {
       // Has both images and text - show text
-      return content.slice(0, MAX_PREVIEW_LENGTH);
+      return truncateChars(content, MAX_PREVIEW_LENGTH);
     } else if (imageCount > 0) {
       // Only images
       return imageCount === 1 ? "Sent a photo" : `Sent ${imageCount} photos`;
@@ -190,25 +200,25 @@ function generateMessagePreview(message: MessageForPreview): string {
       // Documents and other files
       return fileCount === 1 ? "Sent a file" : `Sent ${fileCount} files`;
     } else {
-      return content.slice(0, MAX_PREVIEW_LENGTH);
+      return truncateChars(content, MAX_PREVIEW_LENGTH);
     }
   } else if (DOMAIN_CONFIG.eventLinkRegexSingle().test(content)) {
     // Event link shared
     return content.trim() === content.match(DOMAIN_CONFIG.eventLinkRegexSingle())?.[0]
       ? "Shared an event"
-      : content.slice(0, MAX_PREVIEW_LENGTH);
+      : truncateChars(content, MAX_PREVIEW_LENGTH);
   } else if (DOMAIN_CONFIG.toolLinkRegexSingle().test(content)) {
     // Tool link shared (Run Sheet, Resource)
     return content.trim() === content.match(DOMAIN_CONFIG.toolLinkRegexSingle())?.[0]
       ? "Shared a tool"
-      : content.slice(0, MAX_PREVIEW_LENGTH);
+      : truncateChars(content, MAX_PREVIEW_LENGTH);
   } else if (DOMAIN_CONFIG.groupLinkRegexSingle().test(content)) {
     // Group link shared
     return content.trim() === content.match(DOMAIN_CONFIG.groupLinkRegexSingle())?.[0]
       ? "Shared a group"
-      : content.slice(0, MAX_PREVIEW_LENGTH);
+      : truncateChars(content, MAX_PREVIEW_LENGTH);
   } else {
-    return content.slice(0, MAX_PREVIEW_LENGTH);
+    return truncateChars(content, MAX_PREVIEW_LENGTH);
   }
 }
 
@@ -255,7 +265,12 @@ export const getMessage = query({
         .filter((q) => q.eq(q.field("leftAt"), undefined))
         .first();
 
-      if (!membership) {
+      // Community admins may read messages in their community's group channels
+      // without joining (read-only oversight).
+      if (
+        !membership &&
+        !(channel && (await isCommunityAdminForChannel(ctx, channel, userId)))
+      ) {
         return null;
       }
 
@@ -266,6 +281,379 @@ export const getMessage = query({
     }
   },
 });
+
+// ============================================================================
+// WhatsApp-shell reply/thread derivation (flag-on `getMessages` only)
+// ============================================================================
+
+/**
+ * How many of a thread's newest visible replies we read per parent. Enough to
+ * answer the activation question (0 / 1 / many) AND to fill the summary pill's
+ * three overlapping replier avatars even when the same person replied several
+ * times in a row.
+ */
+const WA_THREAD_PROBE = 10;
+
+/**
+ * Ceiling for an EXACT reply count on the summary pill. Past it the pill reads
+ * "50+ replies" rather than a number.
+ *
+ * Tradeoff, deliberately chosen over the two alternatives:
+ *  - We can NOT fall back to the parent's stored `threadReplyCount`. That is a
+ *    monotonic send counter — never decremented on delete, and blind to
+ *    blocking and to cross-channel rows — so it silently overstates the thread.
+ *  - We can NOT `.collect()` the replies; a long thread would be an unbounded
+ *    read.
+ * So the count is exact up to a bound and honest ("50+") past it. The second,
+ * wider read only happens for threads that overflow the small probe, which is
+ * rare — an ordinary thread costs one indexed `take(11)`.
+ */
+const WA_THREAD_COUNT_CAP = 50;
+
+/**
+ * How far any walk through the parent chain may run.
+ *
+ * A thread is ONE level deep by design — `sendMessage` roots a chosen parent
+ * before writing, so `parentMessageId` always names the thread's root. Rows
+ * written before that rule can be chained arbitrarily deep (reply → reply →
+ * reply), which is what this bound is for: it lets the read path fold those
+ * old chains into their root's thread without a data migration, and stops dead
+ * rather than looping if a chain is ever longer than that (or cyclic).
+ */
+const WA_THREAD_MAX_DEPTH = 8;
+
+/** A thread as this viewer sees it. */
+interface WaThreadProbe {
+  /** Newest-first visible replies, at most `WA_THREAD_PROBE` of them. */
+  replies: Doc<"chatMessages">[];
+  /** Visible reply count, exact unless `countCapped`. */
+  count: number;
+  /** The thread has more than `WA_THREAD_COUNT_CAP` visible replies. */
+  countCapped: boolean;
+}
+
+/**
+ * Everything a thread probe needs to decide what this viewer can actually see,
+ * plus the per-handler memo. A reply counts toward a thread only when it is in
+ * THIS channel and not from a blocked author — the same two rules the ordinary
+ * row scan applies, so a thread can never surface a message the timeline itself
+ * would have hidden.
+ */
+interface WaThreadScope {
+  channelId: Id<"chatChannels">;
+  blockedUserIds: Set<Id<"users">>;
+  cache: Map<string, WaThreadProbe>;
+  /** Memo for `threadRootFor` — one walk per distinct parent per handler run. */
+  rootCache: Map<string, WaThreadRoot>;
+}
+
+/** Where a reply's thread hangs, and whether that anchor is on screen. */
+interface WaThreadRoot {
+  id: Id<"chatMessages">;
+  /**
+   * The root is a row this viewer sees in the timeline, so it can carry the
+   * summary pill. When it can't — deleted, or from a blocked author — there is
+   * nowhere for a collapsed thread's one affordance to live, and collapsing
+   * would make the whole conversation unreachable. See the admission rule.
+   */
+  hasVisibleHost: boolean;
+}
+
+/**
+ * Walk a chosen parent up to the ROOT of its thread.
+ *
+ * Tapping "reply" on a message that is itself a reply must not fork a second
+ * thread off the first: the new message joins the thread the tapped message
+ * already lives in. Threads are one level deep, so this is a single lookup for
+ * anything written since `sendMessage` started rooting; the loop (and
+ * `WA_THREAD_MAX_DEPTH`) is what folds the chains that predate it.
+ *
+ * The walk never leaves the channel. A parent pointing into another channel is
+ * only possible on rows predating `sendMessage`'s same-channel check, and
+ * rooting a thread onto a message the viewer may not be allowed to see would
+ * hand `buildReplyQuote` exactly the leak it refuses to serve.
+ *
+ * It DOES walk through a deleted parent. A soft-deleted row keeps its own
+ * `parentMessageId`, so the chain above it is intact; stopping there would
+ * strand its replies on a "root" that is really a middle link.
+ */
+async function resolveThreadRoot(
+  ctx: QueryCtx | MutationCtx,
+  parentMessageId: Id<"chatMessages">,
+  channelId: Id<"chatChannels">,
+): Promise<{ id: Id<"chatMessages">; doc: Doc<"chatMessages"> | null }> {
+  let rootId = parentMessageId;
+  let doc = await ctx.db.get(rootId);
+  for (let hop = 0; hop < WA_THREAD_MAX_DEPTH && doc?.parentMessageId; hop++) {
+    const nextId: Id<"chatMessages"> = doc.parentMessageId;
+    const next = await ctx.db.get(nextId);
+    if (!next || next.channelId !== channelId) break;
+    rootId = nextId;
+    doc = next;
+  }
+  return { id: rootId, doc };
+}
+
+/** `resolveThreadRoot`, memoized per handler run, plus the pill-host verdict. */
+async function threadRootFor(
+  ctx: QueryCtx,
+  scope: WaThreadScope,
+  parentMessageId: Id<"chatMessages">,
+): Promise<WaThreadRoot> {
+  const cached = scope.rootCache.get(parentMessageId);
+  if (cached) return cached;
+  const { id, doc } = await resolveThreadRoot(ctx, parentMessageId, scope.channelId);
+  const root: WaThreadRoot = {
+    id,
+    // Exactly the rules the ordinary row scan applies to the root's own row.
+    hasVisibleHost: waIsVisibleReply(scope, doc),
+  };
+  scope.rootCache.set(parentMessageId, root);
+  return root;
+}
+
+/**
+ * Whether a row is one this viewer may see: present, not deleted, in this
+ * channel, and not from a blocked author.
+ *
+ * Kept in lockstep with `waThreadScanFilter`'s "visible" arm — the scan bounds
+ * the read, this decides what the read is allowed to show.
+ */
+function waIsVisibleReply(
+  scope: WaThreadScope,
+  row: Doc<"chatMessages"> | null,
+): boolean {
+  if (!row) return false;
+  if (row.isDeleted) return false;
+  if (row.channelId !== scope.channelId) return false;
+  return !(row.senderId && scope.blockedUserIds.has(row.senderId));
+}
+
+/**
+ * What a thread scan must READ: everything visible, plus everything that could
+ * still be hiding visible replies underneath it.
+ *
+ * The visibility rules stay a Convex filter expression rather than a JS
+ * post-filter, because `.filter()` runs during the index scan and `.take(n)`
+ * therefore still returns n rows we care about. Filtering in JS after the take
+ * would silently undercount a thread whose newest replies are blocked.
+ *
+ * The second arm is the reason this isn't just the visibility rules. A chained
+ * row is discovered by walking DOWN from the root, and a deleted (or blocked)
+ * middle link is still the only path to its live children. Filtering it out of
+ * the scan made those children undiscoverable — and since the read path also
+ * roots them at that same root, they resolved to a thread that reported zero
+ * replies and were dropped from the timeline entirely. Traversing through
+ * hidden rows while refusing to SHOW them is what keeps a live reply visible
+ * under a deleted one.
+ */
+function waThreadScanFilter(scope: WaThreadScope) {
+  return (q: any) => {
+    const visible = [
+      q.eq(q.field("isDeleted"), false),
+      ...[...scope.blockedUserIds].map((blockedId) =>
+        q.neq(q.field("senderId"), blockedId),
+      ),
+    ];
+    return q.and(
+      // Cross-channel defense: `by_parentMessage` is keyed on the parent alone,
+      // so a reply written into another channel (only possible from rows
+      // predating `sendMessage`'s same-channel check) would otherwise be
+      // counted into — and avatar'd onto — this channel's thread. It is the one
+      // rule that also bars TRAVERSAL: another channel's subtree must never be
+      // pulled in through a row this channel can't show.
+      q.eq(q.field("channelId"), scope.channelId),
+      q.or(q.and(...visible), q.gt(q.field("threadReplyCount"), 0)),
+    );
+  };
+}
+
+/**
+ * Every reply belonging to a thread, bounded, in `order` of `createdAt`.
+ *
+ * Normally this is exactly one indexed read: the thread is flat, so the root's
+ * direct children ARE the thread. A child that carries its own send counter
+ * (`threadReplyCount`) can only be a chained row from before `sendMessage`
+ * rooted its parents, and those get descended into — folding the old chain into
+ * the root's thread at read time, no data migration needed. Both the depth and
+ * the total are bounded, and the counter check keeps the common case at the one
+ * read it has always been.
+ *
+ * A hidden row is TRAVERSED but never collected: a deleted or blocked reply in
+ * the middle of a chain is still the only path to the live replies under it,
+ * and dropping it from the walk loses them. `scan` therefore reads visible rows
+ * plus chain links, and `isVisible` decides which of those are returned.
+ *
+ * @param scan Convex filter expression applied during the index scan, so `take`
+ *   still yields `take` rows worth looking at (see `waThreadScanFilter`).
+ * @param isVisible Whether a scanned row may be shown to this reader.
+ */
+async function collectThreadReplies(
+  ctx: QueryCtx,
+  scan: (q: any) => any,
+  isVisible: (row: Doc<"chatMessages">) => boolean,
+  rootId: Id<"chatMessages">,
+  take: number,
+  order: "asc" | "desc",
+): Promise<Doc<"chatMessages">[]> {
+  const collected: Doc<"chatMessages">[] = [];
+  const seen = new Set<string>([rootId]);
+  let frontier: Id<"chatMessages">[] = [rootId];
+
+  for (
+    let depth = 0;
+    depth < WA_THREAD_MAX_DEPTH && frontier.length > 0 && collected.length < take;
+    depth++
+  ) {
+    const next: Id<"chatMessages">[] = [];
+    for (const id of frontier) {
+      const rows = await ctx.db
+        .query("chatMessages")
+        .withIndex("by_parentMessage", (q) => q.eq("parentMessageId", id))
+        .filter(scan)
+        .order(order)
+        .take(take);
+      for (const row of rows) {
+        if (seen.has(row._id)) continue;
+        seen.add(row._id);
+        if (isVisible(row)) collected.push(row);
+        // Descend regardless of visibility — a hidden row's children may not be
+        // hidden, and this walk is their only route into the thread.
+        if (row.threadReplyCount) next.push(row._id);
+      }
+    }
+    frontier = next;
+  }
+
+  collected.sort((a, b) =>
+    order === "desc" ? b.createdAt - a.createdAt : a.createdAt - b.createdAt,
+  );
+  return collected.slice(0, take);
+}
+
+/**
+ * Read a thread's newest visible replies, memoized per handler run.
+ *
+ * Called once per replied-to message in the page AND once per reply candidate
+ * (to decide whether that reply is the thread's only one), so the cache is what
+ * keeps this at one indexed read per *thread* rather than per row.
+ *
+ * Keyed on the thread ROOT's id and never reads the root doc, so it still
+ * answers correctly for a reply whose root was deleted.
+ */
+async function probeThread(
+  ctx: QueryCtx,
+  scope: WaThreadScope,
+  rootId: Id<"chatMessages">,
+): Promise<WaThreadProbe> {
+  const cached = scope.cache.get(rootId);
+  if (cached) return cached;
+
+  // One extra row tells us whether the thread runs deeper than the probe,
+  // without a second query for the overwhelmingly common shallow case.
+  const rows = await collectThreadReplies(
+    ctx,
+    waThreadScanFilter(scope),
+    (row) => waIsVisibleReply(scope, row),
+    rootId,
+    WA_THREAD_PROBE + 1,
+    "desc",
+  );
+
+  const replies = rows.slice(0, WA_THREAD_PROBE);
+  let probe: WaThreadProbe;
+  if (rows.length <= WA_THREAD_PROBE) {
+    probe = { replies, count: rows.length, countCapped: false };
+  } else {
+    // Deep thread: pay one bounded wider read for an exact count up to the cap.
+    const counted = await collectThreadReplies(
+      ctx,
+      waThreadScanFilter(scope),
+      (row) => waIsVisibleReply(scope, row),
+      rootId,
+      WA_THREAD_COUNT_CAP + 1,
+      "desc",
+    );
+    probe = {
+      replies,
+      count: Math.min(counted.length, WA_THREAD_COUNT_CAP),
+      countCapped: counted.length > WA_THREAD_COUNT_CAP,
+    };
+  }
+
+  scope.cache.set(rootId, probe);
+  return probe;
+}
+
+/**
+ * The quoted-parent context rendered INSIDE a reply's own bubble (the §5
+ * "reply-quote bar"), denormalized here at read time.
+ *
+ * This is what replaces the old floating "ghost" pointer's pagination job: the
+ * reply carries its parent's sender + snippet, so a reply can render its quote
+ * correctly even when the parent is hundreds of messages further up and not in
+ * the loaded window. A missing or soft-deleted parent yields
+ * `parentDeleted: true`, which the client renders as WhatsApp's "Original
+ * message was deleted" quote rather than a blank strip.
+ *
+ * A parent in a DIFFERENT channel gets the same deleted treatment, and — unlike
+ * a genuinely deleted parent — carries no sender identity at all: quoting it
+ * would republish channel A's author and text to every reader of channel B.
+ * `sendMessage` now refuses to create such a reply; this is the read-side
+ * defense for rows that predate that check.
+ */
+async function buildReplyQuote(
+  ctx: QueryCtx,
+  parentMessageId: Id<"chatMessages">,
+  channelId: Id<"chatChannels">,
+) {
+  const parent = await ctx.db.get(parentMessageId);
+
+  if (parent && parent.channelId !== channelId) {
+    return {
+      parentMessageId,
+      parentDeleted: true,
+      parentSenderId: undefined as Id<"users"> | undefined,
+      parentSenderName: undefined as string | undefined,
+      parentContent: "",
+      parentAttachmentType: undefined as string | undefined,
+      parentThumbnailUrl: undefined as string | undefined,
+    };
+  }
+
+  if (!parent || parent.isDeleted) {
+    return {
+      parentMessageId,
+      parentDeleted: true,
+      parentSenderId: parent?.senderId,
+      parentSenderName: parent?.senderName,
+      parentContent: "",
+      parentAttachmentType: undefined as string | undefined,
+      parentThumbnailUrl: undefined as string | undefined,
+    };
+  }
+
+  // §5 "optional thumbnail (28×28pt) if the quoted message had media". A video
+  // only has one if it was captured at upload; without it the quote falls back
+  // to its glyph + "Video", which renders on its own.
+  const attachment = parent.attachments?.[0];
+  const thumbnailSource =
+    attachment?.type === "image"
+      ? attachment.url
+      : attachment?.type === "video"
+        ? attachment.thumbnailUrl
+        : undefined;
+
+  return {
+    parentMessageId,
+    parentDeleted: false,
+    parentSenderId: parent.senderId,
+    parentSenderName: parent.senderName,
+    parentContent: parent.content ?? "",
+    parentAttachmentType: attachment?.type,
+    parentThumbnailUrl: getMediaUrl(thumbnailSource),
+  };
+}
 
 /**
  * Get messages for a channel with pagination.
@@ -278,6 +666,22 @@ export const getMessages = query({
     cursor: v.optional(v.string()),
     /** Group context from the chat route (required for shared-channel visibility rules). */
     viewingGroupId: v.optional(v.id("groups")),
+    /**
+     * WhatsApp-shell reply rendering (flag-on clients only; see
+     * `useWhatsappShell`). Flag-off callers omit it and get byte-identical
+     * behaviour: every reply filtered out of the timeline, no decoration.
+     *
+     * When true:
+     *  - a reply is ADMITTED to the timeline when it is its parent's ONLY live
+     *    reply, and carries `replyQuote` (the quoted-parent context for the
+     *    in-bubble §5 quote bar);
+     *  - a message with TWO OR MORE live replies carries `threadSummary` (the
+     *    one collapsed "N replies · <time> ›" pill) and its replies stay out of
+     *    the timeline.
+     * The 1-vs-2 boundary is the activation rule; see MessageList's flag-on
+     * timeline for the full rationale and edge cases.
+     */
+    waReplies: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
@@ -345,13 +749,21 @@ export const getMessages = query({
         .filter((q) => q.eq(q.field("leftAt"), undefined))
         .first();
 
-      // If not a channel member, only group leaders/admins may load messages.
-      // Return empty instead of throwing — `getMessages` is a reactive query and
-      // a throw crashes the chat screen via ErrorBoundary when membership is
-      // lost mid-session (e.g. user confirms a Leave Group alert while the
-      // chat screen is still mounted). The screen's own navigation flow handles
-      // the redirect; we just need to stop replying with messages.
-      if (!channelMembership && !isLeaderRole(groupMembership?.role)) {
+      // Community admins get read-only oversight of any group's channels
+      // without joining. Checked only when they aren't a channel member or
+      // group leader, so the common paths skip the extra lookup.
+      const isAdminViewer =
+        !channelMembership &&
+        !isLeaderRole(groupMembership?.role) &&
+        (await isCommunityAdminForChannel(ctx, channel, userId));
+
+      // If not a channel member, only group leaders/admins (or community admins)
+      // may load messages. Return empty instead of throwing — `getMessages` is a
+      // reactive query and a throw crashes the chat screen via ErrorBoundary when
+      // membership is lost mid-session (e.g. user confirms a Leave Group alert
+      // while the chat screen is still mounted). The screen's own navigation flow
+      // handles the redirect; we just need to stop replying with messages.
+      if (!channelMembership && !isLeaderRole(groupMembership?.role) && !isAdminViewer) {
         return { messages: [], hasMore: false, cursor: undefined };
       }
 
@@ -383,7 +795,8 @@ export const getMessages = query({
           channel.channelType === "announcements") &&
         !effectiveEnabled &&
         !isOwningGroupLeader &&
-        !isLinkedGroupLeader
+        !isLinkedGroupLeader &&
+        !isAdminViewer
       ) {
         return { messages: [], hasMore: false, cursor: undefined };
       }
@@ -397,10 +810,17 @@ export const getMessages = query({
 
     const blockedUserIds = new Set(blockedUsers.map((b) => b.blockedId));
 
-    // --- Index-driven pagination using by_channel_lastActivityAt ---
+    // --- Index-driven pagination using by_channel_createdAt ---
     // Instead of .collect() on ALL messages, scan the index in desc order
     // and only read enough to fill one page. This is O(page_size) instead
     // of O(total_messages).
+    //
+    // Ordering is keyed on `createdAt` (not `lastActivityAt`) so a replied-to
+    // message keeps its original chronological position — replying no longer
+    // floats the parent to the bottom of the chat. `lastActivityAt` is still
+    // returned on each message; the client uses it to float a content-free
+    // "ghost" thread pointer at the bottom (see MessageList). Inbox room
+    // ordering, which relies on the `lastActivityAt` bump, is unaffected.
 
     // Decode cursor: "timestamp:seenIds" for correct tie-breaking.
     // seenIds is a comma-separated list of message IDs already returned at the
@@ -421,6 +841,15 @@ export const getMessages = query({
     const OVER_FETCH_MULTIPLIER = 3;
     const fetchBatch = limit * OVER_FETCH_MULTIPLIER;
     const accepted: Doc<"chatMessages">[] = [];
+    // One entry per thread touched while scanning this page — see `probeThread`.
+    // Carries the viewer's visibility rules so a thread can never count or
+    // avatar a reply the row scan itself would have hidden.
+    const threadScope: WaThreadScope = {
+      channelId: args.channelId,
+      blockedUserIds,
+      cache: new Map<string, WaThreadProbe>(),
+      rootCache: new Map<string, WaThreadRoot>(),
+    };
     // Track all message IDs we've already processed across batches to avoid
     // duplicates when using lte on the same timestamp boundary.
     const processedIds = new Set<string>(cursorSeenIds ?? []);
@@ -429,13 +858,13 @@ export const getMessages = query({
     // Fetch in batches until we have enough accepted messages or run out
     let candidates = await ctx.db
       .query("chatMessages")
-      .withIndex("by_channel_lastActivityAt", (q) => {
+      .withIndex("by_channel_createdAt", (q) => {
         const q1 = q.eq("channelId", args.channelId);
         // Use lte to include messages at the cursor timestamp (we skip
         // already-seen ones by ID below). This avoids dropping messages
         // that share the same timestamp as the cursor.
         if (scanCursorTime !== undefined) {
-          return q1.lte("lastActivityAt", scanCursorTime);
+          return q1.lte("createdAt", scanCursorTime);
         }
         return q1;
       })
@@ -460,7 +889,39 @@ export const getMessages = query({
 
         // Filter: top-level, not deleted, not blocked
         if (m.isDeleted) continue;
-        if (m.parentMessageId) continue;
+        if (m.parentMessageId) {
+          // Flag-off (and any caller that omits `waReplies`): replies never
+          // appear in the timeline — they live only in the thread screen.
+          if (!args.waReplies) continue;
+          // Flag-on: admit a reply only while it is its parent's SOLE VISIBLE
+          // reply. Comparing identity (not just `length === 1`) is what makes
+          // this order-independent: whichever reply is the only one left
+          // standing is the one that renders inline, no matter which arrived
+          // first or which sibling was deleted.
+          //
+          // The probe applies the viewer's own visibility rules, so a lone
+          // reply from a blocked author reads as zero visible replies here and
+          // is skipped — the same disappearance their ordinary messages get,
+          // rather than a bubble the blocked-check below would have to catch a
+          // step later.
+          //
+          // "Its parent's" means the thread's ROOT. `parentMessageId` already
+          // is the root for anything written since `sendMessage` started
+          // rooting; walking up covers the chained rows that predate it, so an
+          // old reply-of-a-reply is judged against the whole thread it really
+          // belongs to instead of forming a thread of one all by itself.
+          const root = await threadRootFor(ctx, threadScope, m.parentMessageId);
+          // Collapsing needs somewhere to put the pill. When the root itself is
+          // hidden from this viewer — deleted, or from someone they blocked —
+          // it is not in the timeline to carry one, so collapsing would take
+          // the whole conversation off screen with no way back to it. Those
+          // replies stay inline instead, quoting a parent that reads as
+          // deleted, which is what WhatsApp shows too.
+          if (root.hasVisibleHost) {
+            const { replies: siblings } = await probeThread(ctx, threadScope, root.id);
+            if (siblings.length !== 1 || siblings[0]._id !== m._id) continue;
+          }
+        }
         if (m.senderId && blockedUserIds.has(m.senderId)) continue;
 
         accepted.push(m);
@@ -484,12 +945,12 @@ export const getMessages = query({
 
       // Advance scan cursor to the last candidate's timestamp for next batch
       const lastCandidate = candidates[candidates.length - 1];
-      scanCursorTime = lastCandidate.lastActivityAt ?? lastCandidate.createdAt;
+      scanCursorTime = lastCandidate.createdAt;
 
       candidates = await ctx.db
         .query("chatMessages")
-        .withIndex("by_channel_lastActivityAt", (q) =>
-          q.eq("channelId", args.channelId).lte("lastActivityAt", scanCursorTime!)
+        .withIndex("by_channel_createdAt", (q) =>
+          q.eq("channelId", args.channelId).lte("createdAt", scanCursorTime!)
         )
         .order("desc")
         .take(fetchBatch);
@@ -499,20 +960,27 @@ export const getMessages = query({
     const pageMessages = accepted.slice(0, limit);
 
     // Encode cursor: "timestamp:id1,id2,..." — includes all message IDs at the
-    // last page entry's timestamp so the next page can skip them correctly.
+    // last page entry's createdAt so the next page can skip them correctly.
     let cursor: string | undefined;
     if (pageMessages.length > 0) {
       const lastMsg = pageMessages[pageMessages.length - 1];
-      const lastActivityAt = lastMsg.lastActivityAt ?? lastMsg.createdAt;
+      const boundaryTime = lastMsg.createdAt;
       // Collect all accepted message IDs at the boundary timestamp
-      const boundaryIds: string[] = [];
+      const boundaryIds = new Set<string>();
       for (const m of pageMessages) {
-        const t = m.lastActivityAt ?? m.createdAt;
-        if (t === lastActivityAt) {
-          boundaryIds.push(m._id);
+        if (m.createdAt === boundaryTime) {
+          boundaryIds.add(m._id);
         }
       }
-      cursor = `${lastActivityAt}:${boundaryIds.join(",")}`;
+      // Carry forward IDs already returned at this timestamp on EARLIER pages.
+      // When a run of messages shares one createdAt and spans more than two
+      // pages, the incoming cursor's seenIds (at the same boundaryTime) must be
+      // preserved — otherwise messages returned two-or-more pages ago would be
+      // re-served (the boundary-id list only covers the current page).
+      if (cursorTime === boundaryTime && cursorSeenIds) {
+        for (const id of cursorSeenIds) boundaryIds.add(id);
+      }
+      cursor = `${boundaryTime}:${[...boundaryIds].join(",")}`;
     }
 
     // Reverse to chronological order (oldest first, newest at bottom)
@@ -521,8 +989,159 @@ export const getMessages = query({
     const withLiveProfile = await attachLiveSenderProfile(ctx, chronologicalMessages);
     const decorated = await attachSenderNotifsDisabled(ctx, withLiveProfile);
 
+    if (!args.waReplies) {
+      return {
+        messages: decorated,
+        hasMore,
+        cursor,
+      };
+    }
+
+    // --- Flag-on reply/thread decoration -----------------------------------
+    //
+    // Per-thread reads are already memoized from the scan above, so a message
+    // that floated a probe while being admitted doesn't pay for a second one.
+    //
+    // The unread dot on a summary pill is an APPROXIMATION: there is no
+    // per-thread read state in the schema (only per-channel `chatReadState`),
+    // so "unread" means "a reply landed after you last read this channel".
+    // Good enough to draw the eye; not exact per-thread bookkeeping.
+    const readState = await ctx.db
+      .query("chatReadState")
+      .withIndex("by_channel_user", (q) =>
+        q.eq("channelId", args.channelId).eq("userId", userId),
+      )
+      .first();
+    const lastReadAt = readState?.lastReadAt ?? 0;
+
+    // Pass 1: work out what each row needs, collecting every user whose LIVE
+    // name/avatar we'll have to resolve (quoted parents' authors + summary
+    // repliers). Message rows snapshot those at send time and the timeline
+    // already overrides them from `users` (`attachLiveSenderProfile`) — the
+    // quote bar and pill must not regress to stale snapshots.
+    type Plan =
+      | { row: (typeof decorated)[number]; kind: "plain" }
+      | {
+          row: (typeof decorated)[number];
+          kind: "reply";
+          quote: Awaited<ReturnType<typeof buildReplyQuote>>;
+        }
+      | {
+          row: (typeof decorated)[number];
+          kind: "thread";
+          probe: WaThreadProbe;
+        };
+    const plans: Plan[] = [];
+    const liveUserIds = new Set<Id<"users">>();
+
+    for (const m of decorated) {
+      if (m.parentMessageId) {
+        // A reply in the timeline is, by the admission rule above, the SOLE
+        // visible reply of its thread — and its own replies (chained legacy
+        // rows) count into that same thread, which would have put the thread
+        // at two and kept this row out. So an admitted reply can never itself
+        // need a summary pill: every pill lives on a thread root.
+        //
+        // The quote follows the message the sender actually tapped, which is
+        // only different from the thread parent when they replied to a reply.
+        const quote = await buildReplyQuote(
+          ctx,
+          m.quotedMessageId ?? m.parentMessageId,
+          args.channelId,
+        );
+        if (quote.parentSenderId) liveUserIds.add(quote.parentSenderId);
+        plans.push({ row: m, kind: "reply", quote });
+        continue;
+      }
+      if (!m.threadReplyCount) {
+        plans.push({ row: m, kind: "plain" });
+        continue;
+      }
+      const probe = await probeThread(ctx, threadScope, m._id);
+      // 0 visible replies (all deleted/blocked/cross-channel) or exactly 1
+      // (which renders inline as its own bubble) → no pill. The pill is strictly
+      // the "there's more in this conversation" affordance.
+      if (probe.replies.length < 2) {
+        plans.push({ row: m, kind: "plain" });
+        continue;
+      }
+      for (const reply of probe.replies) {
+        if (reply.senderId) liveUserIds.add(reply.senderId);
+      }
+      plans.push({ row: m, kind: "thread", probe });
+    }
+
+    const liveUserList = Array.from(liveUserIds);
+    const liveUserDocs = await Promise.all(liveUserList.map((id) => ctx.db.get(id)));
+    const liveUsers = new Map<Id<"users">, Doc<"users">>();
+    liveUserList.forEach((id, i) => {
+      const doc = liveUserDocs[i];
+      if (doc) liveUsers.set(id, doc);
+    });
+    const liveName = (id: Id<"users"> | undefined, fallback: string | undefined) => {
+      const doc = id ? liveUsers.get(id) : undefined;
+      return doc ? getDisplayName(doc.firstName, doc.lastName) : fallback;
+    };
+    const livePhoto = (id: Id<"users"> | undefined) => {
+      const doc = id ? liveUsers.get(id) : undefined;
+      return doc?.profilePhoto ? (getMediaUrl(doc.profilePhoto) ?? undefined) : undefined;
+    };
+
+    // Pass 2: attach.
+    const withThreads = plans.map((plan) => {
+      if (plan.kind === "plain") return plan.row;
+      if (plan.kind === "reply") {
+        return {
+          ...plan.row,
+          replyQuote: {
+            ...plan.quote,
+            parentSenderName: liveName(
+              plan.quote.parentSenderId,
+              plan.quote.parentSenderName,
+            ),
+          },
+        };
+      }
+      const repliers: Array<{
+        userId?: Id<"users">;
+        name?: string;
+        profilePhoto?: string;
+      }> = [];
+      const seenRepliers = new Set<string>();
+      for (const reply of plan.probe.replies) {
+        const key = reply.senderId ?? `anon:${reply._id}`;
+        if (seenRepliers.has(key)) continue;
+        seenRepliers.add(key);
+        repliers.push({
+          userId: reply.senderId,
+          name: liveName(reply.senderId, reply.senderName),
+          profilePhoto: livePhoto(reply.senderId),
+        });
+        if (repliers.length === 3) break;
+      }
+      return {
+        ...plan.row,
+        threadSummary: {
+          // Counted from the probe, never from the parent's stored
+          // `threadReplyCount` — that is a monotonic send counter, blind to
+          // deletes, blocks and cross-channel rows. Exact up to
+          // WA_THREAD_COUNT_CAP; past it `replyCountCapped` tells the pill to
+          // render "50+" rather than pretend to a number.
+          replyCount: plan.probe.count,
+          replyCountCapped: plan.probe.countCapped,
+          lastReplyAt: plan.probe.replies[0].createdAt,
+          // Your own reply is never "unread" — otherwise every thread you
+          // just posted in would light up until you re-read the channel.
+          hasUnread: plan.probe.replies.some(
+            (r) => r.createdAt > lastReadAt && r.senderId !== userId,
+          ),
+          repliers,
+        },
+      };
+    });
+
     return {
-      messages: decorated,
+      messages: withThreads,
       hasMore,
       cursor,
     };
@@ -564,17 +1183,45 @@ export const getThreadReplies = query({
         .filter((q) => q.eq(q.field("leftAt"), undefined))
         .first();
 
-      if (!membership) {
+      // Community admins may read threads in their community's group channels
+      // without joining (read-only oversight).
+      if (
+        !membership &&
+        !(channel && (await isCommunityAdminForChannel(ctx, channel, userId)))
+      ) {
         throw new Error("Not a member of this channel");
       }
     }
 
-    const replies = await ctx.db
-      .query("chatMessages")
-      .withIndex("by_parentMessage", (q) => q.eq("parentMessageId", args.parentMessageId))
-      .filter((q) => q.eq(q.field("isDeleted"), false))
-      .order("asc")
-      .take(limit);
+    // Open the thread the requested message BELONGS to, not one rooted on it:
+    // a chained legacy reply (or a search result pointing at one) would
+    // otherwise open a thread containing a fragment of the conversation. The
+    // collection folds any chain under the root back in for the same reason —
+    // it is what the summary pill counted.
+    const { id: rootId } = await resolveThreadRoot(
+      ctx,
+      args.parentMessageId,
+      parentMessage.channelId,
+    );
+    const threadChannelId = parentMessage.channelId;
+    const replies = await collectThreadReplies(
+      ctx,
+      // Same shape as the timeline's scan: read the visible replies plus the
+      // chain links that may still be hiding some, and never traverse out of
+      // the thread's own channel.
+      (q) =>
+        q.and(
+          q.eq(q.field("channelId"), threadChannelId),
+          q.or(
+            q.eq(q.field("isDeleted"), false),
+            q.gt(q.field("threadReplyCount"), 0),
+          ),
+        ),
+      (row) => !row.isDeleted && row.channelId === threadChannelId,
+      rootId,
+      limit,
+      "asc",
+    );
 
     const hasMore = replies.length === limit;
     const cursor = replies.length > 0 ? replies[replies.length - 1]._id : undefined;
@@ -585,6 +1232,14 @@ export const getThreadReplies = query({
       messages: decorated,
       hasMore,
       cursor,
+      /**
+       * The thread this request actually resolved to. Entry points can hand us
+       * any message in the conversation (inbox search opens a hit's immediate
+       * parent, which may itself be a reply), so the caller adopts this as the
+       * page's identity — otherwise the tapped reply renders once as the page
+       * header and again inside the folded reply list.
+       */
+      rootMessageId: rootId,
     };
   },
 });
@@ -686,6 +1341,17 @@ export const sendMessage = mutation({
         throw new Error("Not a member of this channel");
       }
 
+      // Auto group channels (General / Reach Out) are archived the instant a
+      // leader disables them, but their member rows are soft-deleted
+      // asynchronously by `clearChannelMembersBatch`. Without this guard a
+      // client holding the channelId could keep posting to an archived channel
+      // during that clear window (its membership row is still active). Reject
+      // sends to any archived channel immediately. (Announcements re-checks
+      // isArchived below alongside its leader-only gate.)
+      if (channel.isArchived) {
+        throw new Error("This channel is disabled");
+      }
+
       if (args.viewingGroupId) {
         if (
           (isCustomChannel(channel.channelType) || channel.channelType === "pco_services") &&
@@ -702,11 +1368,9 @@ export const sendMessage = mutation({
         }
       }
 
-      // Announcements channels are leader-broadcast: every active group
-      // member is a channel member (so unread counts work) but only group
-      // leaders can post. Block sends from non-leaders here regardless of
-      // channel-member role, since channel role is denormalized at sync time
-      // and may lag the source-of-truth on `groupMembers`.
+      // Announcements channels are leader-broadcast — see
+      // `isParticipatingGroupLeader` for who counts as a leader (including
+      // leaders of accepted secondary groups on a shared channel).
       if (channel.channelType === "announcements") {
         if (!channelIsLeaderEnabled(channel) || channel.isArchived) {
           throw new Error("This channel is disabled");
@@ -714,14 +1378,7 @@ export const sendMessage = mutation({
         if (!channel.groupId) {
           throw new Error("Invalid announcements channel");
         }
-        const groupMembership = await ctx.db
-          .query("groupMembers")
-          .withIndex("by_group_user", (q) =>
-            q.eq("groupId", channel.groupId!).eq("userId", userId)
-          )
-          .filter((q) => q.eq(q.field("leftAt"), undefined))
-          .first();
-        if (!isLeaderRole(groupMembership?.role)) {
+        if (!(await isParticipatingGroupLeader(ctx, channel, userId))) {
           throw new ConvexError({
             code: "FORBIDDEN",
             message: "Only group leaders can post in Announcements",
@@ -825,6 +1482,37 @@ export const sendMessage = mutation({
       }
     }
 
+    // A thread lives entirely inside one channel. Nothing enforced that before,
+    // so a client could reply in channel B to a parent in channel A — and then
+    // `getMessages`' quote bar would republish channel A's author and text to
+    // every reader of channel B, whether or not they can see channel A.
+    // Reject at the source; `buildReplyQuote` also refuses to quote a
+    // cross-channel parent, covering rows written before this check existed.
+    //
+    // Then ROOT the reply. `parentMessageId` names the message the sender
+    // tapped, which may itself be a reply — filing the new message under it
+    // would fork a second thread off the first, and since a fresh parent has
+    // exactly one reply, the pair renders inline forever and no thread ever
+    // activates. Threads are one level deep: the parent becomes the thread's
+    // root, and `quotedMessageId` remembers what was tapped so the quote bar
+    // still shows the message the sender was answering (WhatsApp's behaviour:
+    // quote the tapped message, file under the thread).
+    let threadParentId = args.parentMessageId;
+    let quotedMessageId: Id<"chatMessages"> | undefined;
+    if (args.parentMessageId) {
+      const parentMessage = await ctx.db.get(args.parentMessageId);
+      if (!parentMessage) {
+        throw new ConvexError("Parent message not found");
+      }
+      if (parentMessage.channelId !== channelId) {
+        throw new ConvexError("Cannot reply to a message in another channel");
+      }
+      threadParentId = (await resolveThreadRoot(ctx, args.parentMessageId, channelId))
+        .id;
+      quotedMessageId =
+        threadParentId === args.parentMessageId ? undefined : args.parentMessageId;
+    }
+
     // Determine content type
     let contentType = "text";
     if (args.attachments && args.attachments.length > 0) {
@@ -836,11 +1524,13 @@ export const sendMessage = mutation({
 
     const messageId = await ctx.db.insert("chatMessages", {
       channelId,
+      communityId: await resolveChannelCommunityId(ctx, channelId),
       senderId: userId,
       content: args.content,
       contentType,
       attachments: args.attachments,
-      parentMessageId: args.parentMessageId,
+      parentMessageId: threadParentId,
+      quotedMessageId,
       createdAt: now,
       isDeleted: false,
       senderName,
@@ -848,7 +1538,7 @@ export const sendMessage = mutation({
       mentionedUserIds: args.mentionedUserIds,
       hideLinkPreview: args.hideLinkPreview,
       // Set lastActivityAt for top-level messages (used for thread bump ordering)
-      ...(!args.parentMessageId ? { lastActivityAt: now } : {}),
+      ...(!threadParentId ? { lastActivityAt: now } : {}),
     });
 
     // Update channel with last message info (for inbox preview)
@@ -866,11 +1556,12 @@ export const sendMessage = mutation({
       updatedAt: now,
     });
 
-    // If this is a thread reply, update parent message
-    if (args.parentMessageId) {
-      const parentMessage = await ctx.db.get(args.parentMessageId);
+    // If this is a thread reply, update the thread's root (the message the
+    // pill and the ghost pointer both hang off).
+    if (threadParentId) {
+      const parentMessage = await ctx.db.get(threadParentId);
       if (parentMessage) {
-        await ctx.db.patch(args.parentMessageId, {
+        await ctx.db.patch(threadParentId, {
           threadReplyCount: (parentMessage.threadReplyCount || 0) + 1,
           lastActivityAt: now,
         });
@@ -996,6 +1687,23 @@ export const deleteMessage = mutation({
       deletedById: userId,
     });
 
+    // Poll messages have side data: a `polls` row + every `pollVotes` row
+    // for that poll. Without cascading here, deleting a poll message
+    // through the generic message-actions menu (long-press → Delete) would
+    // soft-delete the chat row but leave the poll active in the database
+    // — `getPoll` would still resolve, votes would persist, and the
+    // dedicated `polls.deletePoll` path becomes the only way to clean up.
+    if (message.contentType === "poll" && message.pollId) {
+      const votes = await ctx.db
+        .query("pollVotes")
+        .withIndex("by_poll", (q) => q.eq("pollId", message.pollId!))
+        .collect();
+      for (const v of votes) {
+        await ctx.db.delete(v._id);
+      }
+      await ctx.db.delete(message.pollId);
+    }
+
     // Update channel preview if the deleted message was the most recent
     // Re-read channel (already fetched above, but re-read for freshest lastMessageAt)
     const freshChannel = await ctx.db.get(message.channelId);
@@ -1060,6 +1768,7 @@ export const sendSystemMessage = internalMutation({
     // Create system message (no senderId = system message)
     const messageId = await ctx.db.insert("chatMessages", {
       channelId: args.channelId,
+      communityId: await resolveChannelCommunityId(ctx, args.channelId),
       // senderId is optional in schema for system/bot messages
       content: args.content,
       contentType: args.contentType || "system",
@@ -1072,7 +1781,7 @@ export const sendSystemMessage = internalMutation({
     // Update channel metadata
     await ctx.db.patch(args.channelId, {
       lastMessageAt: now,
-      lastMessagePreview: args.content.substring(0, MAX_PREVIEW_LENGTH),
+      lastMessagePreview: truncateChars(args.content, MAX_PREVIEW_LENGTH),
       updatedAt: now,
     });
 

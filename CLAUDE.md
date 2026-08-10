@@ -1,119 +1,56 @@
 # Agent Instructions
 
-Guidelines for AI agents (Claude, Cursor, Copilot, etc.) working on this codebase.
+Guidelines for AI agents (Claude, Cursor, Copilot, etc.) working on this codebase. Specialized guidance lives in on-demand skills — see **Skills Index** at the bottom; load the relevant skill *before* you start that kind of work, not after.
 
-## Helping New Developers Onboard
+## Native Safety (distilled — full details in the `native-deps-safety` skill)
 
-When a new developer asks for help getting started, guide them through these steps:
+JS-only changes can break **native** rendering on real devices. These bugs are
+invisible to typecheck, tests, and CI (native modules are mocked, the bundle
+builds fine). Learned from PRs #548, #619, #629. Non-negotiable rules:
 
-### Prerequisites Check
-First, verify they have:
-- Node.js v20+ (`node --version`)
-- pnpm v8+ (`pnpm --version`)
+- **Never bump `runtimeVersion`** — it must stay in sync with production native builds.
+- **Never add a web-only React UI/CSS-in-JS library to `apps/mobile`** (MUI,
+  `@emotion/*`, `styled-components`, `react-datepicker`, …) — even behind a
+  `.web.tsx`. It pulls a second React into the lockfile and blanks native video/GIF.
+  A `pnpm.overrides` pin does NOT save you. Web-only UI must be dependency-free.
+- New native deps must be **gated** behind `NativeModules` runtime checks and
+  classified in `apps/mobile/native-deps.json`.
+- **When adding a dependency, use a scoped install** (`pnpm add -D <pkg> --filter mobile`),
+  never a bare workspace-root `pnpm install` — the latter re-resolves and can
+  non-deterministically re-key the Expo/react-native graph onto a second React or a
+  second native instance. (A bare `pnpm install` to bootstrap a fresh clone from the
+  committed lockfile is fine — the rule is about *adding* deps.)
+- **After ANY dependency change** run `check-react-consistency` **and**
+  `node scripts/check-native-instance.js`. Never paper over a failure with `pnpm.overrides`.
+- The `react: "19.1.0"` **and** `react-dom: "19.1.0"` devDependency pins in
+  `apps/convex/package.json` are **load-bearing** — do not remove either, keep them
+  the same exact version.
+- **Don't attach effects/listeners to a native view's player/lifecycle** — prop-only changes. A `player.addListener('sourceLoad', …)` on `ExpoVideoPlayer` crashed the native `VideoView`, and a crashed native view corrupts the Fabric registry: **"video and GIF break together" is ONE bug, not two.**
+- Any change touching native media/views (video, GIF, blur, `expo-*` native views) or the mobile dependency graph **MUST be device/staging-OTA verified before merge**.
 
-If missing, point them to:
-- Node: https://nodejs.org or use nvm
-- pnpm: `npm install -g pnpm`
-
-### Access Requirements
-They need:
-1. **Environment variables** - See `docs/secrets.md` for required variables
-2. **Convex account** - Free at https://convex.dev (they'll create during setup)
-
-### Step-by-Step Setup
-
-1. **Install dependencies:**
-   ```bash
-   pnpm install
-   ```
-
-2. **Set up environment variables:**
-   ```bash
-   cp .env.example .env.local
-   # Edit .env.local with your values (see docs/secrets.md)
-   ```
-
-3. **Create personal Convex deployment:**
-   ```bash
-   npx convex dev
-   ```
-   - This opens browser for Convex login
-   - Select "Create a new project"
-   - Name it "togather-[their-name]-dev"
-   - Keep this terminal running
-
-4. **Seed test data (new terminal):**
-   ```bash
-   npx convex run functions/seed:seedDemoData
-   ```
-
-5. **Start development:**
-   ```bash
-   pnpm dev
-   ```
-
-6. **Test the app:**
-   - Open iOS Simulator or Expo Go
-   - Login with the seeded test phone number and OTP bypass code
-   - Search for "Demo Community"
-
-### Troubleshooting
-
-- **Convex auth fails** - Run `npx convex logout` then `npx convex dev` again
-- **Empty app / no data** - They forgot to run the seed script
-- **"Demo Community not found"** - Run `npx convex run functions/seed:seedDemoData`
+Read the `native-deps-safety` skill for the mechanisms, war stories, and CI guards.
 
 ## Development Workflow
-
-### Environment Setup
-- Environment variables are documented in `docs/secrets.md`
-- Depending on what the user is asking, use the relevant keys from the relevant environment (dev, staging, prod)
-- Typically you will only make dev or staging related changes, double check if any action you take will affect production
-
-### Agent Backend Selection (Maintainer CI Agents Only)
-
-This section applies **only** to Cursor Cloud Agents and similar CI agents run by project maintainers. Open-source contributors should ignore this section — you create your own personal Convex deployment via `npx convex dev` (see "Helping New Developers Onboard" above).
-
-- Before any backend-affecting command, ask: **"Which backend should I use?"** and list the backends defined in `config/allowed-backends.json`.
-- Do not proceed until the user answers.
-- Use `pnpm dev:backend --backend=<choice>` only.
-- Each concurrent agent **must** use a different backend to avoid data conflicts.
 
 ### Test-Driven Development
 
 - **Write tests first** - Create failing tests before implementing features
-- Tests serve as specification and prevent regressions
-- Run tests after implementation to verify correctness
+- Tests are the spec and prevent regressions; run them after implementing to verify
 
 ### Visual Verification
 
 - **Use Playwright** to confirm UI changes look correct
-- Don't assume - verify components render as expected
-- Take screenshots for complex UI changes when helpful
-- **Act autonomously** - don't ask permission for each Playwright action
+- Don't assume - verify components render as expected; screenshot complex UI changes
+- **Act autonomously** - don't ask permission for each Playwright action; use the seeded test credentials (phone + OTP bypass) from the seed script
 
-### Testing
+### Commands
 
-When testing the app (Playwright, iOS Simulator, etc.), use the seeded test credentials from the seed script. The test phone number and OTP bypass code are configured in the seed data.
-
-> **Note:** If "Demo Community" doesn't exist, run the seed script first:
-> ```bash
-> npx convex run functions/seed:seedDemoData
-> ```
-
-**Development Commands:**
-
-| Command             | What it does                                      |
-| ------------------- | ------------------------------------------------- |
-| `pnpm dev`          | Run Convex dev + Expo together                    |
-| `pnpm dev --mobile` | Run only Expo (if Convex is already running)      |
-| `pnpm dev --convex` | Run only Convex dev                               |
-
-**App URLs:**
-
-- Expo/Metro: http://localhost:8081
-- Convex Dashboard: Run `pnpm convex:dashboard`
-- Convex Logs: Run `pnpm convex:logs`
+- `pnpm dev` (Convex + Expo) · `pnpm dev --mobile` · `pnpm dev --convex`
+- **Maintainer CI agents: pick a backend FIRST** (`pnpm dev:backend --backend=<choice>`,
+  never a bare `pnpm dev`) — concurrent agents **must** use different backends or they
+  corrupt each other's data. Load `secrets-and-backends` before any backend command.
+- Expo/Metro: http://localhost:8081 · `pnpm convex:dashboard` · `pnpm convex:logs`
+- No data / "Demo Community not found"? `npx convex run functions/seed:seedDemoData`
 
 ### Git Discipline
 
@@ -127,6 +64,7 @@ When testing the app (Playwright, iOS Simulator, etc.), use the seeded test cred
 - **Always create a PR** - Even for small changes
 - PRs require passing CI and **all conversations resolved** before merge
 - The workflow is: `feature branch` -> PR -> `main`
+- **Code review is by Claude review agents, visible on GitHub** — every PR is reviewed by parallel AI subagents (correctness, security, spec-fidelity, tests) whose adversarially-verified findings are posted as real PR review comments, so the review trail lives on the PR. Dev-dashboard PRs dispatch this review automatically when the PR opens (see `docs/dev-assistant/ROUTINE-PROMPT.md`); for hand-opened PRs, trigger the review Routine manually or ask a Claude session to review with inline comments. Findings must be fixed or their threads explicitly resolved before merge (branch protection enforces this).
 
 ## Code Philosophy
 
@@ -148,21 +86,10 @@ When testing the app (Playwright, iOS Simulator, etc.), use the seeded test cred
 - Don't add features, refactoring, or "improvements" beyond what was asked
 - Don't design for hypothetical future requirements
 
-### Native Dependency Safety
-
-- **Never bump `runtimeVersion`** — it must stay in sync with production native builds
-- New native dependencies must be **gated** behind `NativeModules` runtime checks
-- Add detection functions in `features/chat/utils/fileTypes.ts` (see `isLinearGradientSupported()`)
-- Create safe wrapper components (see `components/ui/SafeLinearGradient.tsx`)
-- Classify all native deps in `apps/mobile/native-deps.json` as `core` or `gated`
-- CI enforces this via `scripts/check-native-imports.js` — static imports of gated deps fail
-- See `docs/architecture/ADR-013-mobile-versioning-and-ota-updates.md` for full details
-
 ### Prefer Framework Features Over Custom Solutions
 
 - **Always prefer built-in framework features** over custom implementations
-- Use Expo Router tabs instead of custom tab bar components
-- Use React Navigation patterns instead of custom navigation wrappers
+  (Expo Router tabs over custom tab bars; React Navigation patterns over custom wrappers)
 - If a framework provides a solution, use it - don't reinvent the wheel
 - Custom components should only exist when framework features genuinely can't meet requirements
 
@@ -181,51 +108,23 @@ When testing the app (Playwright, iOS Simulator, etc.), use the seeded test cred
 
 ## Documentation Standards
 
-### Code Comments
-
-- Add JSDoc/docstrings for non-obvious functions
-- Document "why" not "what" - code shows what, comments explain why
-- Link frontend types to backend schemas where applicable
-
-### Architecture Docs
-
-- See `/docs/architecture/` for Architecture Decision Records (ADRs)
-- Each feature folder may have an `ARCHITECTURE.md` explaining its structure
-
-### Keep Docs Updated
-
-- **Update documentation when implementing features** - don't leave stale docs
-- If you change an API, update the corresponding contracts and types
-- If you refactor a feature, update its ARCHITECTURE.md
-- If docs are wrong, fix them - don't just work around them
+- Add JSDoc/docstrings for non-obvious functions; document **"why"** not "what";
+  link frontend types to backend schemas where applicable
+- ADRs (Architecture Decision Records) live in `/docs/architecture/`; feature
+  folders may have an `ARCHITECTURE.md` explaining their structure
+- **Update documentation when implementing features** - don't leave stale docs. Change an API → update its contracts and types. Refactor a feature → update its ARCHITECTURE.md. If docs are wrong, fix them - don't just work around them.
+- User-facing changes may need an `apps/web` guide update — see `guides-and-link-previews`
 
 ## File and Project Hygiene
 
-### Keep the Codebase Clean
-
-- **Put docs in proper folders** - never leave analysis/planning docs in root
-  - `/docs/architecture/` - ADRs and architectural decisions
-  - `/docs/archive/` - historical analysis, completed migrations
-  - Feature folders - feature-specific docs (ARCHITECTURE.md)
-- Only `README.md` and `CLAUDE.md` belong in root
-- Delete temporary or one-off analysis files after they've served their purpose
-
-### Leave Code Better Than You Found It
-
-- If you encounter unnecessarily complex code, simplify it or document why it's complex
-- Add `// TODO: Investigate - [reason]` comments for suspicious patterns
-- Remove dead code, unused imports, and commented-out blocks
-- Fix small issues you notice (typos, formatting) while working on related code
-
-### Document Complexity
-
-- If you can't simplify something, document why it's complex
-- Leave breadcrumbs for future investigation:
-  ```typescript
-  // NOTE: This workaround is needed because [reason]
-  // See: [link to issue or discussion]
-  ```
-- Flag technical debt explicitly rather than hiding it
+- **Put docs in proper folders** - never leave analysis/planning docs in root:
+  `/docs/architecture/` (ADRs), `/docs/archive/` (historical analysis, completed
+  migrations), feature folders (feature-specific docs). Only `README.md` and
+  `CLAUDE.md` belong in root. Delete temporary/one-off analysis files after use.
+- **Leave code better than you found it** - simplify complex code you encounter or document why it's complex; add `// TODO: Investigate - [reason]` for suspicious patterns; remove dead code, unused imports, and commented-out blocks; fix small issues you notice (typos, formatting) while working on related code
+- **Document complexity** you can't remove, and leave breadcrumbs:
+  `// NOTE: This workaround is needed because [reason]  // See: [link]`.
+  Flag technical debt explicitly rather than hiding it.
 
 ## Working Style
 
@@ -238,24 +137,13 @@ When testing the app (Playwright, iOS Simulator, etc.), use the seeded test cred
 
 ### Orchestrator Pattern
 
-- **Act as an orchestrator**, not a doer for large tasks
-- Your role: scope the work, break it into pieces, delegate to subagents
-- Prepare clear, self-contained prompts for each subagent
-- Subagents should be able to complete their task without asking questions
-
-Example workflow:
-
-```
-1. User requests feature
-2. YOU ask all clarifying questions upfront
-3. User answers
-4. YOU create implementation plan
-5. YOU spawn subagents for each piece:
-   - Task("Write tests for X", subagent_type="general-purpose")
-   - Task("Implement backend for X", subagent_type="general-purpose")
-   - Task("Implement frontend for X", subagent_type="general-purpose")
-6. YOU review and commit
-```
+- **Act as an orchestrator**, not a doer for large tasks: scope the work, break it
+  into pieces, delegate to subagents
+- Prepare clear, self-contained prompts so subagents finish without asking questions
+- Flow: user requests feature → YOU ask all clarifying questions upfront → user
+  answers → YOU create the implementation plan → YOU spawn a subagent per piece
+  (`Task("Write tests for X", subagent_type="general-purpose")`, likewise backend
+  and frontend) → YOU review and commit
 
 ### Protect Context
 
@@ -267,36 +155,18 @@ Example workflow:
 
 ## Tech Stack Quick Reference
 
-### Backend
-
-- **Framework**: Convex (serverless functions + database)
-- **Functions**: `/apps/convex/functions/` - queries, mutations, actions
-- **Background jobs**: Convex crons (`apps/convex/crons.ts`) and `ctx.scheduler` for scheduled/event-triggered jobs
-- **Real-time**: Convex reactive queries and messaging
-- **Schemas**: Convex validators for type safety
-- **Auth**: `@convex-dev/auth` (phone OTP + email OTP)
-
-### Frontend
-
-- **Mobile**: React Native + Expo
-- **Routing**: Expo Router (file-based)
-- **State**: Convex hooks (`useQuery`, `useMutation`, `useAction`)
-- **Chat**: Convex real-time messaging
-- **Error tracking**: Sentry
-- **Analytics / Feature flags**: PostHog
-
-### Integrations
-
-- **SMS**: Twilio (OTP verification, notifications)
-- **Transactional email**: Resend (attendance confirmations, notifications)
-- **Push notifications**: Expo Push API
-- **Maps**: Mapbox
-- **Storage**: Cloudflare R2 (file storage, image transformations)
-
-### Shared
-
-- **Types**: Convex generates types from schema (`apps/convex/_generated/`)
-- **API Client**: `@services/api/convex` - Convex React client
+- **Backend**: Convex (serverless functions + DB). Functions in `/apps/convex/functions/`
+  (queries, mutations, actions); background jobs via Convex crons (`apps/convex/crons.ts`)
+  and `ctx.scheduler`; real-time via reactive queries/messaging; Convex validators for
+  schemas/type safety; auth via `@convex-dev/auth` (phone OTP + email OTP)
+- **Frontend**: React Native + Expo; Expo Router (file-based); state via Convex hooks
+  (`useQuery`/`useMutation`/`useAction`); chat via Convex real-time messaging;
+  Sentry for error tracking; PostHog for analytics / feature flags
+- **Integrations**: Twilio (SMS: OTP verification, notifications), Resend
+  (transactional email: attendance confirmations, notifications), Expo Push API
+  (push notifications), Mapbox (maps), Cloudflare R2 (file storage, image transformations)
+- **Shared**: Convex generates types from schema (`apps/convex/_generated/`);
+  API client `@services/api/convex` (Convex React client)
 
 ## Key Patterns
 
@@ -313,3 +183,17 @@ api.functions.groups.list           ->  useQuery()              ->  GroupListScr
 - **IDs are dynamic per community** - created by `seed_group_types`, differ between environments
 - Use `group_type_name` from API for display labels, not hardcoded ID mappings
 - `type` field is legacy - prefer `group_type` and `group_type_name`
+
+## Skills Index
+
+Specialized rules live in `.claude/skills/<name>/SKILL.md`. Load one **before** doing the work it covers:
+
+| Skill | Load it before… |
+| --- | --- |
+| `native-deps-safety` | adding/removing/upgrading ANY dependency (`pnpm add`/`install`/`update`), touching native media or `expo-*` native views, changing `runtimeVersion` / `native-deps.json` / the lockfile, or debugging blank video/GIF or a second-React/native-instance CI failure |
+| `secrets-and-backends` | adding/rotating/reading any secret or env var (1Password → GitHub → Convex/Expo), editing `ee/secrets-allowlist.json`, or (maintainer CI agents) running any backend-affecting command |
+| `onboarding-new-dev` | helping someone set up the repo locally, create their own Convex deployment, seed demo data, or troubleshoot an empty app |
+| `guides-and-link-previews` | changing user-facing behavior documented by the `apps/web` guides (communities, branding, group types, groups/channels, events, prayer), adding a marketing page, or adding OG/link-preview metadata |
+| `offline-support` | adding/changing a mobile data-loading feature, or touching connectivity detection, `stores/*Cache.ts` caches, or the write queues |
+| `supa-framework` | changing behavior owned by a `@supa-media/*` package, shared bin, or reusable workflow (upstream-first rule), or debugging GitHub Packages auth |
+| `code-review` | reviewing a completed chunk of work against the plan and these standards (`/code-review`) |

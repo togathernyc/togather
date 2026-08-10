@@ -11,6 +11,11 @@ import { Id, Doc } from "../../_generated/dataModel";
 import { now } from "../../lib/utils";
 import { requireAuth, getOptionalAuth } from "../../lib/auth";
 import { canEditMeeting } from "../../lib/meetingPermissions";
+import {
+  audienceOf,
+  audienceDenialMessage,
+  canAccessMeeting,
+} from "../../lib/meetingAudience";
 
 // ============================================================================
 // Attendance Management
@@ -18,10 +23,28 @@ import { canEditMeeting } from "../../lib/meetingPermissions";
 
 /**
  * Get attendance for a meeting
+ *
+ * Attendance joins the full user doc (name, email, phone) and is only for the
+ * people managing the event, so it is gated by `canEditMeeting` — the same rule
+ * the mutations and the check-in roster enforce. Without this gate any
+ * authenticated client could read a meeting's attendee PII by meetingId.
  */
 export const listAttendance = query({
-  args: { meetingId: v.id("meetings") },
+  args: { token: v.string(), meetingId: v.id("meetings") },
   handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+
+    const meeting = await ctx.db.get(args.meetingId);
+    if (!meeting) {
+      throw new Error("Meeting not found");
+    }
+
+    if (!(await canEditMeeting(ctx, userId, meeting))) {
+      throw new Error(
+        "Only the event creator, group leaders, or community admins can view attendance"
+      );
+    }
+
     const attendance = await ctx.db
       .query("meetingAttendances")
       .withIndex("by_meeting", (q) => q.eq("meetingId", args.meetingId))
@@ -53,6 +76,25 @@ export const listAttendance = query({
     }));
 
     return withUsers;
+  },
+});
+
+/**
+ * Whether the current user is allowed to manage attendance / check-in for a
+ * meeting (event creator, group leaders, or community admins — same rule as
+ * editing the event). Used to gate the Check-in screen and its entry point so
+ * the UI reflects the exact permission the mutations enforce server-side.
+ */
+export const canManageAttendance = query({
+  args: { token: v.string(), meetingId: v.id("meetings") },
+  handler: async (ctx, args) => {
+    const userId = await getOptionalAuth(ctx, args.token);
+    if (!userId) return false;
+
+    const meeting = await ctx.db.get(args.meetingId);
+    if (!meeting) return false;
+
+    return await canEditMeeting(ctx, userId, meeting);
   },
 });
 
@@ -143,6 +185,11 @@ export const markAttendance = mutation({
 
 /**
  * Add guest to a meeting
+ *
+ * Covers both walk-ins (nobody's plus-one) and a member's guests — pass
+ * `hostUserId` for the latter so the check-in screen can nest them under the
+ * member who brought them. A guest row is one attending person either way, so
+ * headcount stats need no special-casing.
  */
 export const addGuest = mutation({
   args: {
@@ -152,10 +199,26 @@ export const addGuest = mutation({
     lastName: v.optional(v.string()),
     phoneNumber: v.optional(v.string()),
     notes: v.optional(v.string()),
+    hostUserId: v.optional(v.id("users")),
   },
   handler: async (ctx, args) => {
     const recordedById = await requireAuth(ctx, args.token);
     const timestamp = now();
+
+    // Get the meeting so we can check permissions.
+    const meeting = await ctx.db.get(args.meetingId);
+    if (!meeting) {
+      throw new Error("Meeting not found");
+    }
+
+    // Adding a guest is a host action (ADR-022): event creator, group
+    // leaders, and community admins can add to the list. Mirrors the check
+    // already guarding removeGuest / updateGuest.
+    if (!(await canEditMeeting(ctx, recordedById, meeting))) {
+      throw new Error(
+        "Only the event creator, group leaders, or community admins can add guests"
+      );
+    }
 
     return await ctx.db.insert("meetingGuests", {
       meetingId: args.meetingId,
@@ -163,6 +226,7 @@ export const addGuest = mutation({
       lastName: args.lastName,
       phoneNumber: args.phoneNumber,
       notes: args.notes,
+      hostUserId: args.hostUserId,
       recordedById,
       recordedAt: timestamp,
     });
@@ -171,10 +235,28 @@ export const addGuest = mutation({
 
 /**
  * List guests for a meeting
+ *
+ * Guest rows carry walk-in PII (`phoneNumber`, `notes`), so this read is gated
+ * by `canEditMeeting` — the same rule that guards adding/removing guests.
+ * Without the gate any authenticated client could read a meeting's walk-in
+ * phone numbers by meetingId.
  */
 export const listGuests = query({
-  args: { meetingId: v.id("meetings") },
+  args: { token: v.string(), meetingId: v.id("meetings") },
   handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+
+    const meeting = await ctx.db.get(args.meetingId);
+    if (!meeting) {
+      throw new Error("Meeting not found");
+    }
+
+    if (!(await canEditMeeting(ctx, userId, meeting))) {
+      throw new Error(
+        "Only the event creator, group leaders, or community admins can view guests"
+      );
+    }
+
     return await ctx.db
       .query("meetingGuests")
       .withIndex("by_meeting", (q) => q.eq("meetingId", args.meetingId))
@@ -370,45 +452,10 @@ export const selfReportAttendance = mutation({
       throw new Error("Meeting not found");
     }
 
-    // Check visibility-based membership
-    const visibility = meeting.visibility || "group";
-
-    if (visibility === "group") {
-      // For group-only events, user must be an active member of the group
-      const groupMembership = await ctx.db
-        .query("groupMembers")
-        .withIndex("by_group_user", (q) =>
-          q.eq("groupId", meeting.groupId).eq("userId", userId)
-        )
-        .first();
-
-      if (
-        !groupMembership ||
-        groupMembership.leftAt ||
-        (groupMembership.requestStatus &&
-          groupMembership.requestStatus !== "accepted")
-      ) {
-        throw new Error("You must be a group member to attend this event");
-      }
-    } else if (visibility === "community") {
-      // For community-wide events, user must be a member of the community
-      const group = await ctx.db.get(meeting.groupId);
-      if (!group) {
-        throw new Error("Group not found");
-      }
-
-      const communityMembership = await ctx.db
-        .query("userCommunities")
-        .withIndex("by_user_community", (q) =>
-          q.eq("userId", userId).eq("communityId", group.communityId)
-        )
-        .first();
-
-      if (!communityMembership) {
-        throw new Error("You must be a community member to attend this event");
-      }
+    // Audience gate — identical rule to what the event lists render.
+    if (!(await canAccessMeeting(ctx, audienceOf(meeting), userId))) {
+      throw new Error(audienceDenialMessage(meeting, "attend"));
     }
-    // For public events, any authenticated user can report (no additional check needed)
 
     // Check for existing attendance record
     const existing = await ctx.db

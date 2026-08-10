@@ -62,6 +62,42 @@ export type ThemeColors = {
   landing: string;
   modalBackground: string;
   modalCloseBackground: string;
+
+  // --- WhatsApp-shell tokens (whatsapp-shell flag) ---------------------------
+  // Additive-only tokens for the `docs/plans/church-migration-ui-redesign/
+  // WHATSAPP-DESIGN-SYSTEM.md` §1 color system. Consumed by `components/wa/*`
+  // and `utils/waPalette.ts`. Every existing key above is unchanged by these —
+  // flag-off rendering never reads these tokens.
+  /** §1 `bg.grouped` — inset-grouped screen canvas (You tab, Community/Group/
+   *  Channel info, Settings). Distinct from `surface`/`surfaceSecondary`,
+   *  which the flag-off app uses for both full-bleed rows and grouped cards. */
+  backgroundGrouped: string;
+  /** §1 `bg.card` — inset-grouped card/cell fill sitting on `backgroundGrouped`. */
+  surfaceGrouped: string;
+  /** §1 `bg.navBar` — nav bar fill (opaque; a distinct semantic role from
+   *  `surface`/`surfaceGrouped` even where the value coincides). */
+  navBarBackground: string;
+  /** §1 `separator` — hairline dividers for full-bleed rows (§3.1) and
+   *  inset-grouped cards (§3.2). Distinct from the general-purpose
+   *  `border`/`borderLight` tokens above, which other (non-WA) UI uses. */
+  separator: string;
+  /** §1.5 — chat wallpaper base tone. The low-opacity tone-on-tone doodle
+   *  pattern renders on top of this at the surface-agent's discretion; this
+   *  token is the flat base color only, never brand-tinted. */
+  chatWallpaper: string;
+  /** §1.6 — incoming message bubble fill. The outgoing bubble is brand-derived
+   *  from the community's `primaryColor` (see `utils/waPalette.ts`), so it has
+   *  no static theme token here. */
+  bubbleIncoming: string;
+  /** §1 `mention.blue` — sender names, @mentions, and read receipt ticks.
+   *  Fixed neutral color, never brand-mapped (§1.3). */
+  mentionBlue: string;
+
+  /** Text/icons drawn ON a fill painted with the community's `primaryColor`
+   *  (selected pills, filled chips — see `useCommunityTheme`). The fill is the
+   *  community's saturated brand color in BOTH themes, so unlike
+   *  `textInverse`/`buttonPrimaryText` this must not flip with light/dark. */
+  onAccent: string;
 };
 
 export const lightColors: ThemeColors = {
@@ -119,6 +155,17 @@ export const lightColors: ThemeColors = {
   landing: '#1a1a1a',
   modalBackground: '#ffffff',
   modalCloseBackground: 'rgba(255, 255, 255, 0.9)',
+
+  // WhatsApp-shell tokens — see WHATSAPP-DESIGN-SYSTEM.md §1.1
+  backgroundGrouped: '#F2F2F2',
+  surfaceGrouped: '#FFFFFF',
+  navBarBackground: '#FFFFFF',
+  separator: '#E5E5E5',
+  chatWallpaper: '#ECE5DD',
+  bubbleIncoming: '#FFFFFF',
+  mentionBlue: '#0068C9',
+
+  onAccent: '#ffffff',
 };
 
 export const darkColors: ThemeColors = {
@@ -176,4 +223,137 @@ export const darkColors: ThemeColors = {
   landing: '#0b141a',
   modalBackground: '#1f2c34',
   modalCloseBackground: 'rgba(31, 44, 52, 0.9)',
+
+  // WhatsApp-shell tokens — see WHATSAPP-DESIGN-SYSTEM.md §1.2
+  backgroundGrouped: '#000000',
+  surfaceGrouped: '#1F2C34',
+  navBarBackground: '#1F2C34',
+  separator: '#2A3942',
+  chatWallpaper: '#0B141A',
+  bubbleIncoming: '#1F2C34',
+  mentionBlue: '#53BDEB',
+
+  onAccent: '#ffffff',
+};
+
+/**
+ * "Knicks mode" palettes — New York Knicks orange (#F58426) + blue (#006BB6).
+ *
+ * Unlike per-community brand colors (which only swap accents via
+ * useCommunityTheme), Knicks mode re-tints the ENTIRE app: backgrounds,
+ * surfaces, borders, inputs, chat bubbles, etc. Light mode uses a soft
+ * blue-white canvas with orange primary actions; dark mode uses a deep
+ * Knicks-navy canvas with the same orange accents.
+ *
+ * ON by default; toggled off per-community in admin settings. Each palette
+ * spreads its base so every token stays defined even if we add more.
+ */
+export const knicksLightColors: ThemeColors = {
+  ...lightColors,
+
+  // Backgrounds — soft blue-tinted canvas
+  background: '#eef4fb',
+  backgroundSecondary: '#e3edf8',
+  surface: '#ffffff',
+  surfaceSecondary: '#f2f7fc',
+
+  // Text — navy ink
+  text: '#10243a',
+  textSecondary: '#456382',
+  textTertiary: '#8aa3bd',
+  textInverse: '#ffffff',
+
+  // Borders — blue-tinted
+  border: '#cfe0f2',
+  borderLight: '#e1ecf7',
+
+  // Buttons — bold orange primary, blue secondary
+  buttonPrimary: '#F58426',
+  buttonPrimaryText: '#ffffff',
+  buttonSecondary: '#e8f1fb',
+  buttonSecondaryText: '#006BB6',
+  buttonDisabled: '#c9d6e3',
+  buttonDisabledText: '#ffffff',
+
+  // Chat — own bubbles orange-tinted, others light blue
+  chatBubbleOwn: '#ffe2cc',
+  chatBubbleOther: '#e8eef4',
+  chatBubbleOwnText: '#10243a',
+  chatBubbleOtherText: '#10243a',
+
+  warning: '#F58426',
+
+  // System
+  tabBar: '#ffffff',
+  tabBarBorder: '#d4e2f1',
+  tabBarInactive: '#8aa3bd',
+  overlay: 'rgba(0, 33, 66, 0.5)',
+  shadow: '#002145',
+  inputBackground: '#ffffff',
+  inputBorder: '#cfe0f2',
+  inputBorderFocused: '#006BB6',
+  inputPlaceholder: '#9bb2c8',
+  skeleton: '#dce8f3',
+  icon: '#456382',
+  iconSecondary: '#9bb2c8',
+  link: '#006BB6',
+  selectedBackground: '#fff1e6',
+  landing: '#006BB6',
+  modalBackground: '#ffffff',
+  modalCloseBackground: 'rgba(255, 255, 255, 0.9)',
+};
+
+export const knicksDarkColors: ThemeColors = {
+  ...darkColors,
+
+  // Backgrounds — deep Knicks navy
+  background: '#001b33',
+  backgroundSecondary: '#012645',
+  surface: '#01294d',
+  surfaceSecondary: '#012040',
+
+  // Text
+  text: '#eaf2fb',
+  textSecondary: '#9fb8d2',
+  textTertiary: '#6e8aa8',
+  textInverse: '#001b33',
+
+  // Borders
+  border: '#0a3a63',
+  borderLight: '#06304f',
+
+  // Buttons — orange primary pops on navy
+  buttonPrimary: '#F58426',
+  buttonPrimaryText: '#ffffff',
+  buttonSecondary: '#01294d',
+  buttonSecondaryText: '#eaf2fb',
+  buttonDisabled: '#0a3a63',
+  buttonDisabledText: '#6e8aa8',
+
+  // Chat
+  chatBubbleOwn: '#a85214',
+  chatBubbleOther: '#01294d',
+  chatBubbleOwnText: '#fff4ea',
+  chatBubbleOtherText: '#eaf2fb',
+
+  warning: '#F58426',
+
+  // System
+  tabBar: '#001b33',
+  tabBarBorder: '#0a3a63',
+  tabBarInactive: '#6e8aa8',
+  overlay: 'rgba(0, 10, 20, 0.7)',
+  shadow: '#000000',
+  inputBackground: '#01294d',
+  inputBorder: '#0a3a63',
+  inputBorderFocused: '#F58426',
+  inputPlaceholder: '#6e8aa8',
+  skeleton: '#0a3a63',
+  icon: '#9fb8d2',
+  iconSecondary: '#6e8aa8',
+  link: '#4aa3e0',
+  selectedBackground: '#0a3a63',
+  landing: '#001b33',
+  modalBackground: '#01294d',
+  modalCloseBackground: 'rgba(1, 41, 77, 0.9)',
 };

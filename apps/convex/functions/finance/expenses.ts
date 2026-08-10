@@ -1,0 +1,1024 @@
+/**
+ * Expense submission, approval, and reimbursement payout (ADR-032 §3-4).
+ *
+ * Card-charge expenses are CREATED elsewhere — functions/finance/webhooks.ts
+ * turns a settled swipe into one. What this file owns for them is the receipt:
+ * `attachExpenseReceipt` is the write behind the "No receipt" badge that has
+ * been rendering since ADR-032 with nothing to set it, and it is the one place
+ * a receipt is forwarded on to a card provider that has an API for them
+ * (ADR-033 Phase 3, `capabilities.receiptForwarding`).
+ *
+ * The rest is the member-submitted reimbursement flow: submit -> approve/deny
+ * -> pay.
+ */
+
+import { v } from "convex/values";
+import {
+  query,
+  mutation,
+  internalQuery,
+  internalMutation,
+  internalAction,
+} from "../../_generated/server";
+import type { Doc, Id } from "../../_generated/dataModel";
+import { internal } from "../../_generated/api";
+import { requireAuth } from "../../lib/auth";
+import { now, getDisplayName, getMediaUrl } from "../../lib/utils";
+import { isCommunityAdmin } from "../../lib/permissions";
+import { logFinanceAudit } from "../../lib/finance/audit";
+import { requireGroupGivingEnabled } from "../../lib/finance/flag";
+import { postLedgerEntry } from "../../lib/finance/ledger";
+import {
+  describeProviderCapabilities,
+  getCardProviderByName,
+  isBringYourOwnProvider,
+  loadActiveProviderConnection,
+  type CardProviderName,
+} from "../../lib/finance/cardProviders";
+import {
+  requireFundRole,
+  requireFundRoleOrGroupLeader,
+  isActiveMember,
+  type FundRole,
+} from "../../lib/helpers";
+import {
+  canApprove,
+  canPay,
+  canSubmit,
+  nextStatusOnApproval,
+} from "../../lib/finance/expensePolicy";
+
+const expenseStatusValidator = v.union(
+  v.literal("pending"),
+  v.literal("approved"),
+  v.literal("denied"),
+  v.literal("paid"),
+);
+
+const expenseKindValidator = v.union(
+  v.literal("card_charge"),
+  v.literal("reimbursement"),
+);
+
+/** Build the display info a submitter/approver needs on an expense card. */
+function toUserSummary(user: Doc<"users"> | null) {
+  if (!user) return null;
+  return {
+    id: user._id,
+    firstName: user.firstName || "",
+    lastName: user.lastName || "",
+    displayName: getDisplayName(user.firstName, user.lastName),
+    profileImage: getMediaUrl(user.profilePhoto),
+  };
+}
+
+/** Find this user's currently-active (non-revoked) fundRoles row, if any. */
+async function getActiveRoleRow(
+  ctx: { db: any },
+  fundId: Id<"funds">,
+  userId: Id<"users">,
+): Promise<Doc<"fundRoles"> | null> {
+  const rows = await ctx.db
+    .query("fundRoles")
+    .withIndex("by_user_fund", (q: any) =>
+      q.eq("userId", userId).eq("fundId", fundId),
+    )
+    .collect();
+  return rows.find((r: Doc<"fundRoles">) => r.revokedAt === undefined) ?? null;
+}
+
+/**
+ * Resolve a caller's effective fund role for policy checks: their explicit
+ * `fundRoles` grant, or `"finance_admin"` if they're a community admin
+ * (the ADR-032 §4 override — admins can do anything on a fund without
+ * needing their own grant), or `null` if neither applies.
+ */
+async function resolveEffectiveRole(
+  ctx: { db: any },
+  fund: Doc<"funds">,
+  userId: Id<"users">,
+): Promise<FundRole | null> {
+  const roleRow = await getActiveRoleRow(ctx, fund._id, userId);
+  if (roleRow) return roleRow.role;
+  const isAdmin = await isCommunityAdmin(ctx, fund.communityId, userId);
+  return isAdmin ? "finance_admin" : null;
+}
+
+/**
+ * PROVENANCE, not just format — the gate every receipt write shares.
+ *
+ * An `r2:` string proves nothing on its own: receipt URLs are handed to every
+ * manager+ viewer of a fund (`listExpenses`) and every card viewer
+ * (`getCardDetail`), so a member who has seen someone else's receipt could
+ * otherwise attach it to an expense of their own. The `uploadGrants` row
+ * written when the presigned URL was minted (functions/uploads.ts, or
+ * lib/r2.ts's `putR2Object` with `grantTo`) is the only record of who the key
+ * belongs to.
+ *
+ * NO ROW is a different situation from SOMEONE ELSE'S ROW, and it has an honest
+ * cause the member can act on: a photo picked before this check shipped (or
+ * before a grant write that failed) has no provenance to read, and refusing it
+ * with "that isn't yours" reads as a bug. Say what fixes it instead. Not a
+ * weaker gate — still a refusal.
+ *
+ * Returns the grant because callers need its `contentType`: forwarding a
+ * receipt to a card provider has to declare the image type, and the grant is
+ * where it was recorded.
+ */
+async function assertReceiptOwnedBy(
+  ctx: { db: any },
+  receiptKey: string,
+  userId: Id<"users">,
+): Promise<Doc<"uploadGrants">> {
+  if (!receiptKey.startsWith("r2:")) {
+    throw new Error("Receipt must be an uploaded file (r2:<key>)");
+  }
+  const grant = await ctx.db
+    .query("uploadGrants")
+    .withIndex("by_storagePath", (q: any) => q.eq("storagePath", receiptKey))
+    .first();
+  if (!grant) {
+    throw new Error(
+      "We couldn't verify who uploaded that receipt — re-attach the photo and submit again",
+    );
+  }
+  if (grant.userId !== userId) {
+    throw new Error(
+      "That receipt wasn't uploaded from this account — attach a photo you uploaded yourself",
+    );
+  }
+  return grant;
+}
+
+// ============================================================================
+// submitExpense
+// ============================================================================
+
+/**
+ * Submit a reimbursement request. Any active member of the fund's group can
+ * submit — this is intentionally NOT gated by a fund role (ADR-032 §4: every
+ * member can submit an expense/reimbursement).
+ *
+ * `description` is persisted on the expense document and echoed on the
+ * "expense.submitted" audit event.
+ */
+export const submitExpense = mutation({
+  args: {
+    token: v.string(),
+    fundId: v.id("funds"),
+    amountCents: v.number(),
+    kind: expenseKindValidator,
+    description: v.string(),
+    receiptKey: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    await requireGroupGivingEnabled(ctx);
+
+    const fund = await ctx.db.get(args.fundId);
+    if (!fund) {
+      throw new Error("Fund not found");
+    }
+
+    // Card-charge expenses are created by the card-transaction webhook
+    // (Phase 3), not submitted by members.
+    if (args.kind !== "reimbursement") {
+      throw new Error(
+        "Card-charge expenses are created automatically from card activity — submit a reimbursement instead",
+      );
+    }
+
+    if (!fund.groupId) {
+      throw new Error("Reimbursements are only supported for group funds");
+    }
+
+    // A frozen/closed fund (e.g. its group was just archived — see
+    // functions/finance/onboarding.ts's freezeFundForArchivedGroup) accepts
+    // no new spend activity, only settlement of what's already in flight.
+    if (fund.status !== "active") {
+      throw new Error(
+        "This fund isn't active — new expenses can't be submitted",
+      );
+    }
+
+    const membership = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group_user", (q) =>
+        q.eq("groupId", fund.groupId!).eq("userId", userId),
+      )
+      .first();
+    if (!isActiveMember(membership)) {
+      throw new Error(
+        "You must be an active member of this fund's group to submit an expense",
+      );
+    }
+
+    const decision = canSubmit({
+      amountCents: args.amountCents,
+      kind: args.kind,
+      receiptKey: args.receiptKey,
+    });
+    if (!decision.allowed) {
+      throw new Error(decision.reason ?? "This expense cannot be submitted");
+    }
+
+    await assertReceiptOwnedBy(ctx, args.receiptKey, userId);
+
+    const timestamp = now();
+    const expenseId = await ctx.db.insert("expenses", {
+      fundId: args.fundId,
+      submitterId: userId,
+      amountCents: args.amountCents,
+      kind: "reimbursement",
+      description: args.description,
+      receiptKey: args.receiptKey,
+      status: "pending",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+
+    await logFinanceAudit(ctx, {
+      communityId: fund.communityId,
+      fundId: fund._id,
+      actorUserId: userId,
+      action: "expense.submitted",
+      details: {
+        expenseId,
+        amountCents: args.amountCents,
+        kind: args.kind,
+        description: args.description,
+      },
+    });
+
+    return expenseId;
+  },
+});
+
+// ============================================================================
+// attachExpenseReceipt — the receipt-nudge write path, and the one place a
+// receipt is forwarded to a card provider (ADR-033 Phase 3).
+// ============================================================================
+
+/**
+ * Attach (or replace) the receipt on a CARD-CHARGE expense.
+ *
+ * The read side of this has existed since ADR-032 — the "No receipt" badge on
+ * the card detail screen, the red "receipt missing" line in the approvals
+ * queue, `canPay`'s receipt requirement — but nothing ever wrote it, because a
+ * card charge is created by the settlement webhook before anyone has the
+ * receipt in their hand. This is that write.
+ *
+ * Reimbursements are excluded: they carry a receipt from `submitExpense` and
+ * replacing one already approved is a different question (does the approval
+ * still stand?) that ADR-032 has not answered.
+ *
+ * WHO: the cardholder whose swipe made the expense, or a manager+ on the fund.
+ * The holder is the person who has the paper; the manager is who chases them.
+ *
+ * WHAT IT SCHEDULES: if the card was issued at a provider with a receipt API
+ * (`capabilities.receiptForwarding` — BILL alone today), a best-effort forward
+ * so the church's expense record AT THE ISSUER is complete too. That is the
+ * whole reason the UI copy differs by provider: "Saved to the fund" is a
+ * smaller promise than "Saved and sent to your card provider", and only one of
+ * them is true at a time.
+ */
+export const attachExpenseReceipt = mutation({
+  args: {
+    token: v.string(),
+    expenseId: v.id("expenses"),
+    receiptKey: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    await requireGroupGivingEnabled(ctx);
+
+    const expense = await ctx.db.get(args.expenseId);
+    if (!expense) {
+      throw new Error("Expense not found");
+    }
+    if (expense.kind !== "card_charge") {
+      throw new Error(
+        "Receipts are attached when a reimbursement is submitted — this is a card charge",
+      );
+    }
+    const fund = await ctx.db.get(expense.fundId);
+    if (!fund) {
+      throw new Error("Fund not found");
+    }
+
+    if (expense.submitterId !== userId) {
+      // Not the cardholder, so this has to be someone who manages the fund.
+      await requireFundRoleOrGroupLeader(ctx, fund._id, userId, "manager");
+    }
+
+    await assertReceiptOwnedBy(ctx, args.receiptKey, userId);
+
+    await ctx.db.patch(args.expenseId, {
+      receiptKey: args.receiptKey,
+      updatedAt: now(),
+    });
+
+    await logFinanceAudit(ctx, {
+      communityId: fund.communityId,
+      fundId: fund._id,
+      actorUserId: userId,
+      action: "expense.receipt_attached",
+      details: {
+        expenseId: args.expenseId,
+        replaced: expense.receiptKey !== undefined,
+      },
+    });
+
+    // FORWARDING IS SCHEDULED ONCE PER ATTACHMENT, and that is the whole
+    // dedupe mechanism. There is no `forwardedAt` column to write (schema.ts is
+    // not being widened for this phase, and `expenses` has no free-form bag the
+    // way `cards.controls` does), so instead of a marker the design relies on
+    // two facts that are true anyway:
+    //
+    //   1. exactly one run is enqueued here, per attachment; and
+    //   2. the action re-reads the expense and STOPS unless `receiptKey` is
+    //      still the key it was scheduled with.
+    //
+    // Together those make a re-attachment forward the NEW receipt and never the
+    // old one, and make a duplicate/stale run a no-op.
+    //
+    // The one hole those two facts leave is RE-ATTACHING THE SAME KEY: a
+    // double-tap, or a client retry of a mutation that already committed, sends
+    // the identical key twice, both runs pass the staleness guard (the key IS
+    // still current) and BILL gets the same image filed twice. Comparing
+    // against the key already on the row closes it inside this transaction,
+    // where Convex's OCC makes the check-then-write atomic. What it still does
+    // not cover is a human uploading the same FILE twice, which produces a new
+    // key and is a duplicate document rather than a wrong one.
+    const alreadyAttached = expense.receiptKey === args.receiptKey;
+    if (expense.cardId && !alreadyAttached) {
+      const card = await ctx.db.get(expense.cardId);
+      if (card && cardProviderSupportsReceipts(card.provider)) {
+        await ctx.scheduler.runAfter(
+          0,
+          internal.functions.finance.expenses.forwardExpenseReceipt,
+          { expenseId: args.expenseId, receiptKey: args.receiptKey },
+        );
+      }
+    }
+
+    return { receiptKey: args.receiptKey };
+  },
+});
+
+/**
+ * Does the issuer this card was created at accept forwarded receipts?
+ *
+ * Keyed on the stored provider NAME rather than on the presence of the
+ * adapter's `forwardReceipt` method: this runs in a mutation with no
+ * credential, and "will a receipt reach the provider?" must not cost a decrypt.
+ * A card with no `provider` is a pre-ADR-033 Increase card, which has no
+ * receipt API either way.
+ */
+function cardProviderSupportsReceipts(provider: string | undefined): boolean {
+  if (!provider) return false;
+  return (
+    describeProviderCapabilities(provider as CardProviderName)
+      ?.receiptForwarding === true
+  );
+}
+
+/** Everything `forwardExpenseReceipt` needs, in one round trip. */
+export const getExpenseForReceiptForward = internalQuery({
+  args: { expenseId: v.id("expenses"), receiptKey: v.string() },
+  handler: async (ctx, args) => {
+    const expense = await ctx.db.get(args.expenseId);
+    // STALENESS GUARD, and the dedupe half of the mechanism described in
+    // `attachExpenseReceipt`: a run scheduled for a receipt that has since been
+    // replaced must not upload the outdated image.
+    if (!expense || expense.receiptKey !== args.receiptKey) return null;
+    if (!expense.cardId) return null;
+    // RE-ASSERTED, not assumed. The action server-side `fetch`es whatever URL
+    // this returns, and `getMediaUrl` passes an `http(s)://` value through
+    // verbatim — so "the key is an R2 object we minted" is the only thing
+    // standing between a receipt key and an arbitrary-host request. Every
+    // writer of `expenses.receiptKey` checks it today
+    // (`assertReceiptOwnedBy`); this makes the guarantee survive the next one.
+    if (!args.receiptKey.startsWith("r2:")) return null;
+    // The provider's own transaction id — what BILL's receipt endpoint is
+    // addressed by. Card-charge expenses store it in `increaseTransactionId`,
+    // which is provider-neutral in practice despite its name (webhooks.ts's
+    // `recordCardSettlement` writes whatever the provider called it).
+    if (!expense.increaseTransactionId) return null;
+
+    const card = await ctx.db.get(expense.cardId);
+    if (!card?.provider) return null;
+    const fund = await ctx.db.get(expense.fundId);
+    if (!fund) return null;
+    // The card belongs to the expense's own fund, or the two rows disagree
+    // about whose money this was and neither is safe to act on.
+    if (card.fundId !== expense.fundId) return null;
+
+    const connection = isBringYourOwnProvider(card.provider as CardProviderName)
+      ? await loadActiveProviderConnection(ctx, fund.communityId)
+      : null;
+    // THE CARD'S ISSUER AND THE COMMUNITY'S CURRENT CONNECTION MUST BE THE SAME
+    // ISSUER. A church that closes its BILL cards and connects Privacy still
+    // has BILL card_charge rows in its history, and a receipt attached to one
+    // of those would address BILL's endpoint while holding the only credential
+    // the community now has — the PRIVACY key — and send it as an `apiToken`
+    // header to a vendor that never issued it. Decryption does not catch this:
+    // the AAD binds the ciphertext to the connection it came from, not to the
+    // card. So the check is here, and a mismatch forwards nothing.
+    if (connection && connection.provider !== card.provider) return null;
+
+    const grant = await ctx.db
+      .query("uploadGrants")
+      .withIndex("by_storagePath", (q) => q.eq("storagePath", args.receiptKey))
+      .first();
+
+    return {
+      communityId: fund.communityId,
+      fundId: fund._id,
+      providerName: card.provider as CardProviderName,
+      providerTxnId: expense.increaseTransactionId,
+      receiptUrl: getMediaUrl(args.receiptKey) ?? null,
+      contentType: grant?.contentType ?? null,
+      connection,
+    };
+  },
+});
+
+/** Audit the outcome of a forward. Success and failure are both worth a row. */
+export const recordReceiptForward = internalMutation({
+  args: {
+    expenseId: v.id("expenses"),
+    communityId: v.id("communities"),
+    fundId: v.id("funds"),
+    provider: v.string(),
+    ok: v.boolean(),
+    message: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    await logFinanceAudit(ctx, {
+      communityId: args.communityId,
+      fundId: args.fundId,
+      action: args.ok
+        ? "expense.receipt_forwarded"
+        : "expense.receipt_forward_failed",
+      details: {
+        expenseId: args.expenseId,
+        provider: args.provider,
+        message: args.message,
+      },
+    });
+  },
+});
+
+/**
+ * Send a stored receipt on to the card provider.
+ *
+ * BEST EFFORT, ALWAYS. The receipt is already durable in Togather and the
+ * church's own books are complete without the copy at the issuer, so every
+ * failure here is a logged audit row and nothing else. It must never undo the
+ * attachment, fail the expense, or reach the person who uploaded it — they did
+ * their part, and telling them "your receipt failed" about a bookkeeping
+ * convenience would make them re-upload for no reason.
+ *
+ * NOT RETRIED. Unlike the managed-limit sync there is no hourly backstop, and
+ * that is a deliberate scope call rather than an omission: a missing receipt at
+ * BILL is a gap in a secondary record, whereas a stale spending cap is money.
+ * The audit row is what makes it visible, and re-attaching the photo is the
+ * manual retry.
+ */
+/** A receipt is a photo of a till slip; 10 MB is generous for one. */
+const MAX_RECEIPT_BYTES = 10 * 1024 * 1024;
+
+export const forwardExpenseReceipt = internalAction({
+  args: { expenseId: v.id("expenses"), receiptKey: v.string() },
+  handler: async (ctx, args): Promise<{ forwarded: boolean }> => {
+    const loaded = await ctx.runQuery(
+      internal.functions.finance.expenses.getExpenseForReceiptForward,
+      { expenseId: args.expenseId, receiptKey: args.receiptKey },
+    );
+    // Every "nothing to do" the query already decided: replaced receipt, no
+    // card, no provider transaction id. Not an error.
+    if (!loaded) return { forwarded: false };
+
+    const fail = async (message: string) => {
+      console.error(
+        `[finance] forwardExpenseReceipt: ${message} (expense ${args.expenseId})`,
+      );
+      await ctx.runMutation(
+        internal.functions.finance.expenses.recordReceiptForward,
+        {
+          expenseId: args.expenseId,
+          communityId: loaded.communityId,
+          fundId: loaded.fundId,
+          provider: loaded.providerName,
+          ok: false,
+          message: message.slice(0, 300),
+        },
+      );
+      return { forwarded: false };
+    };
+
+    if (!loaded.receiptUrl) {
+      return await fail(
+        "the receipt has no readable URL (R2_PUBLIC_URL unset?)",
+      );
+    }
+
+    try {
+      const provider = await getCardProviderByName(
+        loaded.providerName,
+        loaded.connection,
+      );
+      if (!provider.forwardReceipt) {
+        // Structurally unreachable — `cardProviderSupportsReceipts` gated the
+        // schedule on the same capability — but a provider that declares the
+        // flag without the method should say so rather than silently succeed.
+        return await fail(
+          `${loaded.providerName} declares receipt forwarding but its adapter implements none`,
+        );
+      }
+
+      const response = await fetch(loaded.receiptUrl);
+      if (!response.ok) {
+        return await fail(`could not read the receipt (${response.status})`);
+      }
+      // CHECKED BEFORE BUFFERING. `getR2FileUploadUrl` mints grants for objects
+      // up to 50 MB, and `arrayBuffer()` pulls the whole thing into this
+      // action's memory before anything else gets a say — so a 50 MB "receipt"
+      // is an OOM, not a rejected upload. A receipt is a photo of a till slip.
+      const declaredBytes = Number(response.headers.get("content-length"));
+      if (Number.isFinite(declaredBytes) && declaredBytes > MAX_RECEIPT_BYTES) {
+        return await fail(
+          `the receipt is too large to forward (${declaredBytes} bytes, max ${MAX_RECEIPT_BYTES})`,
+        );
+      }
+      const bytes = await response.arrayBuffer();
+      if (bytes.byteLength > MAX_RECEIPT_BYTES) {
+        return await fail(
+          `the receipt is too large to forward (${bytes.byteLength} bytes, max ${MAX_RECEIPT_BYTES})`,
+        );
+      }
+
+      await provider.forwardReceipt(loaded.providerTxnId, {
+        bytes,
+        // The grant's recorded type first; the object's own header as the
+        // fallback. The adapter refuses a format the provider can't open, so
+        // guessing "image/jpeg" here would only move the failure later.
+        contentType:
+          loaded.contentType ??
+          response.headers.get("content-type") ??
+          "application/octet-stream",
+        filename:
+          args.receiptKey.replace(/^r2:/, "").split("/").pop() ?? "receipt",
+      });
+    } catch (error) {
+      return await fail(error instanceof Error ? error.message : String(error));
+    }
+
+    await ctx.runMutation(
+      internal.functions.finance.expenses.recordReceiptForward,
+      {
+        expenseId: args.expenseId,
+        communityId: loaded.communityId,
+        fundId: loaded.fundId,
+        provider: loaded.providerName,
+        ok: true,
+      },
+    );
+    return { forwarded: true };
+  },
+});
+
+// ============================================================================
+// approveExpense
+// ============================================================================
+
+/**
+ * Approve a pending expense. Requires manager+ on the fund. Amounts under
+ * `SECOND_APPROVAL_THRESHOLD_CENTS` approve on the first manager sign-off;
+ * amounts at/above it need a second, distinct manager+ approval before
+ * status flips to "approved" — see lib/finance/expensePolicy.ts.
+ */
+export const approveExpense = mutation({
+  args: { token: v.string(), expenseId: v.id("expenses") },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    await requireGroupGivingEnabled(ctx);
+
+    const expense = await ctx.db.get(args.expenseId);
+    if (!expense) {
+      throw new Error("Expense not found");
+    }
+    const fund = await ctx.db.get(expense.fundId);
+    if (!fund) {
+      throw new Error("Fund not found");
+    }
+
+    // A fund frozen/closed after submission (e.g. group archived mid-review)
+    // must not approve new spend — denyExpense stays available regardless,
+    // since a denial is never a new commitment of money.
+    if (fund.status !== "active") {
+      throw new Error("This fund isn't active — expenses can't be approved");
+    }
+
+    await requireFundRole(ctx, fund._id, userId, "manager");
+
+    const approverRole = await resolveEffectiveRole(ctx, fund, userId);
+    const decision = canApprove({
+      expense,
+      approverUserId: userId,
+      approverRole,
+    });
+    if (!decision.allowed) {
+      throw new Error(decision.reason ?? "This expense cannot be approved");
+    }
+
+    const outcome = nextStatusOnApproval({ expense, approverUserId: userId });
+    const firstOrSecond: "first" | "second" =
+      outcome.secondApproverId !== undefined ? "second" : "first";
+
+    await ctx.db.patch(args.expenseId, {
+      status: outcome.status,
+      approverId: outcome.approverId,
+      secondApproverId: outcome.secondApproverId,
+      updatedAt: now(),
+    });
+
+    await logFinanceAudit(ctx, {
+      communityId: fund.communityId,
+      fundId: fund._id,
+      actorUserId: userId,
+      action: "expense.approved",
+      details: {
+        expenseId: args.expenseId,
+        decision: outcome.status,
+        firstOrSecond,
+      },
+    });
+
+    if (outcome.status === "approved") {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.finance.expenses.payReimbursement,
+        { expenseId: args.expenseId },
+      );
+    }
+
+    return { status: outcome.status };
+  },
+});
+
+// ============================================================================
+// denyExpense
+// ============================================================================
+
+/**
+ * Deny a pending expense. Requires manager+ on the fund; never the submitter.
+ *
+ * DELIBERATELY NOT behind `requireGroupGivingEnabled`, unlike `submitExpense`
+ * / `approveExpense`. A denial is pure de-escalation — it's the one decision
+ * that can only ever stop money from leaving. If the kill switch is flipped
+ * off with expenses sitting `"pending"`, gating this would trap them: nobody
+ * could approve them (correctly gated) and nobody could clear them either.
+ * Same judgement as `setCardFrozen` / `cancelCard` in cards.ts and
+ * `revokeFundRole` in roles.ts.
+ */
+export const denyExpense = mutation({
+  args: { token: v.string(), expenseId: v.id("expenses"), reason: v.string() },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+
+    const expense = await ctx.db.get(args.expenseId);
+    if (!expense) {
+      throw new Error("Expense not found");
+    }
+    const fund = await ctx.db.get(expense.fundId);
+    if (!fund) {
+      throw new Error("Fund not found");
+    }
+
+    await requireFundRole(ctx, fund._id, userId, "manager");
+
+    if (expense.submitterId === userId) {
+      throw new Error("You cannot deny your own expense");
+    }
+    if (expense.status !== "pending") {
+      throw new Error(`Expense is already ${expense.status}`);
+    }
+
+    await ctx.db.patch(args.expenseId, { status: "denied", updatedAt: now() });
+
+    await logFinanceAudit(ctx, {
+      communityId: fund.communityId,
+      fundId: fund._id,
+      actorUserId: userId,
+      action: "expense.denied",
+      details: { expenseId: args.expenseId, reason: args.reason },
+    });
+  },
+});
+
+// ============================================================================
+// Reimbursement payout
+// ============================================================================
+
+/**
+ * TODO(Phase 2 follow-up — mobile wave stub): there is no member
+ * payout-destination table yet (Increase Financial Connections linking, or
+ * manual bank-account entry). Until that lands, this always returns `null`,
+ * which routes every approved reimbursement to the
+ * "expense.pay_blocked_no_destination" audit breadcrumb below instead of an
+ * actual ACH transfer — a finance_admin can see why in financeAuditEvents
+ * and pay out-of-band, then call `recordReimbursementPaid` once the transfer
+ * settles. Replace this stub with a real lookup as soon as the linking flow
+ * ships; the rest of `payReimbursement` is already structured to use it.
+ */
+async function getPayoutDestination(
+  _submitterId: Id<"users">,
+): Promise<{
+  routingNumber: string;
+  accountNumber: string;
+  individualName?: string;
+} | null> {
+  return null;
+}
+
+/** Internal: fetch the expense + its fund for the payout action (actions have no `ctx.db`). */
+export const getExpenseForPayout = internalQuery({
+  args: { expenseId: v.id("expenses") },
+  handler: async (ctx, args) => {
+    const expense = await ctx.db.get(args.expenseId);
+    if (!expense) return null;
+    const fund = await ctx.db.get(expense.fundId);
+    if (!fund) return null;
+    return { expense, fund };
+  },
+});
+
+/** Internal: log a payout attempt that didn't result in a transfer. */
+export const logReimbursementPayOutcome = internalMutation({
+  args: {
+    expenseId: v.id("expenses"),
+    action: v.union(
+      v.literal("expense.pay_skipped"),
+      v.literal("expense.pay_blocked_no_destination"),
+      v.literal("expense.pay_blocked_fund_inactive"),
+    ),
+    details: v.optional(v.any()),
+  },
+  handler: async (ctx, args) => {
+    const expense = await ctx.db.get(args.expenseId);
+    if (!expense) return;
+    const fund = await ctx.db.get(expense.fundId);
+    if (!fund) return;
+
+    await logFinanceAudit(ctx, {
+      communityId: fund.communityId,
+      fundId: fund._id,
+      action: args.action,
+      details: { expenseId: args.expenseId, ...args.details },
+    });
+  },
+});
+
+/**
+ * Internal: post the reimbursement ledger debit and mark the expense paid.
+ * Idempotent — `postLedgerEntry`'s `reimb:<expenseId>` key means a repeat
+ * call (e.g. a retried scheduler run) posts the debit at most once; the
+ * status patch + audit log are separately guarded on `status !== "paid"` so
+ * they don't double-fire either.
+ */
+export const recordReimbursementPaid = internalMutation({
+  args: { expenseId: v.id("expenses"), increaseTransferId: v.string() },
+  handler: async (ctx, args) => {
+    const expense = await ctx.db.get(args.expenseId);
+    if (!expense) {
+      throw new Error("Expense not found");
+    }
+    const fund = await ctx.db.get(expense.fundId);
+    if (!fund) {
+      throw new Error("Fund not found");
+    }
+
+    await postLedgerEntry(ctx, {
+      fundId: fund._id,
+      direction: "debit",
+      amountCents: expense.amountCents,
+      kind: "reimbursement",
+      idempotencyKey: `reimb:${args.expenseId}`,
+      increaseObjectId: args.increaseTransferId,
+      actorUserId: expense.submitterId,
+    });
+
+    if (expense.status !== "paid") {
+      await ctx.db.patch(args.expenseId, {
+        status: "paid",
+        increaseTransferId: args.increaseTransferId,
+        updatedAt: now(),
+      });
+
+      await logFinanceAudit(ctx, {
+        communityId: fund.communityId,
+        fundId: fund._id,
+        action: "expense.paid",
+        details: {
+          expenseId: args.expenseId,
+          increaseTransferId: args.increaseTransferId,
+          amountCents: expense.amountCents,
+        },
+      });
+    }
+  },
+});
+
+/**
+ * Internal action: pay out an approved reimbursement via Increase ACH
+ * transfer. Scheduled by `approveExpense` the moment an expense lands in
+ * "approved". No-ops (with an audit breadcrumb) if the expense isn't payable
+ * or the submitter has no linked payout destination yet.
+ *
+ * The Increase client is under concurrent development elsewhere in this
+ * change — imported lazily so this file's typecheck/tests don't race its
+ * landing. It is never reached in tests today because
+ * `getPayoutDestination` always returns `null` (see its TODO above).
+ */
+export const payReimbursement = internalAction({
+  args: { expenseId: v.id("expenses") },
+  handler: async (ctx, args) => {
+    const loaded = await ctx.runQuery(
+      internal.functions.finance.expenses.getExpenseForPayout,
+      { expenseId: args.expenseId },
+    );
+    if (!loaded) return;
+    const { expense, fund } = loaded;
+
+    if (!canPay(expense)) {
+      await ctx.runMutation(
+        internal.functions.finance.expenses.logReimbursementPayOutcome,
+        {
+          expenseId: args.expenseId,
+          action: "expense.pay_skipped",
+          details: {
+            status: expense.status,
+            kind: expense.kind,
+            hasReceipt: !!expense.receiptKey,
+          },
+        },
+      );
+      return;
+    }
+
+    // HARD GATE, checked BEFORE any call to Increase: a frozen/closed fund
+    // must never have money moved out of it via createAchTransfer. This
+    // used to be enforced only by postLedgerEntry's frozen-kind check inside
+    // recordReimbursementPaid — which runs AFTER the ACH transfer already
+    // executed, so a fund frozen between approval and payout (e.g. its
+    // group got archived) could still have money leave the bank account
+    // even though the ledger write would later fail/skip. Checking here
+    // stops the transfer from ever being initiated.
+    if (fund.status !== "active") {
+      await ctx.runMutation(
+        internal.functions.finance.expenses.logReimbursementPayOutcome,
+        {
+          expenseId: args.expenseId,
+          action: "expense.pay_blocked_fund_inactive",
+          details: { fundStatus: fund.status },
+        },
+      );
+      return;
+    }
+
+    // The fund itself needs a live Increase Account (Phase 2 onboarding) as
+    // well as the member's payout destination — either missing piece means
+    // there's nowhere to send the transfer yet.
+    if (!fund.increaseAccountId) {
+      await ctx.runMutation(
+        internal.functions.finance.expenses.logReimbursementPayOutcome,
+        {
+          expenseId: args.expenseId,
+          action: "expense.pay_blocked_no_destination",
+          details: { reason: "fund_not_provisioned" },
+        },
+      );
+      return;
+    }
+
+    const destination = await getPayoutDestination(expense.submitterId);
+    if (!destination) {
+      await ctx.runMutation(
+        internal.functions.finance.expenses.logReimbursementPayOutcome,
+        {
+          expenseId: args.expenseId,
+          action: "expense.pay_blocked_no_destination",
+          details: {
+            reason: "member_payout_destination_missing",
+            submitterId: expense.submitterId,
+          },
+        },
+      );
+      return;
+    }
+
+    const { createAchTransfer } = await import("../../lib/finance/increase");
+    const transfer = await createAchTransfer({
+      accountId: fund.increaseAccountId,
+      amountCents: expense.amountCents,
+      // TODO: source from communityFinance.statementDescriptor once the
+      // onboarding flow (functions/finance/onboarding.ts) is in place.
+      statementDescriptor: "TOGATHER REIMB",
+      routingNumber: destination.routingNumber,
+      accountNumber: destination.accountNumber,
+      individualName: destination.individualName,
+      individualId: expense._id,
+      idempotencyKey: `reimb:${args.expenseId}`,
+    });
+
+    await ctx.runMutation(
+      internal.functions.finance.expenses.recordReimbursementPaid,
+      { expenseId: args.expenseId, increaseTransferId: transfer.id },
+    );
+  },
+});
+
+// ============================================================================
+// listExpenses / listMyExpenses
+// ============================================================================
+
+/**
+ * All expenses on a fund (optionally filtered by status), with submitter
+ * display info and a resolved receipt URL. Manager+ or an active group
+ * leader only — full activity/receipts visibility is a management surface
+ * (ADR-032 §4 table), not something every member sees.
+ */
+export const listExpenses = query({
+  args: {
+    token: v.string(),
+    fundId: v.id("funds"),
+    status: v.optional(expenseStatusValidator),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    await requireGroupGivingEnabled(ctx);
+    await requireFundRoleOrGroupLeader(ctx, args.fundId, userId, "manager");
+
+    let rows = await ctx.db
+      .query("expenses")
+      .withIndex("by_fund_status", (q) => q.eq("fundId", args.fundId))
+      .collect();
+    if (args.status) {
+      rows = rows.filter((r) => r.status === args.status);
+    }
+    rows.sort((a, b) => b.createdAt - a.createdAt);
+
+    const submitters = await Promise.all(
+      rows.map((r) => ctx.db.get(r.submitterId)),
+    );
+
+    return rows.map((row, i) => ({
+      id: row._id,
+      amountCents: row.amountCents,
+      kind: row.kind,
+      description: row.description,
+      status: row.status,
+      // getMediaUrl resolves the `r2:<key>` path synchronously; no separate
+      // action round-trip is needed to display the receipt.
+      receiptUrl: getMediaUrl(row.receiptKey),
+      approverId: row.approverId,
+      secondApproverId: row.secondApproverId,
+      increaseTransferId: row.increaseTransferId,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+      submitter: toUserSummary(submitters[i]),
+    }));
+  },
+});
+
+/** The viewer's own submitted expenses on a fund, with their status trail. */
+export const listMyExpenses = query({
+  args: { token: v.string(), fundId: v.id("funds") },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    await requireGroupGivingEnabled(ctx);
+
+    const rows = await ctx.db
+      .query("expenses")
+      .withIndex("by_submitter", (q) => q.eq("submitterId", userId))
+      .filter((q) => q.eq(q.field("fundId"), args.fundId))
+      .collect();
+    rows.sort((a, b) => b.createdAt - a.createdAt);
+
+    return rows.map((row) => ({
+      id: row._id,
+      amountCents: row.amountCents,
+      kind: row.kind,
+      description: row.description,
+      status: row.status,
+      receiptUrl: getMediaUrl(row.receiptKey),
+      approverId: row.approverId,
+      secondApproverId: row.secondApproverId,
+      increaseTransferId: row.increaseTransferId,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    }));
+  },
+});

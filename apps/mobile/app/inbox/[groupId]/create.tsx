@@ -28,9 +28,14 @@ import { useAuth } from "@providers/AuthProvider";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useTheme } from "@hooks/useTheme";
 import { PcoAutoChannelConfig, type AutoChannelConfig } from "@features/channels";
+import {
+  CrossTeamSelectorPicker,
+  createCrossTeamChannelRef,
+  type CrossTeamSelector,
+} from "@features/scheduling";
 import type { Id } from "@services/api/convex";
 
-type ChannelType = "custom" | "pco_services";
+type ChannelType = "custom" | "pco_services" | "cross_team";
 
 const MAX_NAME_LENGTH = 50;
 
@@ -56,6 +61,10 @@ export default function CreateChannelScreen() {
   // Channel type state
   const [channelType, setChannelType] = useState<ChannelType>("custom");
   const [autoConfig, setAutoConfig] = useState<AutoChannelConfig | null>(null);
+  // Cross-team channel: the auto-sync selectors chosen by the leader.
+  const [crossTeamSelectors, setCrossTeamSelectors] = useState<
+    CrossTeamSelector[]
+  >([]);
 
   // Form state
   const [name, setName] = useState("");
@@ -81,6 +90,9 @@ export default function CreateChannelScreen() {
   const createAutoChannel = useAuthenticatedMutation(
     api.functions.messaging.channels.createAutoChannel
   );
+  const createCrossTeamChannel = useAuthenticatedMutation(
+    createCrossTeamChannelRef
+  );
 
   // Get communityId from group or fallback to auth context
   const communityId = group?.communityId || (community?.id as Id<"communities"> | undefined);
@@ -101,11 +113,13 @@ export default function CreateChannelScreen() {
   };
 
   const isNameValid = name.trim().length > 0;
-  // For PCO channels, also require autoConfig to be set
+  // PCO channels also require autoConfig; cross-team channels require at least
+  // one selector; custom + team need only a name.
   const canCreate =
     isNameValid &&
     !isLoading &&
-    (channelType === "custom" || autoConfig !== null);
+    (channelType !== "pco_services" || autoConfig !== null) &&
+    (channelType !== "cross_team" || crossTeamSelectors.length > 0);
 
   const handleCreate = async () => {
     if (!canCreate) return;
@@ -113,17 +127,7 @@ export default function CreateChannelScreen() {
     setIsLoading(true);
 
     try {
-      let slug: string;
-
-      if (channelType === "custom") {
-        const result = await createCustomChannel({
-          groupId: groupId as Id<"groups">,
-          name: name.trim(),
-          description: description.trim() || undefined,
-          joinMode,
-        });
-        slug = result.slug;
-      } else {
+      if (channelType === "pco_services") {
         // PCO auto channel
         if (!autoConfig) {
           throw new Error("Planning Center configuration is required");
@@ -135,33 +139,74 @@ export default function CreateChannelScreen() {
           integrationType: "pco_services",
           autoChannelConfig: autoConfig,
         });
-        slug = result.slug;
+        router.replace(`/inbox/${groupId}/${result.slug}`);
+        return;
       }
 
-      // Navigate to the new channel
-      router.replace(`/inbox/${groupId}/${slug}`);
+      if (channelType === "cross_team") {
+        // Cross-team channel — membership is auto-synced from event-plan role
+        // assignments across the chosen serving teams. No creator/manual
+        // membership; navigate to the channel like a custom channel.
+        const result = await createCrossTeamChannel({
+          groupId: groupId as Id<"groups">,
+          name: name.trim(),
+          description: description.trim() || undefined,
+          selectors: crossTeamSelectors,
+        });
+        router.replace(`/inbox/${groupId}/${result.slug}`);
+        return;
+      }
+
+      // Custom channel. Serving teams are no longer created here — they get
+      // their own create flow in the Rostering hub (ADR-024 / ADR-025), which
+      // calls `createServingTeam` and provisions the team's chat channel as
+      // part of that flow.
+      const result = await createCustomChannel({
+        groupId: groupId as Id<"groups">,
+        name: name.trim(),
+        description: description.trim() || undefined,
+        joinMode,
+        addCreatorAsMember: true,
+      });
+      router.replace(`/inbox/${groupId}/${result.slug}`);
     } catch (error: any) {
       console.error("Failed to create channel:", error);
 
+      // ConvexError delivers its thrown payload on `error.data`. In production
+      // `error.message` is only a generic "[Request ID: …] Server Error"
+      // string, so prefer `error.data` — otherwise the friendly server
+      // messages below never match and the raw "Server Error" leaks into the
+      // toast (which is exactly what users saw on the 20-channel limit).
+      // The payload is a bare string for createCustomChannel's errors but a
+      // `{ code, message }` object for createAutoChannel's (Planning Center),
+      // so handle both shapes before falling back to `error.message`.
+      const convexData = error?.data;
+      const convexMessage: string =
+        typeof convexData === "string"
+          ? convexData
+          : typeof convexData?.message === "string"
+            ? convexData.message
+            : error?.message ?? "";
+
       // Extract user-friendly error message
       let errorMessage = "Failed to create channel. Please try again.";
-      if (error?.message) {
-        // Handle Convex errors which often have the message in error.message
-        if (error.message.includes("Only group leaders")) {
+      if (convexMessage) {
+        if (convexMessage.includes("Only group leaders")) {
           errorMessage = "Only group leaders can create channels.";
-        } else if (error.message.includes("maximum of 20 channels")) {
+        } else if (convexMessage.includes("maximum of 20 channels")) {
           errorMessage =
             "This group has reached the maximum of 20 channels. Archive some channels to create new ones.";
-        } else if (error.message.includes("1-50 characters")) {
+        } else if (convexMessage.includes("1-50 characters")) {
           errorMessage = "Channel name must be between 1 and 50 characters.";
         } else if (
-          error.message.includes("Not authenticated") ||
-          error.message.includes("no auth token")
+          convexMessage.includes("Not authenticated") ||
+          convexMessage.includes("no auth token")
         ) {
           errorMessage = "Please log in again to create a channel.";
-        } else {
-          // Use the error message if it seems user-friendly
-          errorMessage = error.message;
+        } else if (!convexMessage.includes("Server Error")) {
+          // Use the server's message only when it's a real ConvexError
+          // payload, never the opaque production "Server Error" fallback.
+          errorMessage = convexMessage;
         }
       }
 
@@ -219,6 +264,7 @@ export default function CreateChannelScreen() {
                   style={styles.segmentIcon}
                 />
                 <Text
+                  numberOfLines={2}
                   style={[
                     styles.segmentText,
                     { color: colors.textSecondary },
@@ -257,6 +303,7 @@ export default function CreateChannelScreen() {
                   style={styles.segmentIcon}
                 />
                 <Text
+                  numberOfLines={2}
                   style={[
                     styles.segmentText,
                     { color: colors.textSecondary },
@@ -270,11 +317,45 @@ export default function CreateChannelScreen() {
                   Planning Center
                 </Text>
               </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.segmentButton,
+                  { borderColor: colors.inputBorder, backgroundColor: colors.surface },
+                  channelType === "cross_team" && [
+                    { backgroundColor: colors.selectedBackground },
+                    { borderColor: primaryColor },
+                  ],
+                ]}
+                onPress={() => setChannelType("cross_team")}
+                disabled={isLoading}
+              >
+                <Ionicons
+                  name="git-merge-outline"
+                  size={18}
+                  color={channelType === "cross_team" ? primaryColor : colors.textSecondary}
+                  style={styles.segmentIcon}
+                />
+                <Text
+                  numberOfLines={2}
+                  style={[
+                    styles.segmentText,
+                    { color: colors.textSecondary },
+                    channelType === "cross_team" && [
+                      styles.segmentTextSelected,
+                      { color: primaryColor },
+                    ],
+                  ]}
+                >
+                  Cross-team channel
+                </Text>
+              </TouchableOpacity>
             </View>
             <Text style={[styles.channelTypeHint, { color: colors.textTertiary }]}>
               {channelType === "custom"
-                ? "Manually manage who is in this channel"
-                : "Automatically sync members from Planning Center Services"}
+                ? "A permanent channel — you choose who is in it. Best for ongoing, not time-bound groups."
+                : channelType === "cross_team"
+                  ? "Auto-syncs members rostered for chosen roles across multiple teams."
+                  : "Automatically sync members from Planning Center Services"}
             </Text>
             {!isCommunityAdmin && (
               <Text style={[styles.adminOnlyHint, { color: colors.textTertiary }]}>
@@ -289,6 +370,26 @@ export default function CreateChannelScreen() {
               <PcoAutoChannelConfig
                 communityId={communityId}
                 onChange={setAutoConfig}
+              />
+            </View>
+          )}
+
+          {/* Cross-team Selector Picker — choose which teams + roles feed the
+              channel's auto-synced membership. */}
+          {channelType === "cross_team" && groupId && (
+            <View style={[styles.section, { backgroundColor: colors.surface }]}>
+              <Text style={[styles.label, { color: colors.textSecondary }]}>
+                Synced roles <Text style={{ color: colors.error }}>*</Text>
+              </Text>
+              <Text style={[styles.channelTypeHint, { color: colors.textTertiary, marginBottom: 12 }]}>
+                Pick a team, then choose specific roles or any role on it.
+                Anyone rostered for those roles is auto-added.
+              </Text>
+              <CrossTeamSelectorPicker
+                groupId={groupId as Id<"groups">}
+                selectors={crossTeamSelectors}
+                onChange={setCrossTeamSelectors}
+                disabled={isLoading}
               />
             </View>
           )}
@@ -540,18 +641,21 @@ const styles = StyleSheet.create({
   },
   segmentedControl: {
     flexDirection: "row",
+    flexWrap: "wrap",
     gap: 12,
     marginBottom: 8,
   },
   segmentButton: {
-    flex: 1,
+    flexGrow: 1,
+    flexBasis: "40%",
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     paddingVertical: 12,
-    paddingHorizontal: 16,
+    paddingHorizontal: 12,
     borderRadius: 10,
     borderWidth: 2,
+    minHeight: 60,
   },
   segmentIcon: {
     marginRight: 6,
@@ -559,6 +663,8 @@ const styles = StyleSheet.create({
   segmentText: {
     fontSize: 14,
     fontWeight: "500",
+    textAlign: "center",
+    flexShrink: 1,
   },
   segmentTextSelected: {
     fontWeight: "600",

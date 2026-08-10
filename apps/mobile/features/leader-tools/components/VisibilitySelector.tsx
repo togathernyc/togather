@@ -5,11 +5,27 @@ import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useTheme } from "@hooks/useTheme";
 
-export type VisibilityLevel = "group" | "community" | "public";
+export type VisibilityLevel =
+  | "group"
+  | "groups"
+  | "private"
+  | "community"
+  | "public";
 
 interface VisibilitySelectorProps {
   value: VisibilityLevel;
   onChange: (value: VisibilityLevel) => void;
+  /**
+   * When false, the "Specific Groups" option is hidden. Used by community-wide
+   * flows, where the event fans out across a group type and a hand-picked
+   * audience can't be carried through to each child meeting.
+   */
+  allowSpecificGroups?: boolean;
+  /**
+   * When false, the "Private" option is hidden. Community-wide events fan out
+   * across a group type, and an unlisted event can't meaningfully fan out.
+   */
+  allowPrivate?: boolean;
 }
 
 interface VisibilityOption {
@@ -21,10 +37,22 @@ interface VisibilityOption {
 
 const VISIBILITY_OPTIONS: VisibilityOption[] = [
   {
+    value: "private",
+    label: "Private",
+    icon: "lock-closed",
+    description: "Hidden from everyone — share the link or invite people",
+  },
+  {
     value: "group",
     label: "Group Only",
     icon: "people",
     description: "Only group members can see and RSVP",
+  },
+  {
+    value: "groups",
+    label: "Specific Groups",
+    icon: "people-circle",
+    description: "Members of the groups you choose can see and RSVP",
   },
   {
     value: "community",
@@ -40,13 +68,24 @@ const VISIBILITY_OPTIONS: VisibilityOption[] = [
   },
 ];
 
-export function VisibilitySelector({ value, onChange }: VisibilitySelectorProps) {
+export function VisibilitySelector({
+  value,
+  onChange,
+  allowSpecificGroups = true,
+  allowPrivate = true,
+}: VisibilitySelectorProps) {
   const { colors } = useTheme();
   const { primaryColor } = useCommunityTheme();
 
+  const options = VISIBILITY_OPTIONS.filter((o) => {
+    if (o.value === "groups" && !allowSpecificGroups) return false;
+    if (o.value === "private" && !allowPrivate) return false;
+    return true;
+  });
+
   return (
     <View style={styles.container}>
-      {VISIBILITY_OPTIONS.map((option) => {
+      {options.map((option) => {
         const isSelected = value === option.value;
         return (
           <TouchableOpacity

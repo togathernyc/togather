@@ -33,6 +33,7 @@ export const REACTIONS = [
   { type: "sad", emoji: "😢" },
   { type: "touched", emoji: "🥹" },
   { type: "pray", emoji: "🙏" },
+  { type: "bible", emoji: "📖" },
   { type: "fire", emoji: "🔥" },
   { type: "clap", emoji: "👏" },
   { type: "celebrate", emoji: "🎉" },

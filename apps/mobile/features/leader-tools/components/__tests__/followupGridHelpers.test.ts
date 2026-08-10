@@ -35,6 +35,35 @@ describe("parseFollowupQuerySyntax", () => {
     expect(parsed.searchText).toBe("looking for no-shows");
   });
 
+  it("maps both the new `serving:` label and the legacy `service:` token to score1", () => {
+    // Desktop parses by score name (useSystemScores omitted → false). After the
+    // Service → Serving rename, the new token must work AND the legacy one must
+    // keep working as a stable alias.
+    const systemScoreConfig: ScoreConfigEntry[] = [
+      { id: "sys_service", name: "Serving" },
+      { id: "sys_attendance", name: "Attendance" },
+      { id: "sys_togather", name: "Connection" },
+    ];
+
+    const serving = parseFollowupQuerySyntax(
+      "serving:>50",
+      leaders,
+      systemScoreConfig
+    );
+    expect(serving.scoreField).toBe("score1");
+    expect(serving.scoreMin).toBe(50);
+    expect(serving.searchText).toBe("");
+
+    const legacy = parseFollowupQuerySyntax(
+      "service:>50",
+      leaders,
+      systemScoreConfig
+    );
+    expect(legacy.scoreField).toBe("score1");
+    expect(legacy.scoreMin).toBe(50);
+    expect(legacy.searchText).toBe("");
+  });
+
   it("supports score ranges on the same score field", () => {
     const parsed = parseFollowupQuerySyntax(
       "attendance:>20 attendance:<80",

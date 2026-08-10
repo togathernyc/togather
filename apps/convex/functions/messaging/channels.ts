@@ -21,10 +21,19 @@ import { isCommunityAdmin } from "../../lib/permissions";
 import { generateChannelSlug, getChannelSlug } from "../../lib/slugs";
 import { internal } from "../../_generated/api";
 import { syncUserChannelMembershipsLogic } from "../sync/memberships";
-import { updateChannelMemberCount } from "./helpers";
+import {
+  updateChannelMemberCount,
+  isCommunityAdminForGroup,
+  findAcceptedSharedAnnouncementsChannelsForGroup,
+  assertChannelCapacity,
+  assertChannelCapacityFromList,
+  existingSlugsFrom,
+  loadGroupChannels,
+} from "./helpers";
 import { matchesSearchTerms, parseSearchTerms } from "../../lib/memberSearch";
 import { canAccessEventChannel } from "./eventChat";
 import { getUsersWithNotificationsDisabled } from "../../lib/notifications/enabledStatus";
+import { resolveServingChannelIds } from "../scheduling/serving";
 
 // ============================================================================
 // Constants
@@ -69,13 +78,15 @@ function sortChannelsByPinOrder<T extends {
   const pinnedSlugSet = new Set(pinnedChannelSlugs);
 
   return channels.sort((a, b) => {
-    // Main channel always first
-    if (a.channelType === "main" && b.channelType !== "main") return -1;
-    if (a.channelType !== "main" && b.channelType === "main") return 1;
-
-    // Announcements channel second (broadcast channel surfaces near General)
+    // Announcements pins to the very front: it's an opt-in broadcast and
+    // renders as a compact icon-only tab, so anchoring it leftmost keeps
+    // the layout predictable and lets General stretch.
     if (a.channelType === "announcements" && b.channelType !== "announcements") return -1;
     if (a.channelType !== "announcements" && b.channelType === "announcements") return 1;
+
+    // Main channel second (the default destination for in-group chat)
+    if (a.channelType === "main" && b.channelType !== "main") return -1;
+    if (a.channelType !== "main" && b.channelType === "main") return 1;
 
     // Leaders channel third
     if (a.channelType === "leaders" && b.channelType !== "leaders") return -1;
@@ -106,6 +117,134 @@ function sortChannelsByPinOrder<T extends {
     // Fallback: alphabetical by name
     return a.name.localeCompare(b.name);
   });
+}
+
+/**
+ * Resolve a group's best "default landing / post" channel.
+ *
+ * With General (the `main` channel) now optional, several backend sites that
+ * used to assume a main channel exists need a deterministic fallback. This
+ * picks the highest-priority ACTIVE channel for the group, where "active" means
+ * `isArchived !== true && isEnabled !== false`.
+ *
+ * Strict priority (only ACTIVE channels considered):
+ *   1. `main` (preserves today's default landing/post target)
+ *   2. `announcements`
+ *   3. first active `custom`/`pco_services`/`cross_team` channel, sorted by
+ *      `lastMessageAt` desc (most recent first), tie-break by name
+ *   4. `leaders`
+ *   5. `null` if none active
+ *
+ * `dm` / `group_dm` / `event` are excluded entirely. `reach_out` is also
+ * excluded: it renders with `ReachOutScreen` (leader 1:1 outreach), not the
+ * normal message list, so a posted message/event-share would be invisible
+ * there and it's not a sensible chat-landing target.
+ */
+function pickDefaultChannelByPriority(
+  channels: Doc<"chatChannels">[],
+): Doc<"chatChannels"> | null {
+  const isActive = (c: Doc<"chatChannels">) =>
+    c.isArchived !== true && c.isEnabled !== false;
+
+  const active = channels.filter(isActive);
+
+  // 1. main
+  const main = active.find((c) => c.channelType === "main");
+  if (main) return main;
+
+  // 2. announcements
+  const announcements = active.find((c) => c.channelType === "announcements");
+  if (announcements) return announcements;
+
+  // 3. custom / pco_services / cross_team, most recently active first.
+  //    (reach_out is intentionally NOT here — see doc comment above.)
+  const memberFacing = active
+    .filter(
+      (c) =>
+        c.channelType === "custom" ||
+        c.channelType === "pco_services" ||
+        c.channelType === "cross_team",
+    )
+    .sort((a, b) => {
+      const aTime = a.lastMessageAt ?? 0;
+      const bTime = b.lastMessageAt ?? 0;
+      if (aTime !== bTime) return bTime - aTime;
+      return a.name.localeCompare(b.name);
+    });
+  if (memberFacing.length > 0) return memberFacing[0];
+
+  // 4. leaders
+  const leaders = active.find((c) => c.channelType === "leaders");
+  if (leaders) return leaders;
+
+  // 5. nothing active
+  return null;
+}
+
+export async function resolveGroupDefaultChannel(
+  ctx: QueryCtx,
+  groupId: Id<"groups">,
+): Promise<Doc<"chatChannels"> | null> {
+  const channels = await ctx.db
+    .query("chatChannels")
+    .withIndex("by_group", (q) => q.eq("groupId", groupId))
+    .collect();
+
+  return pickDefaultChannelByPriority(channels);
+}
+
+/**
+ * Like `resolveGroupDefaultChannel`, but only considers channels the given user
+ * can actually post to / see — those with an active `chatChannelMembers` row.
+ *
+ * Use this anywhere the result is scoped to a specific user (mobile landing
+ * fallback; the event-share posting fallback in `meetings.postToChat`). The
+ * group-wide resolver can otherwise return a `leaders`/custom/PCO/cross-team
+ * channel the user isn't in — landing them on an invisible channel, or making
+ * `postToChat`'s membership gate throw instead of falling through to a channel
+ * the sender can post to. Members are auto-added to main/announcements;
+ * leaders/custom only have rows for their actual participants.
+ */
+export async function resolveGroupDefaultChannelForUser(
+  ctx: QueryCtx,
+  groupId: Id<"groups">,
+  userId: Id<"users">,
+): Promise<Doc<"chatChannels"> | null> {
+  // Start from the user's active channel memberships rather than the group's
+  // owned channels: this naturally includes SHARED channels (owned by another
+  // group but shared into `groupId`), which `listGroupChannels` also surfaces.
+  // Keep channels that are either owned by this group or shared into it with an
+  // accepted entry — i.e. the set this user can actually see/post to here.
+  const memberships = await ctx.db
+    .query("chatChannelMembers")
+    .withIndex("by_user", (q) => q.eq("userId", userId))
+    .filter((q) => q.eq(q.field("leftAt"), undefined))
+    .collect();
+
+  const accessible: Doc<"chatChannels">[] = [];
+  for (const membership of memberships) {
+    const c = await ctx.db.get(membership.channelId);
+    if (!c) continue;
+    if (c.groupId === groupId) {
+      accessible.push(c);
+      continue;
+    }
+    // Shared channel: include only if shared into this group AND not hidden
+    // from this group's navigation (a linked-group leader can hide it). This
+    // mirrors listGroupChannels' channelEffectiveEnabledForGroup gate so we
+    // don't land members on a channel that's hidden for their group.
+    const sharedIntoGroup =
+      c.isShared === true &&
+      (c.sharedGroups?.some(
+        (sg) => sg.groupId === groupId && sg.status === "accepted",
+      ) ??
+        false);
+    if (sharedIntoGroup && channelEffectiveEnabledForGroup(c, groupId)) {
+      accessible.push(c);
+    }
+  }
+
+  return pickDefaultChannelByPriority(accessible);
 }
 
 type LinkedGroupToggleResult =
@@ -310,12 +449,34 @@ export const getChannel = query({
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
 
-    // Must be a group member to access any channel
+    // Community admins get read-only oversight of any group's channels without
+    // joining (no groupMembers row). Only checked when they aren't already a
+    // member, so normal members never pay for the extra lookup.
+    const isAdminViewer =
+      !groupMembership &&
+      (await isCommunityAdminForGroup(ctx, groupId, userId));
+
+    // Cross-team channels draw their members from serving teams that may live
+    // on other groups, so a synced member is often NOT in the channel's home
+    // group. Their auto-synced membership row IS the authorization — grant
+    // access on that alone, mirroring how event channels bypass the group gate.
     if (!groupMembership) {
-      return null;
+      if (channel.channelType === "cross_team" && membership) {
+        return {
+          ...channel,
+          slug: getChannelSlug(channel),
+          myRequestState: undefined as string | undefined,
+          inviterDisplayName: undefined as string | undefined,
+          recipientPending: false,
+        };
+      }
+      // Must be a group member — or a community admin viewer — for any other channel
+      if (!isAdminViewer) {
+        return null;
+      }
     }
 
-    const isLeaderOrAdmin = isLeaderRole(groupMembership.role);
+    const isLeaderOrAdmin = isAdminViewer || isLeaderRole(groupMembership?.role);
 
     // Leader-disabled custom/PCO: members cannot open the channel
     if (
@@ -333,8 +494,8 @@ export const getChannel = query({
       }
     }
 
-    // For custom channels, must be a channel member
-    if (isCustomChannel(channel.channelType) && !membership) {
+    // For custom channels, must be a channel member (or a community admin viewer)
+    if (isCustomChannel(channel.channelType) && !membership && !isAdminViewer) {
       return null;
     }
 
@@ -367,6 +528,15 @@ export const getChannelBySlug = query({
      * and the screen shows "no longer available." Defaults to false.
      */
     includeArchived: v.optional(v.boolean()),
+    /**
+     * Optional disambiguator for the shared-channel fallbacks. Channel slugs
+     * are only unique within the owning group, so a group invited to two
+     * channels with the same slug (from two different primary groups) would
+     * otherwise resolve to whichever the scan hits first. When the caller
+     * knows the exact channel (e.g. a shared-channel request row), it passes
+     * the id so we resolve that specific channel.
+     */
+    channelId: v.optional(v.id("chatChannels")),
   },
   handler: async (ctx, args) => {
     // 1. Authenticate user
@@ -387,6 +557,11 @@ export const getChannelBySlug = query({
     // Also try matching by channelType for backwards compatibility
     // (e.g., "general" might be stored as slug, but "main" is channelType)
     let resolvedChannel = channel;
+
+    // Set when the channel is resolved via the pending shared-invite fallback
+    // below — i.e. the URL group has been invited to this channel but hasn't
+    // accepted yet. Drives the accept/decline UI on the channel info screen.
+    let pendingShareForGroup = false;
     if (!resolvedChannel) {
       // Map common slug names to channelType
       const slugToType: Record<string, string> = {
@@ -404,6 +579,15 @@ export const getChannelBySlug = query({
           ? await typeQuery.first()
           : await typeQuery.filter((q) => q.eq(q.field("isArchived"), false)).first();
       }
+    }
+
+    // When the caller supplies an explicit channelId (shared-channel request
+    // row or notification deep-link), it is authoritative: a same-slug *local*
+    // channel in the URL group must not shadow the intended (shared) channel.
+    // Drop a mismatched local hit so the shared fallbacks below — which match
+    // by id — can resolve the right one.
+    if (args.channelId && resolvedChannel && resolvedChannel._id !== args.channelId) {
+      resolvedChannel = null;
     }
 
     // 2b. Shared channel fallback: if no channel found in this group,
@@ -428,6 +612,7 @@ export const getChannelBySlug = query({
       for (const membership of userMemberships) {
         const candidateChannel = await ctx.db.get(membership.channelId);
         if (!candidateChannel || candidateChannel.isArchived) continue;
+        if (args.channelId && candidateChannel._id !== args.channelId) continue;
         if (!candidateChannel.isShared) continue;
         const sharedCustomOrPco =
           isCustomChannel(candidateChannel.channelType) ||
@@ -455,6 +640,50 @@ export const getChannelBySlug = query({
       }
     }
 
+    // 2c. Shared-invite fallback for leaders of the *invited* group. Covers two
+    // cases the membership-based fallback (2b) misses because the leader may not
+    // be a `chatChannelMember`:
+    //   - pending: they can open the info screen to accept/decline; or
+    //   - accepted: after accepting, `respondToChannelInvite` only flips the
+    //     sharedGroups status — it doesn't add the leader as a channel member —
+    //     so without this they'd land on "channel no longer available."
+    // Gated to leaders — regular members never see a channel via this path; they
+    // resolve accepted shared channels through 2b once they're channel members.
+    if (!resolvedChannel) {
+      const membershipForUrlGroup = await ctx.db
+        .query("groupMembers")
+        .withIndex("by_group_user", (q) =>
+          q.eq("groupId", args.groupId).eq("userId", userId)
+        )
+        .filter((q) => q.eq(q.field("leftAt"), undefined))
+        .first();
+
+      if (membershipForUrlGroup && isLeaderRole(membershipForUrlGroup.role)) {
+        const sharedChannels = await ctx.db
+          .query("chatChannels")
+          .withIndex("by_isShared", (q) => q.eq("isShared", true))
+          .filter((q) => q.eq(q.field("archivedAt"), undefined))
+          .collect();
+
+        for (const candidate of sharedChannels) {
+          if (candidate.isArchived) continue;
+          if (args.channelId && candidate._id !== args.channelId) continue;
+          const candidateSlug = getChannelSlug(candidate);
+          if (candidateSlug !== args.slug && candidate.slug !== args.slug) continue;
+          const entry = candidate.sharedGroups?.find(
+            (sg) =>
+              sg.groupId === args.groupId &&
+              (sg.status === "pending" || sg.status === "accepted")
+          );
+          if (entry) {
+            resolvedChannel = candidate;
+            pendingShareForGroup = entry.status === "pending";
+            break;
+          }
+        }
+      }
+    }
+
     if (!resolvedChannel) {
       return null;
     }
@@ -468,7 +697,12 @@ export const getChannelBySlug = query({
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
 
-    if (!groupMembership) {
+    // Community admins get read-only oversight without joining the group.
+    const isAdminViewer =
+      !groupMembership &&
+      (await isCommunityAdminForGroup(ctx, args.groupId, userId));
+
+    if (!groupMembership && !isAdminViewer) {
       return null;
     }
 
@@ -482,7 +716,7 @@ export const getChannelBySlug = query({
       .first();
 
     const isMember = !!channelMembership;
-    const isLeaderOrAdmin = isLeaderRole(groupMembership.role);
+    const isLeaderOrAdmin = isAdminViewer || isLeaderRole(groupMembership?.role);
 
     // Access control based on channel type
     if (resolvedChannel.channelType === "leaders") {
@@ -492,8 +726,12 @@ export const getChannelBySlug = query({
     }
 
     // Custom and pco_services channels require membership (or leader/admin access)
-    // For shared channels accessed from secondary group, channel membership is required
-    if ((isCustomChannel(resolvedChannel.channelType) || resolvedChannel.channelType === "pco_services") &&
+    // For shared channels accessed from secondary group, channel membership is required.
+    // Cross-team channels are roster-synced: only an auto-synced member (or a
+    // managing leader) may open them, never an arbitrary group member.
+    if ((isCustomChannel(resolvedChannel.channelType) ||
+         resolvedChannel.channelType === "pco_services" ||
+         resolvedChannel.channelType === "cross_team") &&
         !isMember && !isLeaderOrAdmin) {
       return null;
     }
@@ -508,13 +746,29 @@ export const getChannelBySlug = query({
       return null;
     }
 
+    // Name of the owning (primary) group — surfaced so the channel info
+    // screen can label shared channels ("Shared from <group>") and the
+    // pending-invite prompt without an extra round-trip.
+    let primaryGroupName: string | null = null;
+    if (
+      resolvedChannel.isShared &&
+      resolvedChannel.groupId &&
+      resolvedChannel.groupId !== args.groupId
+    ) {
+      const owningGroup = await ctx.db.get(resolvedChannel.groupId);
+      primaryGroupName = owningGroup?.name ?? null;
+    }
+
     // 5. Return channel with membership info
     return {
       ...resolvedChannel,
       slug: getChannelSlug(resolvedChannel),
       isMember,
       role: channelMembership?.role,
-      userGroupRole: groupMembership.role,
+      isMuted: channelMembership?.isMuted,
+      userGroupRole: groupMembership?.role,
+      pendingShareForGroup,
+      primaryGroupName,
     };
   },
 });
@@ -541,7 +795,13 @@ export const getChannelsByGroup = query({
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
 
-    if (!groupMembership) {
+    // Community admins can view any group's channels without joining (read-only
+    // oversight). Only looked up when they aren't already a member.
+    const isAdminViewer =
+      !groupMembership &&
+      (await isCommunityAdminForGroup(ctx, args.groupId, userId));
+
+    if (!groupMembership && !isAdminViewer) {
       return [];
     }
 
@@ -567,8 +827,8 @@ export const getChannelsByGroup = query({
       }
     }
 
-    // Filter based on role and membership
-    const isLeader = isLeaderRole(groupMembership.role);
+    // Filter based on role and membership (admin viewers see like a leader)
+    const isLeader = isAdminViewer || isLeaderRole(groupMembership?.role);
 
     const filteredChannels = channels.filter((channel) => {
       // Event channels are scoped to meetings, not surfaced on the group page.
@@ -600,6 +860,54 @@ export const getChannelsByGroup = query({
       ...channel,
       slug: getChannelSlug(channel),
     }));
+  },
+});
+
+/**
+ * Get the group's best "default landing / post" channel for the caller.
+ *
+ * Mobile calls this to know where to land when General (the main channel) is
+ * disabled. Mirrors the membership gate used by `getChannelsByGroup`: the
+ * caller must be an active group member. Returns `null` when the group has no
+ * active member-facing channel.
+ */
+export const getGroupDefaultChannel = query({
+  args: {
+    token: v.string(),
+    groupId: v.id("groups"),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+
+    // Check group membership (same gate as getChannelsByGroup)
+    const groupMembership = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group_user", (q) =>
+        q.eq("groupId", args.groupId).eq("userId", userId)
+      )
+      .filter((q) => q.eq(q.field("leftAt"), undefined))
+      .first();
+
+    if (!groupMembership) {
+      return null;
+    }
+
+    // Resolve among channels the CALLER can actually access, not the
+    // group-wide set — see resolveGroupDefaultChannelForUser.
+    const channel = await resolveGroupDefaultChannelForUser(
+      ctx,
+      args.groupId,
+      userId
+    );
+    if (!channel) {
+      return null;
+    }
+
+    return {
+      channelId: channel._id,
+      slug: getChannelSlug(channel),
+      channelType: channel.channelType,
+    };
   },
 });
 
@@ -925,15 +1233,29 @@ export const listGroupChannels = query({
     channelType: v.string(),
     name: v.string(),
     description: v.optional(v.string()),
+    hint: v.optional(v.string()),
     memberCount: v.number(),
     isArchived: v.boolean(),
     isMember: v.boolean(),
     role: v.optional(v.string()),
+    /** Caller's chatChannelMembers.isMuted — whatsapp-shell mute state. */
+    isMuted: v.optional(v.boolean()),
     unreadCount: v.number(),
     isPinned: v.boolean(),
     lastMessageAt: v.optional(v.number()),
     isShared: v.optional(v.boolean()),
+    /** Number of groups with an ACCEPTED share on this channel. Only set
+     *  when the channel is OWNED by the queried group, so the group page can
+     *  label an owned shared channel ("Shared with N groups") without
+     *  shipping the full sharedGroups array to the client. */
+    sharedGroupCount: v.optional(v.number()),
+    /** For announcements channels shared INTO this group (owned by another
+     *  group): the owning group, so the group page can label the row
+     *  ("announcements come from …") and disambiguate same-slug channels. */
+    sharedFromGroupId: v.optional(v.id("groups")),
+    sharedFromGroupName: v.optional(v.string()),
     isEnabled: v.boolean(),
+    isServingTeam: v.optional(v.boolean()),
   })),
   handler: async (ctx, args) => {
     // 1. Authenticate user
@@ -1049,8 +1371,14 @@ export const listGroupChannels = query({
       if (ch.channelType === "reach_out") {
         return true;
       }
-      // Regular members can only see custom/PCO channels they're members of
-      const requiresMembership = isCustomChannel(ch.channelType) || ch.channelType === "pco_services";
+      // Regular members can only see custom/PCO/cross-team channels they're
+      // members of. Cross-team membership is auto-synced from serving-role
+      // assignments, so a rostered member is a member and sees it; everyone
+      // else doesn't. Leaders/admins already returned true above.
+      const requiresMembership =
+        isCustomChannel(ch.channelType) ||
+        ch.channelType === "pco_services" ||
+        ch.channelType === "cross_team";
       if (requiresMembership && !userChannelMemberships.has(ch._id)) {
         return false;
       }
@@ -1108,21 +1436,47 @@ export const listGroupChannels = query({
         const channelSlug = getChannelSlug(channel);
         const isPinned = pinnedChannelSlugs.includes(channelSlug);
 
+        const ownedByThisGroup = channel.groupId === args.groupId;
+
+        // Announcements channel shared INTO this group — surface the owning
+        // group so the client can label the row and open the right channel
+        // (its slug collides with the group's own announcements channel).
+        let sharedFromGroupId: Id<"groups"> | undefined;
+        let sharedFromGroupName: string | undefined;
+        if (
+          !ownedByThisGroup &&
+          channel.groupId &&
+          channel.channelType === "announcements"
+        ) {
+          sharedFromGroupId = channel.groupId;
+          const owningGroup = await ctx.db.get(channel.groupId);
+          sharedFromGroupName = owningGroup?.name ?? "Unknown Group";
+        }
+
         return {
           _id: channel._id,
           slug: channelSlug,
           channelType: channel.channelType,
           name: channel.name,
           description: channel.description,
+          hint: channel.hint,
           memberCount: channel.memberCount,
           isArchived: channel.isArchived,
           isMember,
           role: membership?.role,
+          isMuted: membership?.isMuted,
           unreadCount,
           isPinned,
           lastMessageAt: channel.lastMessageAt,
           isShared: channel.isShared || undefined,
+          sharedGroupCount: ownedByThisGroup
+            ? channel.sharedGroups?.filter((sg) => sg.status === "accepted")
+                .length || undefined
+            : undefined,
+          sharedFromGroupId,
+          sharedFromGroupName,
           isEnabled: channelEffectiveEnabledForGroup(channel, args.groupId),
+          isServingTeam: channel.isServingTeam ?? undefined,
         };
       })
     );
@@ -1144,10 +1498,37 @@ export const getInboxChannels = query({
   args: {
     token: v.string(),
     communityId: v.optional(v.id("communities")),
+    /**
+     * When set, the inbox is restricted to the serving context of these event
+     * plans (each plan's team + linked meeting channels, via
+     * `resolveServingChannelIds`) and returned FLAT — every allowed channel is
+     * its own primary inbox item, with no nested sub-channel grouping. Used by
+     * the mobile inbox while in serving mode, which spans EVERY plan the user is
+     * serving today (or the single plan they opened early to prepare); the
+     * client groups the flat rows into a section per owning group. A channel
+     * shared by two plans appears once (the set is a union). An EMPTY array
+     * still means serving mode — it yields an empty serving inbox rather than
+     * falling back to the full one.
+     */
+    servingPlanIds: v.optional(v.array(v.id("eventPlans"))),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
     const inboxQueryNow = Date.now();
+
+    // In serving mode, resolve the allowed channel-id set up front, unioned
+    // across every plan the user is serving today. `null` means "no filtering"
+    // (normal inbox); a Set means "restrict + flatten". The arg's PRESENCE is
+    // what selects serving mode — passing an empty list must not spill the
+    // whole inbox into the serving surface.
+    let servingChannelIds: Set<string> | null = null;
+    if (args.servingPlanIds) {
+      servingChannelIds = new Set<string>();
+      for (const planId of args.servingPlanIds) {
+        const ids = await resolveServingChannelIds(ctx, planId);
+        for (const id of ids) servingChannelIds.add(id);
+      }
+    }
 
     // Get all active group memberships for this user
     const groupMemberships = await ctx.db
@@ -1228,6 +1609,18 @@ export const getInboxChannels = query({
 
     const userChannelIds = new Set(userChannelMemberships.map((m) => m.channelId));
 
+    // Channels this user has muted (chatChannelMembers.isMuted), keyed by
+    // channelId. Every channel the inbox can show the user is one they hold a
+    // membership row for, so a miss here safely defaults to "not muted" below.
+    // Mirrors how `listGroupChannels` surfaces `isMuted` from the membership
+    // row (see `isMuted: membership?.isMuted` above) — flag-gated inbox
+    // hygiene (docs/plans/church-migration-ui-redesign/README.md, "Channel
+    // hygiene") uses this to sink muted channels out of sub-rows and the
+    // group's aggregated unread badge.
+    const mutedChannelIds = new Set(
+      userChannelMemberships.filter((m) => m.isMuted).map((m) => m.channelId)
+    );
+
     // Get read states for all user's channels
     const unreadCounts = new Map<string, number>();
     for (const membership of userChannelMemberships) {
@@ -1262,9 +1655,11 @@ export const getInboxChannels = query({
     // Find shared channels from user's memberships that aren't already in allChannels.
     // These are channels owned by other groups but shared with one of the user's groups.
     const allChannelIds = new Set(allChannels.map((ch) => ch._id));
-    // Track event channels picked up from chatChannelMembers so we can ensure
-    // their owning group appears in validGroups / groupRoleMap below.
-    const eventChannelsToInclude: Doc<"chatChannels">[] = [];
+    // Channels picked up from chatChannelMembers whose owning group the user is
+    // NOT in (event channels always; cross-team channels only in serving mode),
+    // so we can ensure that owning group appears in validGroups / groupRoleMap
+    // below and the grouping step picks the channel up.
+    const nonGroupChannelsToInclude: Doc<"chatChannels">[] = [];
     for (const membership of userChannelMemberships) {
       if (allChannelIds.has(membership.channelId)) continue;
       const candidateChannel = await ctx.db.get(membership.channelId);
@@ -1284,27 +1679,44 @@ export const getInboxChannels = query({
         const lastMessageAt = candidateChannel.lastMessageAt ?? 0;
         if (lastMessageAt <= 0) continue;
         if (lastMessageAt < inboxQueryNow - INBOX_EVENT_HIDE_AFTER_MS) continue;
-        eventChannelsToInclude.push(candidateChannel);
+        nonGroupChannelsToInclude.push(candidateChannel);
         continue;
       }
 
-      if (!candidateChannel.isShared || !candidateChannel.sharedGroups) continue;
+      // Cross-team channels in SERVING MODE: membership is auto-synced from
+      // serving-role assignments (a rostered volunteer gets a chatChannelMembers
+      // row without being a member of the channel's home group), so a same-group
+      // channel the volunteer isn't a group member of never arrives via the
+      // group-owned fetch above. When it's one of this plan's resolved serving
+      // channels, keep it as a candidate so the serving flatten can surface it.
+      // This gate is serving-only (`servingChannelIds`), so the normal inbox is
+      // unchanged. The flatten still filters by servingChannelIds and this loop
+      // only ever sees channels the user has an active membership row for, so
+      // nothing leaks to a non-member.
+      let isServingCrossTeam = false;
+      if (candidateChannel.channelType === "cross_team" && servingChannelIds) {
+        if (!servingChannelIds.has(candidateChannel._id)) continue;
+        isServingCrossTeam = true;
+      }
 
-      // Check if any of the user's valid groups appear in sharedGroups with "accepted" status
-      const hasAcceptedGroup = candidateChannel.sharedGroups.some(
-        (sg) => validGroupIds.has(sg.groupId) && sg.status === "accepted"
-      );
-      if (hasAcceptedGroup) {
-        const acceptedEntry = candidateChannel.sharedGroups.find(
-          (sg) => validGroupIds.has(sg.groupId) && sg.status === "accepted"
-        );
-        const roleInLinkedGroup = acceptedEntry
-          ? groupRoleMap.get(acceptedEntry.groupId)
-          : undefined;
+      // Shared channels (including serving cross-team ones): nest under the
+      // user's OWN group via `sharedGroups`. `resolveCrossTeamSharing` shares a
+      // cross-team channel into every campus group that contributes a source
+      // team precisely so a synced volunteer sees it under their own campus —
+      // serving mode must honour that too, or the channel's home group gets
+      // injected below as a section the user has no membership in.
+      const acceptedEntry = candidateChannel.isShared
+        ? candidateChannel.sharedGroups?.find(
+            (sg) => validGroupIds.has(sg.groupId) && sg.status === "accepted"
+          )
+        : undefined;
+      if (acceptedEntry) {
+        const roleInLinkedGroup = groupRoleMap.get(acceptedEntry.groupId);
         const leaderInLinkedGroup = isLeaderRole(roleInLinkedGroup);
-        const visibleInLinkedGroup = acceptedEntry
-          ? channelEffectiveEnabledForGroup(candidateChannel, acceptedEntry.groupId)
-          : channelIsLeaderEnabled(candidateChannel);
+        const visibleInLinkedGroup = channelEffectiveEnabledForGroup(
+          candidateChannel,
+          acceptedEntry.groupId
+        );
         if (
           (isCustomChannel(candidateChannel.channelType) ||
             candidateChannel.channelType === "pco_services") &&
@@ -1317,14 +1729,26 @@ export const getInboxChannels = query({
         allChannelIds.add(candidateChannel._id);
         // Also add to userChannelIds since we know user is a member
         userChannelIds.add(candidateChannel._id);
+        continue;
+      }
+
+      // No shared group the user belongs to: a serving cross-team channel still
+      // has to reach the serving inbox, so fall back to attaching it to its home
+      // group below.
+      if (isServingCrossTeam) {
+        nonGroupChannelsToInclude.push(candidateChannel);
       }
     }
 
-    // Event channels: surface every enabled event channel the user is a member
-    // of, even when they're not a member of the owning group. We fetch the
-    // owning group (and its group type) on demand and add it to validGroups
-    // so the normal grouping step picks the channel up.
-    for (const eventChannel of eventChannelsToInclude) {
+    // Surface each collected channel (enabled event channels always; serving
+    // cross-team channels) even when the user isn't a member of the owning
+    // group. We fetch the owning group (and its group type) on demand and add
+    // it to validGroups so the normal grouping step picks the channel up.
+    // Groups added here are NOT memberships — the shared-channel dedup below
+    // must never let one of them claim a channel away from a group the user
+    // actually belongs to.
+    const injectedGroupIds = new Set<Id<"groups">>();
+    for (const eventChannel of nonGroupChannelsToInclude) {
       if (!eventChannel.groupId) continue; // Skip ad-hoc channels (DM/group_dm)
       const ecGroupId = eventChannel.groupId;
       const owningGroup = allGroups.find((g) => g && g._id === ecGroupId)
@@ -1335,6 +1759,7 @@ export const getInboxChannels = query({
       if (!validGroupIds.has(owningGroup._id)) {
         validGroups.push(owningGroup);
         validGroupIds.add(owningGroup._id);
+        injectedGroupIds.add(owningGroup._id);
         // Non-group-members default to "member" userRole for grouping only.
         if (!groupRoleMap.has(owningGroup._id)) {
           groupRoleMap.set(owningGroup._id, "member");
@@ -1423,6 +1848,14 @@ export const getInboxChannels = query({
         unreadCount: number;
         isShared: boolean | undefined;
         isEnabled: boolean | undefined;
+        /**
+         * Whether the current user has muted this channel
+         * (`chatChannelMembers.isMuted`). Additive field for the flag-gated
+         * Chats-list hygiene rules (cluster caps + muted sink) — see
+         * docs/plans/church-migration-ui-redesign/README.md, "Channel
+         * hygiene".
+         */
+        isMuted: boolean;
         meetingId: Id<"meetings"> | undefined;
         meetingScheduledAt: number | null;
         /**
@@ -1542,6 +1975,7 @@ export const getInboxChannels = query({
           unreadCount: unreadCounts.get(ch._id) || 0,
           isShared: ch.isShared || undefined,
           isEnabled: ch.isEnabled,
+          isMuted: mutedChannelIds.has(ch._id),
           meetingId: ch.meetingId,
           meetingScheduledAt:
             ch.channelType === "event" && ch.meetingId
@@ -1577,23 +2011,95 @@ export const getInboxChannels = query({
       });
     }
 
-    // Sort by most recent message across all channels in each group
-    result.sort((a, b) => {
-      // Announcement groups always first
+    // Order groups by most recent message across their visible channels.
+    // Announcement groups always anchor the top.
+    const byMostRecentActivity = (
+      a: (typeof result)[number],
+      b: (typeof result)[number]
+    ) => {
       if (a.group.isAnnouncementGroup && !b.group.isAnnouncementGroup) return -1;
       if (!a.group.isAnnouncementGroup && b.group.isAnnouncementGroup) return 1;
 
-      // Then by most recent message
-      const aLastMessage = Math.max(...a.channels.map((c) => c.lastMessageAt || 0));
-      const bLastMessage = Math.max(...b.channels.map((c) => c.lastMessageAt || 0));
+      const aLastMessage = Math.max(
+        0,
+        ...a.channels.map((c) => c.lastMessageAt || 0)
+      );
+      const bLastMessage = Math.max(
+        0,
+        ...b.channels.map((c) => c.lastMessageAt || 0)
+      );
 
       if (!aLastMessage && !bLastMessage) return 0;
       if (!aLastMessage) return 1;
       if (!bLastMessage) return -1;
       return bLastMessage - aLastMessage;
-    });
+    };
 
-    return result;
+    // Sort first so the dedup below attaches each shared channel to the group
+    // the user is most actively engaged with (the first group it appears under).
+    result.sort(byMostRecentActivity);
+
+    // Collapse shared-channel duplicates. A channel shared across several of the
+    // user's groups would otherwise render once under every group it's shared
+    // with — e.g. a "Leaders" channel shared across three sibling groups shows
+    // up three times in the inbox. Show each shared channel exactly once,
+    // attached to the most-active group above; keep the first occurrence and
+    // drop the channel from later groups. Unread counts are per-channel, so
+    // collapsing the row collapses the duplicated badge too.
+    //
+    // Groups the user isn't a member of (injected above to carry an event /
+    // serving cross-team channel) claim LAST, whatever their activity: a
+    // cross-campus event channel with a fresh message would otherwise sort its
+    // home group to the top and let it claim a shared channel away from the
+    // user's own campus, leaving a section for a group they don't belong to.
+    const claimOrder = [
+      ...result.filter((entry) => !injectedGroupIds.has(entry.group._id)),
+      ...result.filter((entry) => injectedGroupIds.has(entry.group._id)),
+    ];
+    const seenSharedChannelIds = new Set<Id<"chatChannels">>();
+    for (const groupEntry of claimOrder) {
+      groupEntry.channels = groupEntry.channels.filter((ch) => {
+        if (!ch.isShared) return true;
+        if (seenSharedChannelIds.has(ch._id)) return false;
+        seenSharedChannelIds.add(ch._id);
+        return true;
+      });
+    }
+
+    // Drop any group left empty once its only channel(s) were shared duplicates
+    // shown elsewhere, so the inbox doesn't render an empty group header.
+    const dedupedResult = result.filter(
+      (groupEntry) => groupEntry.channels.length > 0
+    );
+
+    // Re-sort after dedup: a group that lost its most recent channel to the
+    // collapse must fall back to the recency of its remaining visible channels,
+    // otherwise it keeps the (now stale) position from the first sort and the
+    // inbox is no longer ordered by most-recent visible activity.
+    dedupedResult.sort(byMostRecentActivity);
+
+    // Serving mode: restrict to the plan's serving channels and FLATTEN. Every
+    // allowed channel becomes its own primary inbox item (one channel per
+    // returned entry) — no nested sub-channel grouping — so the serving inbox
+    // reads as a flat list of the channels relevant to the event. Ordered by
+    // most-recent activity across the (now single-channel) entries.
+    if (servingChannelIds) {
+      const flattened: typeof dedupedResult = [];
+      for (const groupEntry of dedupedResult) {
+        for (const channel of groupEntry.channels) {
+          if (!servingChannelIds.has(channel._id)) continue;
+          flattened.push({
+            group: groupEntry.group,
+            channels: [channel],
+            userRole: groupEntry.userRole,
+          });
+        }
+      }
+      flattened.sort(byMostRecentActivity);
+      return flattened;
+    }
+
+    return dedupedResult;
   },
 });
 
@@ -1721,6 +2227,13 @@ export const createChannel = mutation({
 });
 
 /**
+ * Max length for a channel's composer hint. Mirrors the `maxLength` on the
+ * channel info editor so a modified client can't persist an oversized
+ * placeholder that `listGroupChannels` would then ship to every member.
+ */
+const CHANNEL_HINT_MAX_LENGTH = 100;
+
+/**
  * Update channel details.
  */
 export const updateChannel = mutation({
@@ -1729,6 +2242,8 @@ export const updateChannel = mutation({
     channelId: v.id("chatChannels"),
     name: v.optional(v.string()),
     description: v.optional(v.string()),
+    /** Composer placeholder hint. Pass "" to clear it. */
+    hint: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
@@ -1769,19 +2284,57 @@ export const updateChannel = mutation({
     const updates: Partial<{
       name: string;
       description: string;
+      hint: string | undefined;
       updatedAt: number;
     }> = {
       updatedAt: Date.now(),
     };
 
     if (args.name !== undefined) {
-      updates.name = args.name;
+      // Validate: trim, 1-50 chars, must contain a letter or number. Mirrors
+      // `createCustomChannel` / `updateTeam` so a rename can't blank out a name.
+      const trimmedName = args.name.trim();
+      if (trimmedName.length < 1 || trimmedName.length > 50) {
+        throw new ConvexError("Channel name must be 1-50 characters.");
+      }
+      if (!/[a-zA-Z0-9]/.test(trimmedName)) {
+        throw new ConvexError(
+          "Channel name must contain at least one letter or number."
+        );
+      }
+      updates.name = trimmedName;
     }
     if (args.description !== undefined) {
       updates.description = args.description;
     }
+    if (args.hint !== undefined) {
+      const trimmedHint = args.hint.trim();
+      if (trimmedHint.length > CHANNEL_HINT_MAX_LENGTH) {
+        throw new Error(
+          `Hint must be ${CHANNEL_HINT_MAX_LENGTH} characters or fewer`,
+        );
+      }
+      // Empty string clears the hint so it falls back to the default placeholder.
+      updates.hint = trimmedHint.length > 0 ? trimmedHint : undefined;
+    }
 
     await ctx.db.patch(args.channelId, updates);
+
+    // Serving-team channels back a `teams` record. Keep the team name in sync
+    // with the channel name so the roster and the conversation stay labelled
+    // consistently everywhere (mirrors `updateTeam` in scheduling/teams.ts).
+    if (channel.isServingTeam && updates.name !== undefined) {
+      const team = await ctx.db
+        .query("teams")
+        .withIndex("by_channel", (q) => q.eq("channelId", args.channelId))
+        .first();
+      if (team) {
+        await ctx.db.patch(team._id, {
+          name: updates.name,
+          updatedAt: Date.now(),
+        });
+      }
+    }
   },
 });
 
@@ -1819,6 +2372,17 @@ export const archiveChannel = mutation({
       (groupMembership.role !== "leader" && groupMembership.role !== "admin")
     ) {
       throw new Error("Only group leaders can archive channels");
+    }
+
+    // A shared channel (pending OR accepted entries) can't be archived out
+    // from under the groups it's shared with — unshare first. Mirrors the
+    // toggleAnnouncementsChannel disable guard.
+    if ((channel.sharedGroups?.length ?? 0) > 0) {
+      throw new ConvexError({
+        code: "CHANNEL_SHARED",
+        message:
+          "This channel is shared with other groups. Remove the shared groups before archiving it.",
+      });
     }
 
     const now = Date.now();
@@ -2071,6 +2635,16 @@ export const setCustomChannelLeaderEnabled = mutation({
       return { channelId: args.channelId, status: "disabled" as const };
     }
 
+    if (channel.isEnabled !== false && !channel.isArchived) {
+      return { channelId: args.channelId, status: "already_enabled" as const };
+    }
+
+    // Showing a channel re-acquires the slot that hiding it freed. Without this
+    // a full group could hide a channel, create a replacement, un-hide the
+    // original, and repeat past the cap indefinitely. The channel being shown
+    // is currently archived or hidden, so it doesn't count itself.
+    await assertChannelCapacity(ctx, groupId);
+
     if (channel.isArchived) {
       await ctx.db.patch(args.channelId, {
         isArchived: false,
@@ -2079,10 +2653,6 @@ export const setCustomChannelLeaderEnabled = mutation({
         updatedAt: now,
       });
       return { channelId: args.channelId, status: "enabled" as const };
-    }
-
-    if (channel.isEnabled !== false) {
-      return { channelId: args.channelId, status: "already_enabled" as const };
     }
 
     await ctx.db.patch(args.channelId, {
@@ -2282,6 +2852,14 @@ export const togglePcoChannel = mutation({
     }
 
     // Enable: recover from archived (legacy full archive) or leader-disabled (isEnabled: false).
+    if (!channel.isArchived && channel.isEnabled !== false) {
+      return { channelId: args.channelId, status: "already_enabled" as const };
+    }
+
+    // Showing a channel re-acquires the slot that hiding it freed — see the
+    // matching check in `setCustomChannelLeaderEnabled`.
+    await assertChannelCapacity(ctx, groupId);
+
     if (channel.isArchived) {
       await ctx.db.patch(args.channelId, {
         isArchived: false,
@@ -2289,8 +2867,6 @@ export const togglePcoChannel = mutation({
         isEnabled: true,
         updatedAt: now,
       });
-    } else if (channel.isEnabled !== false) {
-      return { channelId: args.channelId, status: "already_enabled" as const };
     } else {
       await ctx.db.patch(args.channelId, {
         isEnabled: true,
@@ -2504,6 +3080,13 @@ export const createCustomChannel = mutation({
     name: v.string(),
     description: v.optional(v.string()),
     joinMode: v.optional(v.union(v.literal("open"), v.literal("approval_required"))),
+    /**
+     * Whether to add the creator as an `owner` member of the new channel.
+     * Defaults to `true` (existing behavior). Event Team channels pass
+     * `false` — their creator manages the channel as a group leader and is
+     * not auto-added, since membership is auto-synced from event plans.
+     */
+    addCreatorAsMember: v.optional(v.boolean()),
   },
   returns: v.object({
     channelId: v.id("chatChannels"),
@@ -2528,18 +3111,11 @@ export const createCustomChannel = mutation({
       throw new ConvexError("Only group leaders can create channels.");
     }
 
-    // 3. Count existing non-archived channels for this group
-    const existingChannels = await ctx.db
-      .query("chatChannels")
-      .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
-      .filter((q) => q.eq(q.field("isArchived"), false))
-      .collect();
-
-    if (existingChannels.length >= 20) {
-      throw new ConvexError(
-        "This group has reached the maximum of 20 channels. Archive some channels to create new ones."
-      );
-    }
+    // 3. One scan feeds both the capacity check and slug generation below.
+    // Only channels a leader actually sees in the channel list count toward the
+    // limit — see `occupiesChannelCapacity` for what's excluded and why.
+    const groupChannels = await loadGroupChannels(ctx, args.groupId);
+    assertChannelCapacityFromList(groupChannels);
 
     // 4. Validate name: trim, check 1-50 chars
     const trimmedName = args.name.trim();
@@ -2553,17 +3129,16 @@ export const createCustomChannel = mutation({
       throw new ConvexError("Channel name must contain at least one letter or number.");
     }
 
-    // 5. Get existing slugs for this group
+    // 5. Get existing slugs for this group, reusing the scan from step 3.
     // Note: Convex mutations are fully atomic (single transaction), so there's no
     // TOCTOU race condition here - concurrent mutations serialize at DB level
-    const existingSlugs = existingChannels
-      .map((ch) => ch.slug)
-      .filter((slug): slug is string => slug !== undefined);
+    const existingSlugs = existingSlugsFrom(groupChannels);
 
     // 6. Generate slug
     const slug = generateChannelSlug(trimmedName, existingSlugs);
 
     // 7. Insert chatChannels record
+    const addCreatorAsMember = args.addCreatorAsMember ?? true;
     const now = Date.now();
     const channelId = await ctx.db.insert("chatChannels", {
       groupId: args.groupId,
@@ -2575,21 +3150,28 @@ export const createCustomChannel = mutation({
       createdAt: now,
       updatedAt: now,
       isArchived: false,
-      memberCount: 1,
+      memberCount: addCreatorAsMember ? 1 : 0,
       joinMode: args.joinMode,
     });
 
-    // 8. Insert chatChannelMembers record for the creator as owner
-    const user = await ctx.db.get(userId);
-    await ctx.db.insert("chatChannelMembers", {
-      channelId,
-      userId,
-      role: "owner",
-      joinedAt: now,
-      isMuted: false,
-      displayName: user ? getDisplayName(user.firstName, user.lastName) : undefined,
-      profilePhoto: user ? getMediaUrl(user.profilePhoto) : undefined,
-    });
+    // 8. Insert chatChannelMembers record for the creator as owner.
+    // Skipped for Event Team channels (`addCreatorAsMember: false`) — their
+    // creator manages the channel as a group leader rather than joining it,
+    // and membership is auto-synced from event-plan assignments.
+    if (addCreatorAsMember) {
+      const user = await ctx.db.get(userId);
+      await ctx.db.insert("chatChannelMembers", {
+        channelId,
+        userId,
+        role: "owner",
+        joinedAt: now,
+        isMuted: false,
+        displayName: user
+          ? getDisplayName(user.firstName, user.lastName)
+          : undefined,
+        profilePhoto: user ? getMediaUrl(user.profilePhoto) : undefined,
+      });
+    }
 
     // 9. Return result
     return { channelId, slug };
@@ -2692,18 +3274,10 @@ export const createAutoChannel = mutation({
       });
     }
 
-    // 4. Count existing non-archived channels for this group
-    const existingChannels = await ctx.db
-      .query("chatChannels")
-      .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
-      .filter((q) => q.eq(q.field("isArchived"), false))
-      .collect();
-
-    if (existingChannels.length >= 20) {
-      throw new ConvexError(
-        "This group has reached the maximum of 20 channels. Archive some channels to create new ones."
-      );
-    }
+    // 4. Same channel-list capacity check as manual channel creation; the one
+    // scan also feeds slug generation below.
+    const groupChannels = await loadGroupChannels(ctx, args.groupId);
+    assertChannelCapacityFromList(groupChannels);
 
     // 5. Validate name: trim, check 1-50 chars
     const trimmedName = args.name.trim();
@@ -2751,10 +3325,8 @@ export const createAutoChannel = mutation({
       });
     }
 
-    // 6. Get existing slugs for this group
-    const existingSlugs = existingChannels
-      .map((ch) => ch.slug)
-      .filter((slug): slug is string => slug !== undefined);
+    // 6. Get existing slugs for this group, reusing the scan from step 4.
+    const existingSlugs = existingSlugsFrom(groupChannels);
 
     // 7. Generate slug
     const slug = generateChannelSlug(trimmedName, existingSlugs);
@@ -3075,10 +3647,18 @@ export const addChannelMembers = mutation({
               notificationsEnabled: true,
             });
 
-            // Trigger welcome message for NEW group members only
+            // Trigger welcome + followup bots for NEW group members only
             await ctx.scheduler.runAfter(
               0,
               internal.functions.scheduledJobs.sendWelcomeMessage,
+              {
+                groupId,
+                userId,
+              }
+            );
+            await ctx.scheduler.runAfter(
+              0,
+              internal.functions.scheduledJobs.assignNewMemberFollowup,
               {
                 groupId,
                 userId,
@@ -3327,11 +3907,16 @@ export async function ensureChannelsForGroupLogic(
   createdById: Id<"users">,
   groupName: string
 ): Promise<{ created: boolean; createdChannelIds: Id<"chatChannels">[] }> {
-  // Check if channels already exist
+  // Check if channels already exist — including ARCHIVED ones. With General
+  // now optional, a leader can disable (archive) the main channel; an archived
+  // main/leaders means it existed and was intentionally turned off, NOT that it
+  // needs provisioning. Filtering to unarchived here would let this self-heal
+  // path (called from useConvexChannelFromGroup when a member's visible channel
+  // list is empty) resurrect a disabled General and create a duplicate
+  // (groupId, "general") row. Re-enabling is the toggle's job, not this one.
   const existingChannels = await ctx.db
     .query("chatChannels")
     .withIndex("by_group", (q) => q.eq("groupId", groupId))
-    .filter((q) => q.eq(q.field("isArchived"), false))
     .collect();
 
   const hasMain = existingChannels.some((ch) => ch.channelType === "main");
@@ -3378,6 +3963,95 @@ export async function ensureChannelsForGroupLogic(
     created: createdChannelIds.length > 0,
     createdChannelIds,
   };
+}
+
+/**
+ * Ensure an enabled "announcements" channel exists for a group.
+ *
+ * Mirrors the create path in `toggleAnnouncementsChannel` but is callable
+ * directly within any mutation for atomic creation (e.g. when provisioning an
+ * announcement group). Members are NOT added here — channel-membership sync
+ * (`syncUserChannelMembershipsLogic`) adds every active group member to
+ * `announcements` channels. Posting stays leader-only, enforced in
+ * `sendMessage`.
+ *
+ * No-op (returns the existing channel id) if a channel already uses the
+ * "announcements" slug for this group.
+ */
+export async function ensureAnnouncementsChannelLogic(
+  ctx: MutationCtx,
+  groupId: Id<"groups">,
+  createdById: Id<"users">
+): Promise<Id<"chatChannels">> {
+  const existing = await ctx.db
+    .query("chatChannels")
+    .withIndex("by_group_slug", (q) =>
+      q.eq("groupId", groupId).eq("slug", "announcements")
+    )
+    .first();
+  if (existing) {
+    return existing._id;
+  }
+
+  const group = await ctx.db.get(groupId);
+  const now = Date.now();
+  return ctx.db.insert("chatChannels", {
+    groupId,
+    // Denormalized so share scans can use the by_community_isShared index.
+    communityId: group?.communityId,
+    slug: "announcements",
+    channelType: "announcements",
+    name: "Announcements",
+    description:
+      "Leader announcements — visible to all members; only leaders can post.",
+    createdById,
+    createdAt: now,
+    updatedAt: now,
+    isArchived: false,
+    isEnabled: true,
+    memberCount: 0,
+  });
+}
+
+/**
+ * Restore a group's own announcements channel after it leaves (or is removed
+ * from) a shared announcements channel that had disabled it on accept.
+ *
+ * Re-enables the channel (creating it via `ensureAnnouncementsChannelLogic`
+ * if it somehow no longer exists), clears the disable audit trail, and
+ * repopulates members via `populateChannelMembersBatch` with
+ * `mirrorGroupRole: true` so members who joined the group during the share
+ * are included and leaders mirror to channel role "admin".
+ */
+export async function restoreOwnAnnouncementsChannelLogic(
+  ctx: MutationCtx,
+  groupId: Id<"groups">,
+  actingUserId: Id<"users">
+): Promise<void> {
+  const now = Date.now();
+  const channelId = await ensureAnnouncementsChannelLogic(ctx, groupId, actingUserId);
+  const channel = await ctx.db.get(channelId);
+  if (!channel) return;
+
+  if (channel.isEnabled === false || channel.disabledByUserId !== undefined) {
+    await ctx.db.patch(channelId, {
+      isEnabled: true,
+      disabledByUserId: undefined,
+      updatedAt: now,
+    });
+  }
+
+  await ctx.scheduler.runAfter(
+    0,
+    internal.functions.messaging.channels.populateChannelMembersBatch,
+    {
+      groupId,
+      channelId,
+      mirrorGroupRole: true,
+      cursor: null,
+      processed: 0,
+    }
+  );
 }
 
 /**
@@ -3738,49 +4412,24 @@ export const toggleReachOutChannel = mutation({
         });
       }
 
-      // Add ALL active group members to the channel
-      const allMembers = await ctx.db
-        .query("groupMembers")
-        .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
-        .filter((q) => q.eq(q.field("leftAt"), undefined))
-        .collect();
+      // Add the enabling leader synchronously so they can post immediately,
+      // before the async batch backfills everyone else (see
+      // ensureChannelMembership).
+      await ensureChannelMembership(ctx, channelId, userId, "member", now);
 
-      for (const member of allMembers) {
-        const user = await ctx.db.get(member.userId);
-        const displayName = user ? getDisplayName(user.firstName, user.lastName) : undefined;
-        const profilePhoto = user ? getMediaUrl(user.profilePhoto) : undefined;
-
-        const existingMembership = await ctx.db
-          .query("chatChannelMembers")
-          .withIndex("by_channel_user", (q) =>
-            q.eq("channelId", channelId).eq("userId", member.userId)
-          )
-          .first();
-
-        if (existingMembership) {
-          if (existingMembership.leftAt) {
-            await ctx.db.patch(existingMembership._id, {
-              leftAt: undefined,
-              joinedAt: now,
-              role: "member",
-              displayName,
-              profilePhoto,
-            });
-          }
-        } else {
-          await ctx.db.insert("chatChannelMembers", {
-            channelId,
-            userId: member.userId,
-            role: "member",
-            joinedAt: now,
-            isMuted: false,
-            displayName,
-            profilePhoto,
-          });
+      // Add all active group members in scheduled batches — whole-community
+      // groups exceed the per-call read limit if iterated inline.
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.messaging.channels.populateChannelMembersBatch,
+        {
+          groupId: args.groupId,
+          channelId,
+          mirrorGroupRole: false,
+          cursor: null,
+          processed: 0,
         }
-      }
-
-      await updateChannelMemberCount(ctx, channelId);
+      );
 
       // Update group config
       await ctx.db.patch(args.groupId, {
@@ -3801,18 +4450,14 @@ export const toggleReachOutChannel = mutation({
         updatedAt: now,
       });
 
-      // Soft-delete all members
-      const activeMembers = await ctx.db
-        .query("chatChannelMembers")
-        .withIndex("by_channel", (q) => q.eq("channelId", existingChannel._id))
-        .filter((q) => q.eq(q.field("leftAt"), undefined))
-        .collect();
-
-      for (const member of activeMembers) {
-        await ctx.db.patch(member._id, { leftAt: now });
-      }
-
+      // Soft-delete all members in scheduled batches (whole-community groups
+      // exceed the per-call read limit if cleared inline).
       await ctx.db.patch(existingChannel._id, { memberCount: 0 });
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.messaging.channels.clearChannelMembersBatch,
+        { channelId: existingChannel._id, cursor: null }
+      );
 
       // Update group config
       await ctx.db.patch(args.groupId, {
@@ -3820,6 +4465,226 @@ export const toggleReachOutChannel = mutation({
       });
 
       return { channelId: existingChannel._id, status: "disabled" };
+    }
+  },
+});
+
+/**
+ * Batch size for whole-community channel membership fan-out. Each scheduled
+ * call gets its own 4096-document read budget; at ~2 reads per member plus the
+ * page itself, 500 stays comfortably under the limit.
+ */
+const CHANNEL_MEMBER_SYNC_BATCH = 500;
+
+/**
+ * Synchronously add/reactivate a single user's membership in a channel.
+ *
+ * The enable paths fan the full member list out to `populateChannelMembersBatch`
+ * and return immediately, so there's a window where the channel is active but no
+ * `chatChannelMembers` row exists yet — including for the leader who just enabled
+ * it. `sendMessage` checks active membership before the Announcements leader gate,
+ * so an immediate post in that window would fail with "Not a member of this
+ * channel". Inserting the caller up front closes that race; the later batch
+ * reactivates the same row idempotently and the final memberCount is unaffected.
+ */
+export async function ensureChannelMembership(
+  ctx: MutationCtx,
+  channelId: Id<"chatChannels">,
+  userId: Id<"users">,
+  role: "admin" | "member",
+  now: number
+): Promise<void> {
+  const user = await ctx.db.get(userId);
+  const displayName = user
+    ? getDisplayName(user.firstName, user.lastName)
+    : undefined;
+  const profilePhoto = user ? getMediaUrl(user.profilePhoto) : undefined;
+
+  const existing = await ctx.db
+    .query("chatChannelMembers")
+    .withIndex("by_channel_user", (q) =>
+      q.eq("channelId", channelId).eq("userId", userId)
+    )
+    .first();
+
+  if (existing) {
+    if (existing.leftAt !== undefined) {
+      await ctx.db.patch(existing._id, {
+        leftAt: undefined,
+        joinedAt: now,
+        role,
+        displayName,
+        profilePhoto,
+      });
+    } else if (existing.role !== role) {
+      await ctx.db.patch(existing._id, { role, displayName, profilePhoto });
+    }
+    return;
+  }
+
+  await ctx.db.insert("chatChannelMembers", {
+    channelId,
+    userId,
+    role,
+    joinedAt: now,
+    isMuted: false,
+    displayName,
+    profilePhoto,
+  });
+}
+
+/**
+ * Adds every active group member to a channel, in scheduled batches.
+ *
+ * The channel toggles can't iterate a whole-community group (e.g. the
+ * announcement group, ~9k members) inline — a single mutation exceeds Convex's
+ * per-execution read limit. This paginates `groupMembers` and reschedules
+ * itself until done, setting the final `memberCount` on the last page.
+ *
+ * `mirrorGroupRole`: when true (announcements), leaders map to channel role
+ * "admin"; otherwise everyone is "member". Posting permission is always
+ * enforced server-side in `sendMessage`, independent of channel role.
+ *
+ * The final page recounts active channel members from actual membership rows
+ * rather than assuming the processed roster IS the channel — a channel may
+ * also hold other groups' members (e.g. backfilling an accepted secondary
+ * group into a shared announcements channel), and assuming would collapse
+ * `memberCount` to just the backfilled group's size.
+ */
+export const populateChannelMembersBatch = internalMutation({
+  args: {
+    groupId: v.id("groups"),
+    channelId: v.id("chatChannels"),
+    mirrorGroupRole: v.boolean(),
+    cursor: v.union(v.string(), v.null()),
+    processed: v.number(),
+  },
+  handler: async (ctx, args) => {
+    // Bail if the channel was archived/disabled since this chain started
+    // (e.g. a quick enable → disable), so we don't repopulate a closed channel.
+    const channel = await ctx.db.get(args.channelId);
+    if (!channel || channel.isArchived || channel.isEnabled === false) {
+      return;
+    }
+
+    // Also bail if the group is no longer a participant on the channel —
+    // neither the owning group nor an ACCEPTED sharedGroups entry. Stops
+    // in-flight backfill chains when the group is removed from a share
+    // mid-run (accept → immediate removal), which would otherwise re-add
+    // members the removal just cleaned up.
+    const isParticipant =
+      channel.groupId === args.groupId ||
+      (channel.sharedGroups ?? []).some(
+        (sg) => sg.groupId === args.groupId && sg.status === "accepted"
+      );
+    if (!isParticipant) {
+      return;
+    }
+
+    const now = Date.now();
+    const page = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
+      .filter((q) => q.eq(q.field("leftAt"), undefined))
+      .paginate({ cursor: args.cursor, numItems: CHANNEL_MEMBER_SYNC_BATCH });
+
+    for (const member of page.page) {
+      const user = await ctx.db.get(member.userId);
+      const displayName = user
+        ? getDisplayName(user.firstName, user.lastName)
+        : undefined;
+      const profilePhoto = user ? getMediaUrl(user.profilePhoto) : undefined;
+      const role =
+        args.mirrorGroupRole && isLeaderRole(member.role) ? "admin" : "member";
+
+      const existing = await ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", args.channelId).eq("userId", member.userId)
+        )
+        .first();
+
+      if (existing) {
+        if (existing.leftAt !== undefined) {
+          await ctx.db.patch(existing._id, {
+            leftAt: undefined,
+            joinedAt: now,
+            role,
+            displayName,
+            profilePhoto,
+          });
+        } else if (existing.role !== role) {
+          await ctx.db.patch(existing._id, { role, displayName, profilePhoto });
+        }
+      } else {
+        await ctx.db.insert("chatChannelMembers", {
+          channelId: args.channelId,
+          userId: member.userId,
+          role,
+          joinedAt: now,
+          isMuted: false,
+          displayName,
+          profilePhoto,
+        });
+      }
+    }
+
+    const processed = args.processed + page.page.length;
+
+    if (page.isDone) {
+      // Recount from actual membership rows — the channel may hold members
+      // beyond this group's roster (shared channels), so the processed
+      // roster count can't be assumed to be the channel's member count.
+      await updateChannelMemberCount(ctx, args.channelId);
+    } else {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.messaging.channels.populateChannelMembersBatch,
+        { ...args, cursor: page.continueCursor, processed }
+      );
+    }
+  },
+});
+
+/**
+ * Soft-deletes every active member of a channel, in scheduled batches.
+ * Counterpart to populateChannelMembersBatch for disabling a channel on a
+ * whole-community group.
+ */
+export const clearChannelMembersBatch = internalMutation({
+  args: {
+    channelId: v.id("chatChannels"),
+    cursor: v.union(v.string(), v.null()),
+  },
+  handler: async (ctx, args) => {
+    // Bail if the channel was re-enabled (unarchived) since this clear chain
+    // was scheduled — e.g. a quick disable → re-enable. Without this guard a
+    // stale clear job could run after the re-enable's populate batch and
+    // soft-delete members of an active channel, leaving sendMessage to reject
+    // them as "Not a member of this channel". Disable always archives the
+    // channel (main/reach_out), so an un-archived channel means re-enabled.
+    const channel = await ctx.db.get(args.channelId);
+    if (!channel || channel.isArchived !== true) {
+      return;
+    }
+
+    const now = Date.now();
+    const page = await ctx.db
+      .query("chatChannelMembers")
+      .withIndex("by_channel", (q) => q.eq("channelId", args.channelId))
+      .filter((q) => q.eq(q.field("leftAt"), undefined))
+      .paginate({ cursor: args.cursor, numItems: CHANNEL_MEMBER_SYNC_BATCH });
+
+    for (const member of page.page) {
+      await ctx.db.patch(member._id, { leftAt: now });
+    }
+
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.messaging.channels.clearChannelMembersBatch,
+        { channelId: args.channelId, cursor: page.continueCursor }
+      );
     }
   },
 });
@@ -3881,6 +4746,21 @@ export const toggleAnnouncementsChannel = mutation({
       .first();
 
     if (args.enabled) {
+      // While this group is an accepted secondary of another group's shared
+      // announcements channel, its own channel stays disabled — announcements
+      // flow through the share. Leave the share first.
+      const acceptedShares = await findAcceptedSharedAnnouncementsChannelsForGroup(
+        ctx,
+        args.groupId
+      );
+      if (acceptedShares.length > 0) {
+        throw new ConvexError({
+          code: "IN_SHARED_ANNOUNCEMENTS",
+          message:
+            "This group receives announcements through another group's shared Announcements channel. Leave that share before enabling its own Announcements channel.",
+        });
+      }
+
       let channelId: Id<"chatChannels">;
 
       if (existingChannel) {
@@ -3920,8 +4800,11 @@ export const toggleAnnouncementsChannel = mutation({
               "This group already has a channel using the slug \"announcements\" (possibly archived). Rename it before enabling the Announcements broadcast channel.",
           });
         }
+        const group = await ctx.db.get(args.groupId);
         channelId = await ctx.db.insert("chatChannels", {
           groupId: args.groupId,
+          // Denormalized so share scans can use the by_community_isShared index.
+          communityId: group?.communityId,
           slug: "announcements",
           channelType: "announcements",
           name: "Announcements",
@@ -3936,62 +4819,28 @@ export const toggleAnnouncementsChannel = mutation({
         });
       }
 
-      // Add ALL active group members so unread counts work for everyone.
-      const allMembers = await ctx.db
-        .query("groupMembers")
-        .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
-        .filter((q) => q.eq(q.field("leftAt"), undefined))
-        .collect();
+      // Add the enabling leader synchronously so they can post immediately,
+      // before the async batch backfills everyone else (see
+      // ensureChannelMembership). Leaders mirror to channel role "admin".
+      await ensureChannelMembership(ctx, channelId, userId, "admin", now);
 
-      for (const member of allMembers) {
-        const user = await ctx.db.get(member.userId);
-        const displayName = user
-          ? getDisplayName(user.firstName, user.lastName)
-          : undefined;
-        const profilePhoto = user ? getMediaUrl(user.profilePhoto) : undefined;
-
-        const existingMembership = await ctx.db
-          .query("chatChannelMembers")
-          .withIndex("by_channel_user", (q) =>
-            q.eq("channelId", channelId).eq("userId", member.userId)
-          )
-          .first();
-
-        // Channel role mirrors group role so the member list shows leaders
-        // distinctly. Posting permission is enforced server-side in
-        // sendMessage by re-reading the group membership.
-        const channelRole = isLeaderRole(member.role) ? "admin" : "member";
-
-        if (existingMembership) {
-          if (existingMembership.leftAt !== undefined) {
-            await ctx.db.patch(existingMembership._id, {
-              leftAt: undefined,
-              joinedAt: now,
-              role: channelRole,
-              displayName,
-              profilePhoto,
-            });
-          } else if (existingMembership.role !== channelRole) {
-            await ctx.db.patch(existingMembership._id, {
-              role: channelRole,
-              displayName,
-              profilePhoto,
-            });
-          }
-        } else {
-          await ctx.db.insert("chatChannelMembers", {
-            channelId,
-            userId: member.userId,
-            role: channelRole,
-            joinedAt: now,
-            isMuted: false,
-            displayName,
-            profilePhoto,
-          });
+      // Add all active group members in scheduled batches so unread counts
+      // work for everyone. The announcement group spans the whole community
+      // (~thousands of members), which exceeds the per-call read limit if
+      // iterated inline. Channel role mirrors group role (leaders → "admin")
+      // so the member list shows leaders distinctly; posting permission is
+      // still enforced server-side in sendMessage.
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.messaging.channels.populateChannelMembersBatch,
+        {
+          groupId: args.groupId,
+          channelId,
+          mirrorGroupRole: true,
+          cursor: null,
+          processed: 0,
         }
-      }
-
-      await updateChannelMemberCount(ctx, channelId);
+      );
 
       return { channelId, status: "enabled" as const };
     }
@@ -4002,6 +4851,16 @@ export const toggleAnnouncementsChannel = mutation({
     }
     if (existingChannel.isEnabled === false || existingChannel.isArchived) {
       return { channelId: existingChannel._id, status: "already_disabled" as const };
+    }
+
+    // A shared announcements channel (pending OR accepted entries) can't be
+    // disabled out from under the groups it's shared with — unshare first.
+    if ((existingChannel.sharedGroups?.length ?? 0) > 0) {
+      throw new ConvexError({
+        code: "CHANNEL_SHARED",
+        message:
+          "This Announcements channel is shared with other groups. Remove the shared groups before disabling it.",
+      });
     }
 
     await ctx.db.patch(existingChannel._id, {
@@ -4074,48 +4933,24 @@ export const toggleMainChannel = mutation({
         updatedAt: now,
       });
 
-      const allMembers = await ctx.db
-        .query("groupMembers")
-        .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
-        .filter((q) => q.eq(q.field("leftAt"), undefined))
-        .collect();
+      // Add the enabling leader synchronously so they can post immediately,
+      // before the async batch reactivates everyone else (see
+      // ensureChannelMembership).
+      await ensureChannelMembership(ctx, mainChannel._id, userId, "member", now);
 
-      for (const member of allMembers) {
-        const user = await ctx.db.get(member.userId);
-        const displayName = user ? getDisplayName(user.firstName, user.lastName) : undefined;
-        const profilePhoto = user ? getMediaUrl(user.profilePhoto) : undefined;
-
-        const existingMembership = await ctx.db
-          .query("chatChannelMembers")
-          .withIndex("by_channel_user", (q) =>
-            q.eq("channelId", mainChannel._id).eq("userId", member.userId)
-          )
-          .first();
-
-        if (existingMembership) {
-          if (existingMembership.leftAt) {
-            await ctx.db.patch(existingMembership._id, {
-              leftAt: undefined,
-              joinedAt: now,
-              role: "member",
-              displayName,
-              profilePhoto,
-            });
-          }
-        } else {
-          await ctx.db.insert("chatChannelMembers", {
-            channelId: mainChannel._id,
-            userId: member.userId,
-            role: "member",
-            joinedAt: now,
-            isMuted: false,
-            displayName,
-            profilePhoto,
-          });
+      // Re-add all active group members in scheduled batches — whole-community
+      // groups exceed the per-call read limit if iterated inline.
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.messaging.channels.populateChannelMembersBatch,
+        {
+          groupId: args.groupId,
+          channelId: mainChannel._id,
+          mirrorGroupRole: false,
+          cursor: null,
+          processed: 0,
         }
-      }
-
-      await updateChannelMemberCount(ctx, mainChannel._id);
+      );
       return { channelId: mainChannel._id, status: "enabled" as const };
     }
 
@@ -4125,17 +4960,15 @@ export const toggleMainChannel = mutation({
       updatedAt: now,
     });
 
-    const activeMembers = await ctx.db
-      .query("chatChannelMembers")
-      .withIndex("by_channel", (q) => q.eq("channelId", mainChannel._id))
-      .filter((q) => q.eq(q.field("leftAt"), undefined))
-      .collect();
-
-    for (const member of activeMembers) {
-      await ctx.db.patch(member._id, { leftAt: now });
-    }
-
+    // Soft-delete members in scheduled batches (whole-community groups exceed
+    // the per-call read limit if cleared inline). The channel is already
+    // archived above, so it's hidden immediately regardless.
     await ctx.db.patch(mainChannel._id, { memberCount: 0, updatedAt: now });
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.messaging.channels.clearChannelMembersBatch,
+      { channelId: mainChannel._id, cursor: null }
+    );
 
     return { channelId: mainChannel._id, status: "disabled" as const };
   },
@@ -4637,5 +5470,347 @@ export const updatePinnedChannels = mutation({
     });
 
     return { success: true, pinnedCount: validPinnedSlugs.length };
+  },
+});
+
+// ============================================================================
+// Channel Discovery + Mute
+// ============================================================================
+// Backs the channel directory ("Channels you can join", W17) and per-channel
+// mute (schema already had chatChannelMembers.isMuted/mutedUntil; this is the
+// first mutation to write it). See docs/plans/church-migration-ui-redesign/.
+
+/**
+ * List a group's custom channels the caller can discover but hasn't joined —
+ * "Channels you can join" on the channel directory (W17). A channel is listed
+ * when it is `channelType === "custom"`, not leader-disabled, not archived,
+ * and `discoverable !== false` (discoverable defaults to on).
+ */
+export const listJoinableChannels = query({
+  args: {
+    token: v.string(),
+    groupId: v.id("groups"),
+  },
+  returns: v.array(
+    v.object({
+      channelId: v.id("chatChannels"),
+      name: v.string(),
+      memberCount: v.number(),
+      joinMode: v.string(),
+      hasPendingRequest: v.boolean(),
+    })
+  ),
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+
+    // Caller must be an accepted member of the group (mirrors the accepted-
+    // membership filter used by getInboxChannels/addChannelMembers above).
+    const groupMembership = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group_user", (q) =>
+        q.eq("groupId", args.groupId).eq("userId", userId)
+      )
+      .filter((q) =>
+        q.and(
+          q.eq(q.field("leftAt"), undefined),
+          q.or(
+            q.eq(q.field("requestStatus"), undefined),
+            q.eq(q.field("requestStatus"), "accepted")
+          )
+        )
+      )
+      .first();
+
+    if (!groupMembership) {
+      throw new ConvexError("You must be a member of this group.");
+    }
+
+    const groupChannels = await loadGroupChannels(ctx, args.groupId);
+    const candidates = groupChannels.filter(
+      (channel) =>
+        channel.channelType === "custom" &&
+        !channel.isArchived &&
+        channelIsLeaderEnabled(channel) &&
+        channel.discoverable !== false
+    );
+
+    const results = await Promise.all(
+      candidates.map(async (channel) => {
+        const membership = await ctx.db
+          .query("chatChannelMembers")
+          .withIndex("by_channel_user", (q) =>
+            q.eq("channelId", channel._id).eq("userId", userId)
+          )
+          .filter((q) => q.eq(q.field("leftAt"), undefined))
+          .first();
+
+        if (membership) return null; // Already a member — not "joinable"
+
+        const pendingRequest = await ctx.db
+          .query("channelJoinRequests")
+          .withIndex("by_channel_user", (q) =>
+            q.eq("channelId", channel._id).eq("userId", userId)
+          )
+          .filter((q) => q.eq(q.field("status"), "pending"))
+          .first();
+
+        return {
+          channelId: channel._id,
+          name: channel.name,
+          memberCount: channel.memberCount,
+          joinMode: channel.joinMode || "open",
+          hasPendingRequest: pendingRequest !== null,
+        };
+      })
+    );
+
+    return results.filter((r): r is NonNullable<typeof r> => r !== null);
+  },
+});
+
+/**
+ * Toggle whether a custom channel is listed in its group's channel directory.
+ * Only group leaders or community admins may change this (mirrors the
+ * leader-or-admin-viewer pattern used elsewhere in this file, e.g. getChannel).
+ */
+export const setChannelDiscoverable = mutation({
+  args: {
+    token: v.string(),
+    channelId: v.id("chatChannels"),
+    discoverable: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+
+    const channel = await ctx.db.get(args.channelId);
+    if (!channel) {
+      throw new ConvexError("Channel not found");
+    }
+    if (!channel.groupId) {
+      throw new ConvexError("This operation is only valid for group channels");
+    }
+    if (channel.channelType !== "custom") {
+      throw new ConvexError("Only custom channels can be made discoverable.");
+    }
+    const groupId = channel.groupId;
+
+    const groupMembership = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group_user", (q) =>
+        q.eq("groupId", groupId).eq("userId", userId)
+      )
+      .filter((q) => q.eq(q.field("leftAt"), undefined))
+      .first();
+
+    const isLeader = isLeaderRole(groupMembership?.role);
+    const isAdmin = !isLeader && (await isCommunityAdminForGroup(ctx, groupId, userId));
+
+    if (!isLeader && !isAdmin) {
+      throw new ConvexError(
+        "Only group leaders or community admins can change channel discoverability."
+      );
+    }
+
+    await ctx.db.patch(args.channelId, {
+      discoverable: args.discoverable,
+      updatedAt: Date.now(),
+    });
+  },
+});
+
+/**
+ * Join (or request to join) a channel surfaced by `listJoinableChannels`.
+ *
+ * Mirrors `channelInvites.joinViaInviteLink`'s open/approval_required
+ * branching (same shape, re-derived here rather than imported: that mutation
+ * is keyed off an invite shortId and its own group-eligibility rules, and
+ * lives in a file this change doesn't touch). "open" adds the caller as a
+ * member immediately; "approval_required" creates a channelJoinRequest,
+ * reusing a pending request instead of duplicating it.
+ */
+export const joinDiscoverableChannel = mutation({
+  args: {
+    token: v.string(),
+    channelId: v.id("chatChannels"),
+  },
+  returns: v.object({
+    status: v.union(v.literal("joined"), v.literal("requested")),
+  }),
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+
+    const channel = await ctx.db.get(args.channelId);
+    if (!channel) {
+      throw new ConvexError("Channel not found");
+    }
+    if (!channel.groupId) {
+      throw new ConvexError("This operation is only valid for group channels");
+    }
+    const groupId = channel.groupId;
+
+    if (
+      channel.channelType !== "custom" ||
+      channel.isArchived ||
+      !channelIsLeaderEnabled(channel) ||
+      channel.discoverable === false
+    ) {
+      throw new ConvexError("This channel is not open for discovery.");
+    }
+
+    const groupMembership = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group_user", (q) =>
+        q.eq("groupId", groupId).eq("userId", userId)
+      )
+      .filter((q) =>
+        q.and(
+          q.eq(q.field("leftAt"), undefined),
+          q.or(
+            q.eq(q.field("requestStatus"), undefined),
+            q.eq(q.field("requestStatus"), "accepted")
+          )
+        )
+      )
+      .first();
+
+    if (!groupMembership) {
+      throw new ConvexError("You must be a member of this group.");
+    }
+
+    const existingMembership = await ctx.db
+      .query("chatChannelMembers")
+      .withIndex("by_channel_user", (q) =>
+        q.eq("channelId", channel._id).eq("userId", userId)
+      )
+      .first();
+
+    if (existingMembership && !existingMembership.leftAt) {
+      return { status: "joined" as const };
+    }
+
+    const joinMode = channel.joinMode || "open";
+
+    if (joinMode === "open") {
+      const user = await ctx.db.get(userId);
+      const now = Date.now();
+
+      if (existingMembership && existingMembership.leftAt) {
+        // Reactivate a former member.
+        await ctx.db.patch(existingMembership._id, {
+          leftAt: undefined,
+          joinedAt: now,
+          displayName: user
+            ? getDisplayName(user.firstName, user.lastName)
+            : undefined,
+          profilePhoto: user ? getMediaUrl(user.profilePhoto) : undefined,
+        });
+      } else {
+        await ctx.db.insert("chatChannelMembers", {
+          channelId: channel._id,
+          userId,
+          role: "member",
+          joinedAt: now,
+          isMuted: false,
+          displayName: user
+            ? getDisplayName(user.firstName, user.lastName)
+            : undefined,
+          profilePhoto: user ? getMediaUrl(user.profilePhoto) : undefined,
+        });
+      }
+
+      await ctx.db.patch(channel._id, {
+        memberCount: channel.memberCount + 1,
+        updatedAt: now,
+      });
+
+      return { status: "joined" as const };
+    }
+
+    // approval_required — reuse a pending request; otherwise create one.
+    const existingRequest = await ctx.db
+      .query("channelJoinRequests")
+      .withIndex("by_channel_user", (q) =>
+        q.eq("channelId", channel._id).eq("userId", userId)
+      )
+      .first();
+
+    if (existingRequest && existingRequest.status === "pending") {
+      return { status: "requested" as const };
+    }
+
+    if (existingRequest) {
+      // Mirror the invite-link flow's decline cooldown
+      // (channelInvites.joinViaInviteLink) so the directory can't be used to
+      // re-request — and re-notify leaders — right after a decline.
+      if (existingRequest.status === "declined") {
+        const COOLDOWN_MS = 24 * 60 * 60 * 1000; // 24 hours
+        const declinedAt =
+          existingRequest.reviewedAt || existingRequest.requestedAt;
+        if (Date.now() - declinedAt < COOLDOWN_MS) {
+          throw new ConvexError(
+            "Your previous request was declined. Please wait 24 hours before requesting again.",
+          );
+        }
+      }
+      await ctx.db.patch(existingRequest._id, {
+        status: "pending",
+        requestedAt: Date.now(),
+        reviewedAt: undefined,
+        reviewedById: undefined,
+      });
+    } else {
+      await ctx.db.insert("channelJoinRequests", {
+        channelId: channel._id,
+        groupId,
+        userId,
+        status: "pending",
+        requestedAt: Date.now(),
+      });
+    }
+
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.notifications.senders.notifyChannelJoinRequest,
+      {
+        channelId: channel._id,
+        groupId,
+        requesterId: userId,
+        channelName: channel.name,
+        channelSlug: channel.slug || "",
+      }
+    );
+
+    return { status: "requested" as const };
+  },
+});
+
+/**
+ * Mute or unmute a channel for the caller — the per-channel mute promised by
+ * the `chatChannelMembers.isMuted` schema field (no UI wrote it until now).
+ */
+export const setChannelMuted = mutation({
+  args: {
+    token: v.string(),
+    channelId: v.id("chatChannels"),
+    muted: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+
+    const membership = await ctx.db
+      .query("chatChannelMembers")
+      .withIndex("by_channel_user", (q) =>
+        q.eq("channelId", args.channelId).eq("userId", userId)
+      )
+      .filter((q) => q.eq(q.field("leftAt"), undefined))
+      .first();
+
+    if (!membership) {
+      throw new ConvexError("You are not a member of this channel.");
+    }
+
+    await ctx.db.patch(membership._id, {
+      isMuted: args.muted,
+    });
   },
 });

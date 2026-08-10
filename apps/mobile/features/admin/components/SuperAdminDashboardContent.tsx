@@ -1,7 +1,9 @@
 import React, { useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Image,
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -10,7 +12,7 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "@providers/AuthProvider";
-import { useQuery, api } from "@services/api/convex";
+import { useQuery, useMutation, api } from "@services/api/convex";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useTheme } from "@hooks/useTheme";
 
@@ -84,6 +86,95 @@ export function SuperAdminDashboardContent() {
     api.functions.ee.proposals.list,
     token && isInternalUser ? { token, status: "pending" } : "skip"
   );
+
+  const acceptProposal = useMutation(api.functions.ee.proposals.accept);
+  const rejectProposal = useMutation(api.functions.ee.proposals.reject);
+  const [proposalActionId, setProposalActionId] = useState<string | null>(null);
+
+  const confirm = (message: string) =>
+    new Promise<boolean>((resolve) => {
+      if (Platform.OS === "web") {
+        resolve(typeof window !== "undefined" ? window.confirm(message) : false);
+        return;
+      }
+      Alert.alert("Confirm", message, [
+        { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
+        { text: "OK", onPress: () => resolve(true) },
+      ]);
+    });
+
+  const promptReason = (): Promise<string | null> =>
+    new Promise((resolve) => {
+      if (Platform.OS === "web") {
+        const reason =
+          typeof window !== "undefined"
+            ? window.prompt("Rejection reason (optional):", "")
+            : null;
+        resolve(reason);
+        return;
+      }
+      if (typeof Alert.prompt === "function") {
+        Alert.prompt(
+          "Reject proposal",
+          "Optional reason:",
+          [
+            { text: "Cancel", style: "cancel", onPress: () => resolve(null) },
+            {
+              text: "Reject",
+              style: "destructive",
+              onPress: (text?: string) => resolve(text ?? ""),
+            },
+          ],
+          "plain-text"
+        );
+      } else {
+        resolve("");
+      }
+    });
+
+  const handleAccept = async (proposalId: string, communityName: string) => {
+    if (!token) return;
+    const ok = await confirm(
+      `Accept "${communityName}"? This creates the community and emails the proposer a setup link.`
+    );
+    if (!ok) return;
+    try {
+      setProposalActionId(proposalId);
+      await acceptProposal({ token, proposalId: proposalId as any });
+    } catch (e: any) {
+      if (Platform.OS === "web") {
+        window.alert(`Accept failed: ${e?.message ?? e}`);
+      } else {
+        Alert.alert("Accept failed", String(e?.message ?? e));
+      }
+    } finally {
+      setProposalActionId(null);
+    }
+  };
+
+  const handleReject = async (proposalId: string, communityName: string) => {
+    if (!token) return;
+    const reason = await promptReason();
+    if (reason === null) return;
+    const ok = await confirm(`Reject "${communityName}"?`);
+    if (!ok) return;
+    try {
+      setProposalActionId(proposalId);
+      await rejectProposal({
+        token,
+        proposalId: proposalId as any,
+        reason: reason || undefined,
+      });
+    } catch (e: any) {
+      if (Platform.OS === "web") {
+        window.alert(`Reject failed: ${e?.message ?? e}`);
+      } else {
+        Alert.alert("Reject failed", String(e?.message ?? e));
+      }
+    } finally {
+      setProposalActionId(null);
+    }
+  };
 
   if (!isInternalUser) {
     return (
@@ -179,6 +270,46 @@ export function SuperAdminDashboardContent() {
                   {proposal.notes}
                 </Text>
               ) : null}
+              <View style={styles.proposalActions}>
+                <TouchableOpacity
+                  onPress={() => handleReject(proposal._id, proposal.communityName)}
+                  disabled={proposalActionId === proposal._id}
+                  style={[
+                    styles.proposalButton,
+                    {
+                      borderColor: colors.border,
+                      backgroundColor: colors.surface,
+                      opacity: proposalActionId === proposal._id ? 0.5 : 1,
+                    },
+                  ]}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.proposalButtonText, { color: colors.text }]}>
+                    Reject
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => handleAccept(proposal._id, proposal.communityName)}
+                  disabled={proposalActionId === proposal._id}
+                  style={[
+                    styles.proposalButton,
+                    {
+                      backgroundColor: primaryColor,
+                      borderColor: primaryColor,
+                      opacity: proposalActionId === proposal._id ? 0.5 : 1,
+                    },
+                  ]}
+                  activeOpacity={0.7}
+                >
+                  {proposalActionId === proposal._id ? (
+                    <ActivityIndicator size="small" color="white" />
+                  ) : (
+                    <Text style={[styles.proposalButtonText, { color: "white" }]}>
+                      Accept
+                    </Text>
+                  )}
+                </TouchableOpacity>
+              </View>
             </View>
           ))}
         </View>
@@ -663,5 +794,24 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 4,
     fontStyle: "italic",
+  },
+  proposalActions: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: 8,
+    marginTop: 10,
+  },
+  proposalButton: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    minWidth: 80,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  proposalButtonText: {
+    fontSize: 13,
+    fontWeight: "600",
   },
 });

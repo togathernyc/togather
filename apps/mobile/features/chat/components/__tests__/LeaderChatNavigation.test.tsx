@@ -35,6 +35,13 @@ let mockListGroupChannelsResult: any = [
 ];
 
 // Mock Convex hooks - useQuery will be replaced per test via mockImplementation
+// Flag off = the behavior this suite asserts; the real hook reaches a Convex
+// query the partial api mock below doesn't provide.
+jest.mock('@hooks/useWhatsappShell', () => ({
+  useWhatsappShell: () => false,
+  useWhatsappShellState: () => ({ enabled: false, loaded: true }),
+}));
+
 jest.mock('@services/api/convex', () => ({
   useQuery: jest.fn(),
   useMutation: jest.fn(() => jest.fn()),
@@ -83,6 +90,11 @@ jest.mock('@services/api/convex', () => ({
       pcoServices: {
         index: {
           triggerGroupSync: 'api.functions.pcoServices.index.triggerGroupSync',
+        },
+      },
+      scheduling: {
+        events: {
+          groupHasRunSheet: 'api.functions.scheduling.events.groupHasRunSheet',
         },
       },
       groupResources: {
@@ -423,11 +435,11 @@ describe('ChatNavigation - Full Component', () => {
   it('should show leader toolbar when showLeaderTools is true', () => {
     const { getByText, queryByText } = render(<ChatNavigation {...defaultProps} />);
     expect(getByText('Attendance')).toBeTruthy();
-    expect(getByText('People')).toBeTruthy();
+    expect(queryByText('People')).toBeNull();
     expect(queryByText('Tasks')).toBeNull();
-    // Events and Bots chips were retired from the toolbar — those
-    // sections live on the group page (UpcomingEventsSection,
-    // GroupBotsSection).
+    // Events, Bots, and People chips were retired from the toolbar —
+    // those sections live on the group page (UpcomingEventsSection,
+    // GroupBotsSection) or under the Check-in entry on group details.
     expect(queryByText('Events')).toBeNull();
     expect(queryByText('Bots')).toBeNull();
   });
@@ -437,7 +449,6 @@ describe('ChatNavigation - Full Component', () => {
       <ChatNavigation {...defaultProps} showLeaderTools={false} />
     );
     expect(queryByText('Attendance')).toBeNull();
-    expect(queryByText('People')).toBeNull();
   });
 });
 

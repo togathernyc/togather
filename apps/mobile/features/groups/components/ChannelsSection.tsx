@@ -13,8 +13,8 @@
  *   3. SHARED CHANNEL INVITATIONS card (leaders only, when present)
  *
  * Navigation:
- *   - General (channelType === "main"): → /inbox/{groupId}/{slug} (chat)
- *   - Everything else: → /inbox/{groupId}/{slug}/info
+ *   - Every channel (including General / channelType === "main"):
+ *     → /inbox/{groupId}/{slug}/info
  *
  * The Pin Channels / Toolbar Settings buttons that used to float at the
  * bottom of this section now live in GROUP ACTIONS on
@@ -40,13 +40,28 @@ import type { Id } from "@services/api/convex";
 import { useAuth } from "@providers/AuthProvider";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useTheme } from "@hooks/useTheme";
+import { useWhatsappShell } from "@hooks/useWhatsappShell";
+import { errorMessage } from "@/utils/error-handling";
 import { useGroupChannels } from "../hooks/useGroupChannels";
-import { useRespondToChannelInvite } from "../hooks/useRespondToChannelInvite";
 import { ChannelJoinRequestsBanner } from "./ChannelJoinRequestsBanner";
+import {
+  WaInsetGroup,
+  WaRow,
+  WaCell,
+  WA_GROUP_SPACING,
+} from "@components/wa";
 
 interface ChannelsSectionProps {
   groupId: string;
   userRole?: string | null; // 'member', 'leader', or 'admin'
+  /**
+   * Overrides where a channel row navigates. Defaults to the per-channel
+   * info screen (the member/leader management surface). Community admins
+   * browsing a group they haven't joined pass a handler that opens the
+   * read-only chat instead, so "view inside the channel" lands on messages
+   * rather than settings.
+   */
+  onChannelPress?: (slug: string, channelId?: string) => void;
 }
 
 interface Channel {
@@ -63,29 +78,40 @@ interface Channel {
   isPinned: boolean;
   lastMessageAt?: number;
   isShared?: boolean;
+  /** Number of groups with an accepted share on this channel (owner side only). */
+  sharedGroupCount?: number;
+  /** For announcements channels shared INTO this group: the owning group. */
+  sharedFromGroupId?: string;
+  sharedFromGroupName?: string;
   /** false when leader hid channel; memberships stay (see Convex isEnabled). */
   isEnabled: boolean;
+  /** true for custom channels auto-created from an event plan's serving team. */
+  isServingTeam?: boolean;
 }
 
-export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
+export function ChannelsSection({ groupId, userRole, onChannelPress }: ChannelsSectionProps) {
   const router = useRouter();
   const { token } = useAuth();
   const { primaryColor } = useCommunityTheme();
   const { colors } = useTheme();
+
+  // Archived/disabled channels are folded away under a single collapsible
+  // "Archived" row so a long tail of turned-off channels doesn't clutter the
+  // list. Collapsed by default; only leaders ever have archived rows since
+  // members never receive disabled channels from the query.
+  const [archivedExpanded, setArchivedExpanded] = useState(false);
 
   // The legacy `groupMembers.role === "admin"` enum is no longer assigned
   // by the backend (only "member" / "leader" exist). The defensive `||
   // "admin"` checks scattered through the app are dead — drop them as we
   // touch each surface.
   const isLeader = userRole === "leader";
+  const whatsappShell = useWhatsappShell();
 
   const pendingInvites = useQuery(
     api.functions.messaging.sharedChannels.listPendingInvitesForGroup,
     token && isLeader ? { token, groupId: groupId as Id<"groups"> } : "skip"
   );
-
-  const { respondingTo, handleRespond: handleRespondToInvite } =
-    useRespondToChannelInvite({ token, groupId });
 
   const { channels: rawChannels } = useGroupChannels(groupId, {
     includeArchived: isLeader,
@@ -100,15 +126,31 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
   const mainChannel = channels?.find((c: Channel) => c.channelType === "main");
   const leadersChannel = channels?.find((c: Channel) => c.channelType === "leaders");
   const reachOutChannel = channels?.find((c: Channel) => c.channelType === "reach_out");
+  // An announcements channel shared INTO this group (owned by another group,
+  // sharedFromGroupName set) IS the group's announcements surface while the
+  // share is active — the group's own channel stays intentionally disabled.
+  // Both come out of the same cached listGroupChannels payload, so this works
+  // offline too.
+  const sharedInAnnouncements = channels?.find(
+    (c: Channel) => c.channelType === "announcements" && !!c.sharedFromGroupName
+  );
   const announcementsChannel = channels?.find(
-    (c: Channel) => c.channelType === "announcements"
+    (c: Channel) => c.channelType === "announcements" && !c.sharedFromGroupName
   );
   const pcoSyncedChannels = channels?.filter((c: Channel) => c.channelType === "pco_services") ?? [];
+  const crossTeamChannels = channels?.filter((c: Channel) => c.channelType === "cross_team") ?? [];
   const customChannels = channels?.filter((c: Channel) => c.channelType === "custom") ?? [];
 
-  const leadersEnabled = !!leadersChannel && !leadersChannel.isArchived;
-  const mainEnabled = !!mainChannel && !mainChannel.isArchived;
-  const reachOutEnabled = !!reachOutChannel && !reachOutChannel.isArchived;
+  // A channel is inactive if it's archived OR a leader hid it (isEnabled ===
+  // false) — the backend active-state checks treat either flag as inactive,
+  // so both must fold under Archived and read as "Disabled". Undefined
+  // isEnabled means enabled (memberships intact).
+  const leadersEnabled =
+    !!leadersChannel && !leadersChannel.isArchived && leadersChannel.isEnabled !== false;
+  const mainEnabled =
+    !!mainChannel && !mainChannel.isArchived && mainChannel.isEnabled !== false;
+  const reachOutEnabled =
+    !!reachOutChannel && !reachOutChannel.isArchived && reachOutChannel.isEnabled !== false;
   const announcementsEnabled =
     !!announcementsChannel &&
     !announcementsChannel.isArchived &&
@@ -128,20 +170,35 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
         enabled: true,
       });
     } catch (e: any) {
-      Alert.alert("Error", e?.message || "Failed to enable Announcements");
+      // ConvexError payloads (e.g. IN_SHARED_ANNOUNCEMENTS) carry the readable
+      // message on `.data.message`; `.message` is generic in production.
+      Alert.alert("Error", errorMessage(e, "Failed to enable Announcements"));
     } finally {
       setEnablingAnnouncements(false);
     }
   }, [enablingAnnouncements, groupId, toggleAnnouncementsChannelMutation]);
 
-  const navigateToChannelChat = useCallback(
-    (slug: string) => router.push(`/inbox/${groupId}/${slug}` as any),
-    [router, groupId]
-  );
-
   const navigateToChannelInfo = useCallback(
-    (slug: string) => router.push(`/inbox/${groupId}/${slug}/info` as any),
-    [router, groupId]
+    // channelId disambiguates shared channels: slugs are only unique within the
+    // owning group, so a group invited to two same-slug channels needs the id to
+    // open the right one. Plain group channels omit it and route by path alone.
+    (slug: string, channelId?: string) => {
+      // Admin browsers (onChannelPress provided) open the read-only chat;
+      // everyone else lands on the per-channel info/management screen.
+      if (onChannelPress) {
+        onChannelPress(slug, channelId);
+        return;
+      }
+      router.push(
+        channelId
+          ? ({
+              pathname: `/inbox/${groupId}/${slug}/info`,
+              params: { channelId },
+            } as any)
+          : (`/inbox/${groupId}/${slug}/info` as any)
+      );
+    },
+    [router, groupId, onChannelPress]
   );
 
   const handleCreateChannel = useCallback(() => {
@@ -149,6 +206,17 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
   }, [router, groupId]);
 
   if (channels === undefined) {
+    if (whatsappShell) {
+      return (
+        <View style={styles.waContainer}>
+          <WaInsetGroup header="Channels">
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator size="small" color={primaryColor} />
+            </View>
+          </WaInsetGroup>
+        </View>
+      );
+    }
     return (
       <View style={[styles.container, { backgroundColor: colors.background }]}>
         <Text style={[styles.header, { color: colors.textSecondary }]}>CHANNELS</Text>
@@ -182,6 +250,10 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
     onPress?: () => void;
     unreadCount?: number;
     pinned?: boolean;
+    /** True when this row is backed by a real channel record that is
+     *  disabled/archived. Such rows fold into the collapsible "Archived"
+     *  section. Placeholder/CTA rows (no record yet) are never archived. */
+    archived?: boolean;
   };
 
   const rows: Row[] = [];
@@ -195,10 +267,12 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
       name: "General",
       subtitle: mainEnabled ? "All members" : "Disabled",
       enabled: mainEnabled,
-      // General opens the chat directly. The group page IS its info screen.
-      onPress: () => navigateToChannelChat(mainChannel.slug),
+      // General opens its info page like every other channel — that's where
+      // a leader reaches Active state to disable/re-enable it.
+      onPress: () => navigateToChannelInfo(mainChannel.slug),
       unreadCount: mainChannel.unreadCount,
       pinned: mainChannel.isPinned,
+      archived: !mainEnabled,
     });
   }
 
@@ -220,37 +294,77 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
         : undefined,
       unreadCount: leadersChannel?.unreadCount,
       pinned: leadersChannel?.isPinned,
+      // Fold only a real, disabled Leaders channel — never the "create"
+      // placeholder shown to leaders before the record exists.
+      archived: !!leadersChannel && !leadersEnabled,
     });
   }
 
   // Announcements: opt-in leader-broadcast channel. Leaders see the row
   // even before the channel exists so they can enable it; members only see
   // it once a leader has turned it on.
-  if (announcementsChannel || isLeader) {
-    const hasAnnouncementsRecord = !!announcementsChannel;
+  if (sharedInAnnouncements) {
+    // Announcements come from another group's shared channel — THE one
+    // announcements row opens that channel. The group's own (intentionally
+    // disabled) channel doesn't render at all: re-enabling it is guarded
+    // backend-side by IN_SHARED_ANNOUNCEMENTS, and leaving the share happens
+    // from the shared channel's info screen. The channel id disambiguates the
+    // shared channel from the own channel that shares the same slug.
+    rows.push({
+      key: sharedInAnnouncements._id,
+      icon: "megaphone",
+      iconColor: "#E11D48",
+      iconBg: "#E11D4815",
+      name: "Announcements",
+      subtitle: `Shared — announcements come from ${sharedInAnnouncements.sharedFromGroupName}`,
+      enabled: sharedInAnnouncements.isEnabled !== false,
+      onPress: () =>
+        navigateToChannelInfo(sharedInAnnouncements.slug, sharedInAnnouncements._id),
+      unreadCount: sharedInAnnouncements.unreadCount,
+      pinned: sharedInAnnouncements.isPinned,
+      archived: false,
+    });
+  } else if (announcementsChannel || isLeader) {
+    let subtitle: string;
+    if (!announcementsChannel) {
+      subtitle = enablingAnnouncements
+        ? "Enabling…"
+        : "Tap to enable — leaders post, members read";
+    } else if (!announcementsEnabled) {
+      subtitle = "Disabled";
+    } else {
+      const memberCountLabel = `${announcementsChannel.memberCount} member${announcementsChannel.memberCount !== 1 ? "s" : ""}`;
+      // Accepted shares on this group's OWN announcements channel (owner side).
+      const sharedWithCount = announcementsChannel.sharedGroupCount ?? 0;
+      subtitle =
+        sharedWithCount > 0
+          ? `${memberCountLabel} · Shared with ${sharedWithCount} group${sharedWithCount !== 1 ? "s" : ""}`
+          : `${memberCountLabel} · Leaders post`;
+    }
     rows.push({
       key: announcementsChannel?._id ?? "announcements-placeholder",
       icon: "megaphone",
       iconColor: "#E11D48",
       iconBg: "#E11D4815",
       name: "Announcements",
-      subtitle: hasAnnouncementsRecord
-        ? announcementsEnabled
-          ? `${announcementsChannel!.memberCount} member${announcementsChannel!.memberCount !== 1 ? "s" : ""} · Leaders post`
-          : "Disabled"
-        : enablingAnnouncements
-          ? "Enabling…"
-          : "Tap to enable — leaders post, members read",
+      subtitle,
       enabled: announcementsEnabled,
-      // Placeholder (no record yet) tap → lazy-create via mutation.
-      // Existing record tap → channel info screen for further toggling.
-      onPress: hasAnnouncementsRecord
-        ? () => navigateToChannelInfo(announcementsChannel!.slug)
+      // Placeholder (no record yet) tap → lazy-create via mutation (surfaces
+      // the backend guard message if announcements come through a share).
+      // Existing record tap → channel info screen for further toggling. The
+      // channel id is passed so routing can't resolve a same-slug shared
+      // channel instead of this group's own channel.
+      onPress: announcementsChannel
+        ? () =>
+            navigateToChannelInfo(announcementsChannel.slug, announcementsChannel._id)
         : isLeader
           ? handleEnableAnnouncements
           : undefined,
       unreadCount: announcementsChannel?.unreadCount,
       pinned: announcementsChannel?.isPinned,
+      // Keep the "Tap to enable" CTA (no record) in the main list; fold only
+      // an existing-but-disabled Announcements channel.
+      archived: !!announcementsChannel && !announcementsEnabled,
     });
   }
 
@@ -272,6 +386,10 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
         : undefined,
       unreadCount: reachOutChannel?.unreadCount,
       pinned: reachOutChannel?.isPinned,
+      // Fold a real, disabled Reach Out channel. The "Requires Leaders
+      // channel" / create-placeholder states (no record) stay in the main
+      // list as actionable affordances.
+      archived: !!reachOutChannel && !reachOutEnabled,
     });
   }
 
@@ -290,100 +408,313 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
       onPress: () => navigateToChannelInfo(channel.slug),
       unreadCount: channel.unreadCount,
       pinned: channel.isPinned,
+      archived: !enabled,
+    });
+  });
+
+  // Cross-team channels auto-sync their membership from serving-team role
+  // assignments. They surface here (mirroring PCO synced rows) so a leader can
+  // tap through to Channel Info → "Edit synced roles". Without this branch the
+  // TYPE ALLOWLIST above silently drops them from the group's channel list.
+  crossTeamChannels.forEach((channel: Channel) => {
+    const enabled = channel.isEnabled && !channel.isArchived;
+    rows.push({
+      key: channel._id,
+      icon: "git-merge-outline",
+      iconColor: "#7C3AED",
+      iconBg: "#7C3AED15",
+      name: channel.name,
+      subtitle: enabled
+        ? `${channel.memberCount} member${channel.memberCount !== 1 ? "s" : ""} · Synced`
+        : "Disabled",
+      enabled,
+      onPress: () => navigateToChannelInfo(channel.slug),
+      unreadCount: channel.unreadCount,
+      pinned: channel.isPinned,
+      archived: !enabled,
     });
   });
 
   customChannels.forEach((channel: Channel) => {
     const enabled = channel.isEnabled && !channel.isArchived;
+    // Serving-team channels are auto-created from event plans (channelType
+    // "custom" + isServingTeam). Give them a distinct calendar icon so leaders
+    // can tell them apart from manually-created custom channels.
+    const isServingTeam = channel.isServingTeam === true;
+    const memberSubtitle = `${channel.memberCount} member${channel.memberCount !== 1 ? "s" : ""}`;
     rows.push({
       key: channel._id,
-      icon: "chatbubble",
-      iconColor: "#00BCD4",
-      iconBg: "#00BCD415",
+      icon: isServingTeam ? "calendar-outline" : "chatbubble",
+      iconColor: isServingTeam ? "#10B981" : "#00BCD4",
+      iconBg: isServingTeam ? "#10B98115" : "#00BCD415",
       name: channel.name,
       subtitle: enabled
-        ? `${channel.memberCount} member${channel.memberCount !== 1 ? "s" : ""}`
+        ? isServingTeam
+          ? `${memberSubtitle} · Serving team`
+          : memberSubtitle
         : "Hidden — visible to leaders",
       enabled,
       onPress: () => navigateToChannelInfo(channel.slug),
       unreadCount: channel.unreadCount,
       pinned: channel.isPinned,
+      archived: !enabled,
     });
   });
+
+  const activeRows = rows.filter((r) => !r.archived);
+  const archivedRows = rows.filter((r) => r.archived);
+
+  // --- whatsapp-shell (flag-on) rendering ---------------------------------
+  // WHATSAPP-DESIGN-SYSTEM.md §3.2/§8: channel rows become `WaRow`s (glyph
+  // circle avatar, name, subtitle, badge/chevron) inside a `WaInsetGroup`.
+  // Same `rows`/`activeRows`/`archivedRows`/`pendingInvites` data as the
+  // flag-off render below — only the visual shell differs. Every
+  // handler/onPress is passed through unchanged.
+  if (whatsappShell) {
+    const renderWaRow = (row: Row) => {
+      const dimmed = !row.enabled;
+      const tappable = !!row.onPress;
+      return (
+        <WaRow
+          key={row.key}
+          avatar={
+            <View style={[styles.waGlyphCircle, { backgroundColor: row.iconBg }]}>
+              <Ionicons name={row.icon} size={20} color={row.iconColor} />
+            </View>
+          }
+          title={row.name}
+          // Pin state has no dedicated slot in WaRow's fixed anatomy
+          // (§3.1 has no "pinned" affordance beyond the muted bell-slash);
+          // fold it into the subtitle rather than dropping the signal.
+          subtitle={row.pinned ? `📌 ${row.subtitle}` : row.subtitle}
+          unreadCount={row.enabled ? row.unreadCount : undefined}
+          showChevron={tappable}
+          onPress={row.onPress}
+          disabled={!tappable}
+          accent={primaryColor}
+          height={60}
+          style={dimmed ? styles.waDimmedRow : undefined}
+        />
+      );
+    };
+
+    return (
+      <View style={styles.waContainer}>
+        {activeRows.length > 0 && (
+          <WaInsetGroup header="Channels">
+            {activeRows.map((row) => renderWaRow(row))}
+          </WaInsetGroup>
+        )}
+
+        {/* "See all channels" — W17 channel directory. §1.3: plain
+            accent-colored action row, no icon, no chevron. */}
+        <View style={styles.waActionSection}>
+          <WaInsetGroup separatorInset={0}>
+            <WaCell
+              variant="action"
+              title="See all channels"
+              onPress={() => router.push(`/inbox/${groupId}/channels` as any)}
+              accent={primaryColor}
+            />
+          </WaInsetGroup>
+        </View>
+
+        {/* Archived/disabled channels — a single disclosure `WaCell` that
+            reveals a second `WaInsetGroup` of the same `WaRow` anatomy.
+            WaCell's chevron is fixed (always chevron-forward, no up/down
+            disclosure state); the count in `value` communicates state
+            instead. */}
+        {archivedRows.length > 0 && (
+          <View style={styles.waActionSection}>
+            <WaInsetGroup separatorInset={0}>
+              <WaCell
+                icon="archive-outline"
+                title="Archived"
+                value={`${archivedRows.length} channel${archivedRows.length !== 1 ? "s" : ""}`}
+                onPress={() => setArchivedExpanded((v) => !v)}
+              />
+            </WaInsetGroup>
+            {archivedExpanded && (
+              <View style={styles.waNestedGroup}>
+                <WaInsetGroup separatorInset={16 + 40 + 12}>
+                  {archivedRows.map((row) => renderWaRow(row))}
+                </WaInsetGroup>
+              </View>
+            )}
+          </View>
+        )}
+
+        {/* Create Channel — leaders only, same accent action-row treatment
+            as "See all channels". */}
+        {isLeader && (
+          <View style={styles.waActionSection}>
+            <WaInsetGroup separatorInset={0}>
+              <WaCell
+                variant="action"
+                title="Create Channel"
+                onPress={handleCreateChannel}
+                accent={primaryColor}
+              />
+            </WaInsetGroup>
+          </View>
+        )}
+
+        {/* Shared channel requests — pending invites from other groups.
+            Each row navigates to the channel's info screen (accept/decline
+            happens there), same as flag-off. */}
+        {isLeader && pendingInvites && pendingInvites.length > 0 && (
+          <View style={styles.waActionSection}>
+            <WaInsetGroup header="Shared channel requests">
+              {pendingInvites.map((invite) => (
+                <WaCell
+                  key={invite.channelId}
+                  icon="link"
+                  iconColor="#8B5CF6"
+                  title={`#${invite.channelName}`}
+                  description={`From ${invite.primaryGroupName} · invited by ${invite.invitedByName}`}
+                  onPress={() =>
+                    navigateToChannelInfo(invite.channelSlug, invite.channelId)
+                  }
+                />
+              ))}
+            </WaInsetGroup>
+          </View>
+        )}
+
+        {isLeader && <ChannelJoinRequestsBanner groupId={groupId} />}
+      </View>
+    );
+  }
+
+  const renderRow = (row: Row, idx: number) => {
+    const isFirst = idx === 0;
+    const dimmed = !row.enabled;
+    // Disabled channels stay tappable so a leader can re-enable from the info
+    // screen's Active state. Placeholder rows with no onPress fall through to
+    // disabled.
+    const tappable = !!row.onPress;
+    return (
+      <TouchableOpacity
+        key={row.key}
+        activeOpacity={0.7}
+        onPress={row.onPress}
+        disabled={!tappable}
+        style={[
+          styles.row,
+          !isFirst && {
+            borderTopWidth: StyleSheet.hairlineWidth,
+            borderTopColor: colors.border,
+          },
+        ]}
+      >
+        <View style={[styles.iconContainer, { backgroundColor: row.iconBg }]}>
+          <Ionicons name={row.icon} size={20} color={row.iconColor} />
+        </View>
+        <View style={styles.rowInfo}>
+          <View style={styles.rowNameLine}>
+            <Text
+              style={[
+                styles.rowName,
+                { color: dimmed ? colors.textTertiary : colors.text },
+              ]}
+              numberOfLines={1}
+            >
+              {row.name}
+            </Text>
+            {row.pinned && (
+              <Ionicons
+                name="pin"
+                size={13}
+                color={colors.iconSecondary}
+                style={styles.pinIcon}
+              />
+            )}
+          </View>
+          <Text
+            style={[styles.rowSubtitle, { color: colors.textSecondary }]}
+            numberOfLines={1}
+          >
+            {row.subtitle}
+          </Text>
+        </View>
+        {row.enabled && row.unreadCount && row.unreadCount > 0 ? (
+          <View style={[styles.unreadBadge, { backgroundColor: row.iconColor }]}>
+            <Text style={styles.unreadText}>
+              {row.unreadCount > 99 ? "99+" : row.unreadCount}
+            </Text>
+          </View>
+        ) : null}
+        {tappable && (
+          <Ionicons
+            name="chevron-forward"
+            size={18}
+            color={colors.textTertiary}
+          />
+        )}
+      </TouchableOpacity>
+    );
+  };
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <Text style={[styles.header, { color: colors.textSecondary }]}>CHANNELS</Text>
-      <View style={[styles.card, { backgroundColor: colors.surfaceSecondary }]}>
-        {rows.map((row, idx) => {
-          const isFirst = idx === 0;
-          const dimmed = !row.enabled;
-          // Disabled channels stay tappable so a leader can re-enable from
-          // the info screen's Active state. Placeholder rows with no
-          // onPress fall through to disabled.
-          const tappable = !!row.onPress;
-          return (
-            <TouchableOpacity
-              key={row.key}
-              activeOpacity={0.7}
-              onPress={row.onPress}
-              disabled={!tappable}
+      {activeRows.length > 0 && (
+        <View style={[styles.card, { backgroundColor: colors.surfaceSecondary }]}>
+          {activeRows.map((row, idx) => renderRow(row, idx))}
+        </View>
+      )}
+
+      {/* "See all channels" (W17 channel directory) only ever rendered when
+          whatsapp-shell is on, and that path now returns early above (its
+          own WaCell-styled row) — this flag-off branch never mounts. */}
+
+      {/* Archived/disabled channels fold into one collapsible group so they
+          don't clutter the active list. Leaders only — members never receive
+          disabled channels, so archivedRows is empty for them. */}
+      {archivedRows.length > 0 && (
+        <>
+          <TouchableOpacity
+            style={[styles.archivedToggle, { backgroundColor: colors.surfaceSecondary }]}
+            onPress={() => setArchivedExpanded((v) => !v)}
+            activeOpacity={0.7}
+          >
+            <View
               style={[
-                styles.row,
-                !isFirst && {
-                  borderTopWidth: StyleSheet.hairlineWidth,
-                  borderTopColor: colors.border,
-                },
+                styles.iconContainer,
+                { backgroundColor: colors.textTertiary + "15" },
               ]}
             >
-              <View style={[styles.iconContainer, { backgroundColor: row.iconBg }]}>
-                <Ionicons name={row.icon} size={20} color={row.iconColor} />
-              </View>
-              <View style={styles.rowInfo}>
-                <View style={styles.rowNameLine}>
-                  <Text
-                    style={[
-                      styles.rowName,
-                      { color: dimmed ? colors.textTertiary : colors.text },
-                    ]}
-                    numberOfLines={1}
-                  >
-                    {row.name}
-                  </Text>
-                  {row.pinned && (
-                    <Ionicons
-                      name="pin"
-                      size={13}
-                      color={colors.iconSecondary}
-                      style={styles.pinIcon}
-                    />
-                  )}
-                </View>
-                <Text
-                  style={[styles.rowSubtitle, { color: colors.textSecondary }]}
-                  numberOfLines={1}
-                >
-                  {row.subtitle}
-                </Text>
-              </View>
-              {row.enabled && row.unreadCount && row.unreadCount > 0 ? (
-                <View style={[styles.unreadBadge, { backgroundColor: row.iconColor }]}>
-                  <Text style={styles.unreadText}>
-                    {row.unreadCount > 99 ? "99+" : row.unreadCount}
-                  </Text>
-                </View>
-              ) : null}
-              {tappable && (
-                <Ionicons
-                  name="chevron-forward"
-                  size={18}
-                  color={colors.textTertiary}
-                />
-              )}
-            </TouchableOpacity>
-          );
-        })}
-      </View>
+              <Ionicons name="archive-outline" size={20} color={colors.textSecondary} />
+            </View>
+            <View style={styles.rowInfo}>
+              <Text style={[styles.rowName, { color: colors.text }]}>Archived</Text>
+              <Text
+                style={[styles.rowSubtitle, { color: colors.textSecondary }]}
+                numberOfLines={1}
+              >
+                {archivedRows.length} channel{archivedRows.length !== 1 ? "s" : ""} ·
+                hidden from members
+              </Text>
+            </View>
+            <Ionicons
+              name={archivedExpanded ? "chevron-up" : "chevron-down"}
+              size={18}
+              color={colors.textTertiary}
+            />
+          </TouchableOpacity>
+          {archivedExpanded && (
+            <View
+              style={[
+                styles.card,
+                styles.archivedCard,
+                { backgroundColor: colors.surfaceSecondary },
+              ]}
+            >
+              {archivedRows.map((row, idx) => renderRow(row, idx))}
+            </View>
+          )}
+        </>
+      )}
 
       {/* Solid Create Channel affordance — matches the DM "Add people"
           card. Replaces the dashed-border button. */}
@@ -402,15 +733,21 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
         </TouchableOpacity>
       )}
 
+      {/* Shared channel requests — pending invites from other groups. Each is
+          a tappable row that opens the channel's info screen, where the leader
+          reviews and accepts/declines. (The accept/decline buttons used to live
+          inline here; they now live on the channel info screen.) */}
       {isLeader && pendingInvites && pendingInvites.length > 0 && (
         <>
           <Text style={[styles.header, styles.subSectionHeader, { color: colors.textSecondary }]}>
-            SHARED CHANNEL INVITATIONS
+            SHARED CHANNEL REQUESTS
           </Text>
           <View style={[styles.card, { backgroundColor: colors.surfaceSecondary }]}>
             {pendingInvites.map((invite, idx) => (
-              <View
+              <TouchableOpacity
                 key={invite.channelId}
+                activeOpacity={0.7}
+                onPress={() => navigateToChannelInfo(invite.channelSlug, invite.channelId)}
                 style={[
                   styles.row,
                   idx > 0 && {
@@ -430,34 +767,15 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
                     From {invite.primaryGroupName}
                   </Text>
                   <Text style={[styles.rowNote, { color: colors.textTertiary }]}>
-                    Invited by {invite.invitedByName}
+                    Tap to review · invited by {invite.invitedByName}
                   </Text>
                 </View>
-                <View style={styles.inviteActions}>
-                  <TouchableOpacity
-                    style={[styles.inviteAcceptButton, { backgroundColor: primaryColor }]}
-                    onPress={() => handleRespondToInvite(invite.channelId, "accepted")}
-                    disabled={respondingTo !== null}
-                  >
-                    {respondingTo === `${invite.channelId}-accept` ? (
-                      <ActivityIndicator size="small" color={colors.textInverse} />
-                    ) : (
-                      <Text style={styles.inviteAcceptText}>Accept</Text>
-                    )}
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.inviteDeclineButton, { borderColor: colors.destructive }]}
-                    onPress={() => handleRespondToInvite(invite.channelId, "declined")}
-                    disabled={respondingTo !== null}
-                  >
-                    {respondingTo === `${invite.channelId}-decline` ? (
-                      <ActivityIndicator size="small" color={colors.destructive} />
-                    ) : (
-                      <Ionicons name="close" size={18} color={colors.destructive} />
-                    )}
-                  </TouchableOpacity>
-                </View>
-              </View>
+                <Ionicons
+                  name="chevron-forward"
+                  size={18}
+                  color={colors.textTertiary}
+                />
+              </TouchableOpacity>
             ))}
           </View>
         </>
@@ -473,6 +791,26 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingTop: 16,
     paddingBottom: 8,
+  },
+  // --- whatsapp-shell (flag-on) -------------------------------------------
+  waContainer: {
+    marginTop: WA_GROUP_SPACING,
+  },
+  waActionSection: {
+    marginTop: WA_GROUP_SPACING,
+  },
+  waNestedGroup: {
+    marginTop: 8,
+  },
+  waGlyphCircle: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  waDimmedRow: {
+    opacity: 0.55,
   },
   header: {
     fontSize: 11,
@@ -555,6 +893,19 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     minHeight: 48,
   },
+  archivedToggle: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginTop: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    borderRadius: 12,
+    minHeight: 56,
+  },
+  archivedCard: {
+    marginTop: 8,
+  },
   createIcon: {
     width: 32,
     height: 32,
@@ -565,29 +916,5 @@ const styles = StyleSheet.create({
   createLabel: {
     fontSize: 16,
     fontWeight: "500",
-  },
-  inviteActions: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-  },
-  inviteAcceptButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 6,
-    alignItems: "center",
-  },
-  inviteAcceptText: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: "#fff",
-  },
-  inviteDeclineButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    borderWidth: 1,
-    justifyContent: "center",
-    alignItems: "center",
   },
 });

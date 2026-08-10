@@ -1,17 +1,19 @@
 /**
  * CommunicationBotConfigModal - Configuration modal for Communication Bot
  *
- * Allows leaders to configure multiple automated messages with PCO position placeholders.
- * Messages can include placeholders like {{MANHATTAN > WORSHIP > Worship Leader}}
- * that will be resolved to @mention actual team members.
+ * Allows leaders to configure multiple automated messages with position placeholders.
+ * Messages can include placeholders like {{Worship > Worship Leader}} that resolve to
+ * the first names of whoever is scheduled. Resolution is native-first (the app's own
+ * rostering) with Planning Center as a fallback; the autocomplete offers native
+ * positions first, then PCO positions when PCO is connected.
  *
  * Features:
  * - Multiple scheduled messages support
- * - Message textarea with autocomplete for PCO positions
+ * - Message textarea with autocomplete for native + PCO positions
  * - Schedule picker (day of week + time) per message
  * - Target channel selector per message
  */
-import React, { useState, useRef, useCallback, useEffect } from "react";
+import React, { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import {
   View,
   Text,
@@ -164,16 +166,40 @@ export function CommunicationBotConfigModal({
     visible && groupId ? { groupId, includeArchived: false } : "skip"
   );
 
-  // Fetch available positions from PCO
+  // Native rostering positions (native-first source for placeholder suggestions).
+  const nativePositionsData = useAuthenticatedQuery(
+    api.functions.scheduling.nativePlaceholders.getNativePositions,
+    visible && groupId && groupData?.communityId
+      ? { communityId: groupData.communityId, groupId }
+      : "skip"
+  );
+
+  // Fetch available positions from PCO (fallback source, only when connected)
   const getPositions = useAction(
     api.functions.pcoServices.actions.getAvailablePositions
   );
   const sendCommunicationNow = useAction(
     api.functions.groupBots.sendCommunicationNow
   );
-  const [positions, setPositions] = useState<PcoPosition[]>([]);
+  const [pcoPositions, setPcoPositions] = useState<PcoPosition[]>([]);
   const [loadingPositions, setLoadingPositions] = useState(false);
   const [sendingMessageIds, setSendingMessageIds] = useState<Set<string>>(new Set());
+
+  // Native-first merged suggestion list: native `Team > Role` positions first,
+  // then any PCO positions not already covered by a native suggestion.
+  const positions: PcoPosition[] = useMemo(() => {
+    const native: PcoPosition[] = (nativePositionsData ?? []).map((p) => ({
+      serviceTypeName: null,
+      teamName: p.teamName,
+      positionName: p.roleName,
+      displayName: p.displayName,
+    }));
+    const seen = new Set(native.map((p) => p.displayName.toLowerCase()));
+    const pco = pcoPositions.filter(
+      (p) => !seen.has(p.displayName.toLowerCase())
+    );
+    return [...native, ...pco];
+  }, [nativePositionsData, pcoPositions]);
 
   // Reset form when modal opens with new config
   useEffect(() => {
@@ -206,7 +232,7 @@ export function CommunicationBotConfigModal({
         positionName: pos.name,
         displayName: pos.displayName,
       }));
-      setPositions(flatPositions);
+      setPcoPositions(flatPositions);
     } catch (error) {
       console.error("Failed to load positions:", error);
     } finally {
@@ -522,7 +548,10 @@ export function CommunicationBotConfigModal({
           onClose={() => setEditingMessage(null)}
           onSave={handleSaveMessage}
           positions={positions}
-          loadingPositions={loadingPositions}
+          loadingPositions={
+            loadingPositions ||
+            (!!groupId && !!groupData?.communityId && nativePositionsData === undefined)
+          }
           channelOptions={channelOptions}
           primaryColor={primaryColor}
         />
@@ -777,7 +806,7 @@ function MessageEditorModal({
                   ) : filteredPositions.length === 0 ? (
                     <Text style={[styles.emptyAutocompleteText, { color: colors.textSecondary }]}>
                       {positions.length === 0
-                        ? "No positions available. Configure PCO integration first."
+                        ? "No positions available. Set up serving teams and roles (or connect Planning Center) first."
                         : "No positions match your search"}
                     </Text>
                   ) : (

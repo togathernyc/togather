@@ -748,6 +748,7 @@ describe("Guest Management Tests (Issue #303)", () => {
 
       // Verify guest is removed
       const guests = await t.query(api.functions.meetings.attendance.listGuests, {
+        token: setup.leaderToken,
         meetingId,
       });
       expect(guests.length).toBe(0);

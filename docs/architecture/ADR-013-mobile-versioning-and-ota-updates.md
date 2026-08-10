@@ -208,6 +208,46 @@ The date/time segments are added by CI during OTA deployment. Fresh binary insta
 
 ---
 
+## OTA Delivery Modes (silent vs forced)
+
+Not every OTA needs to interrupt the user. Delivery is governed by a monotonic
+**forced floor** serial that `OTAUpdateProvider` reads off the update manifest
+(`extra.otaForcedSerial`):
+
+| Mode | What the user sees | When to use |
+|------|--------------------|-------------|
+| `silent` (default) | Nothing. The bundle downloads in the background and applies on the **next cold start**. | Routine frontend changes that don't break the frontend↔backend contract. |
+| `forced` | The full-screen, non-dismissible "Updating" modal, then an immediate `reloadAsync`. | Breaking frontend↔backend contract changes (avoid errors on stale clients) **or** a big feature you want everyone on at once. |
+
+**The decision rule:** the app force-reloads when an incoming update's
+`otaForcedSerial` is **greater than the serial of the running bundle**;
+otherwise it stages the update silently. A missing/garbled serial reads as `0`,
+so it can never spuriously trigger a forced reload.
+
+**Why a serial and not a boolean.** `checkForUpdateAsync()` only ever returns
+the *latest* manifest. A plain `forced` flag on one release would be lost the
+moment a later silent release superseded it, so a device that missed the forced
+window would never reload. The floor is **sticky**: a forced deploy bumps it,
+and every later silent deploy carries the same value forward — so a stale device
+sees the higher floor even on a silent update and still force-reloads.
+
+**How the floor is set:** the `Deploy to Production` workflow has an
+`update_mode` input (`silent` | `forced`, default `silent`). The OTA job reads
+the current floor from the annotated `production-forced-floor` git tag; a
+`forced` deploy bumps it to the deploy timestamp and moves the tag, a `silent`
+deploy carries it forward. The value is exported as `OTA_FORCED_SERIAL` to the
+`eas update` step, where `app.config.js` bakes it into `extra.otaForcedSerial`.
+No backend coordination required. (Native store releases use the separate
+`NativeUpdateModal` path and don't touch this floor.)
+
+**Backend-only deploys publish nothing.** The deploy workflow tags each
+production release as `production-latest` and diffs `apps/mobile` +
+`packages/shared` + root dependency files (`package.json`, `pnpm-lock.yaml`)
+against it. If nothing mobile changed, no OTA is published at all — a Convex-only
+deploy no longer shows users any update UI.
+
+---
+
 ## Common Scenarios
 
 ### Bug Fix (OTA Safe)
@@ -259,6 +299,225 @@ A new native package was added to `package.json` but not to `native-deps.json`. 
 4. Updates apply on app restart
 
 ---
+
+## Guarding against JS changes that break native rendering
+
+A distinct failure class from the OTA/gating rules above: a **pure-JS
+dependency change** that silently breaks **native** rendering on the installed
+binary, while every automated check stays green.
+
+**Motivating incident (#548).** PR #548 added `@mui/*` + `@emotion/*` to
+`apps/mobile` for a *web-only* datepicker. Those emotion/CSS-in-JS packages
+dragged a second React into the shared pnpm lockfile (`autoInstallPeers`), which
+re-keyed the Expo native-module graph. On the installed binary this broke Fabric
+view/module registration and **chat video + animated GIFs rendered blank** —
+yet typecheck, jest, and the web build all passed (jest mocks native modules;
+web never touches Fabric).
+
+We defend this with **three layers**:
+
+1. **React-consistency check** (`check-react-consistency` from
+   `@supa-media/native-safety`, gate #1) —
+   fails CI if any Expo/React-Native native package in `pnpm-lock.yaml` is keyed
+   to a React version other than the one `apps/mobile` pins. Catches the #548
+   *mechanism* (a second React in the native graph). Runs per-PR.
+
+2. **Native-unsafe dependency denylist** (same script, gate #2) — fails CI if
+   `apps/mobile` `dependencies`/`devDependencies` contain an emotion/CSS-in-JS/
+   MUI-family package (`@mui/`, `@emotion/`, `@material-ui/`,
+   `styled-components`). Catches the #548 *libraries* directly, before they can
+   pull a second React. Web-only date/UI needs should use a dependency-free
+   approach or an emotion-free library (e.g. `react-datepicker`); adding a
+   denylisted package requires deliberately updating the list with
+   justification. Runs per-PR.
+
+3. **Native media smoke test** (ADR-030) — the real backstop. Static checks 1–2
+   only catch *known* mechanisms/libraries; a novel way to break native
+   rendering would slip past both. Only driving the real app on a real native
+   build (simulator + EAS dev build) and asserting media renders non-blank
+   catches that. It cannot run per-PR (needs a simulator + build), so it runs on
+   a schedule / pre-release. An interim jest test
+   (`features/chat/components/__tests__/VideoPlayer.tier.test.tsx`) asserts
+   `VideoPlayer` never degrades to blank tier selection — but, because jest
+   mocks native views, it explicitly *cannot* catch native view-registration
+   failures. See ADR-030 for the full spec.
+
+### Postmortem: #548 / #619 native-media regression (2026-07)
+
+The incident that motivated the three guards above, documented precisely so the
+exact failure modes and the debugging path are reproducible.
+
+**Symptom.** On the *installed* iOS binary (app `1.0.23` / build `32`,
+`runtimeVersion` frozen at `1.0.21`, New Architecture / Fabric), native chat
+**video** fell back to a download card and animated **GIFs** rendered blank —
+while static images still worked. The device console showed:
+
+```
+Invariant Violation: View config getter callback for component
+ViewManagerAdapter_ExpoVideo_VideoView… must be a function (received undefined)
+```
+
+It reproduced only on a real native build; every CI check was green.
+
+**Root cause #1 — a web dependency broke the native graph (PR #548).** #548
+added `@mui/*` + `@emotion/*` to `apps/mobile/package.json` for a *web-only* MUI
+datepicker (`DatePicker.web.tsx`). That code never runs on native, but the
+packages' mere *presence* made pnpm's `autoInstallPeers` pull a **second React
+(19.2.7)** into the shared `pnpm-lock.yaml`. That re-keyed the mobile Expo
+native-module graph — e.g. `/expo-modules-core@3.0.29(react-native@0.81.5)(react@19.2.7)`
+instead of the `(react@19.1.0)` key the binary was built against — which breaks
+Fabric view/module registration at runtime.
+
+- Not emotion-specific: the same mechanism was later reproduced with
+  `react-datepicker` (emotion-free, yet still broke native), and could bleed
+  from `@react-email` (used for transactional email) once the graph was
+  destabilized. **Any web-only React component library in `apps/mobile` is
+  dangerous**, regardless of whether it uses CSS-in-JS.
+- A `pnpm.overrides` React pin was **not** sufficient: it collapsed the lockfile
+  to a single React key, but the library's presence still broke native at
+  runtime. The library has to be *absent* from `apps/mobile`, not merely
+  deduped.
+
+**Root cause #2 — a self-inflicted native-view crash (PR #619).** While fixing
+the regression, an aspect-ratio change added
+`player.addListener('sourceLoad', …)` (an effect touching the expo-video player)
+to `ExpoVideoPlayer`. That effect **deterministically crashed** the native
+`VideoView` and produced the `ViewManagerAdapter` error above — a second,
+independent native-rendering break layered on top of #548.
+
+**The cascade (why "video + GIF break together").** The native `VideoView`
+crash corrupts the Fabric view registry, which then **also breaks unrelated
+native rendering**. The animated GIF renders through a plain React Native
+`<Image>` whose code was **entirely unchanged**, yet it went blank purely as a
+downstream effect of the corrupted registry. Video and GIF are coupled *through
+the Fabric registry* — they were never two separate bugs, which is why fixing
+one appeared to fix the other and made the whole thing look "flaky."
+
+**Why CI never caught it.** Typecheck passes (the TS is valid), unit tests pass
+(native modules are mocked), the JS bundle builds fine, and web E2E never
+exercises Fabric. It manifests **only on a real device**. This is the exact
+structural gap ADR-030 (native media smoke test) exists to close.
+
+**Guards now in place (map to the three layers above).**
+
+- `check-react-consistency` (from `@supa-media/native-safety`) runs in CI (the
+  `test-mobile` job) and fails if (a) any native package — matched via prefix +
+  `native-deps.json` — is keyed to a React version other than the pinned one,
+  or (b) a denylisted library (`@mui/`, `@emotion/`, `@material-ui/`,
+  `styled-components`, `react-datepicker`) appears in `apps/mobile` deps.
+- Web-only UI in `apps/mobile` must be **dependency-free** (e.g. a native
+  `<input>` in a `.web.tsx` file), **not** a React component library.
+- ADR-030 (native media smoke test, on a real device) is the only layer that
+  catches a *novel* mechanism — the static checks above only know about the
+  mechanisms and libraries listed here.
+
+**Debugging playbook that worked (reuse this).** The bug only shows on a real
+device, so debug on one by bisecting OTA bundles:
+
+1. Publish a specific commit's bundle to the **staging** channel — either
+   `eas update:republish --group <id>` to re-point an existing bundle, or
+   dispatch `deploy-mobile-update.yml` on a branch to build+publish that
+   commit's bundle.
+2. On the device, **force-quit and reopen the app twice** to fetch and then
+   apply the staged OTA (expo-updates applies on the *next* cold start).
+3. Confirm which bundle is live and read the error from the in-app log
+   collector: **DEVICE INFO** shows the live OTA version; the **console** shows
+   the `ViewManagerAdapter` error if the native view failed to register.
+4. **Change exactly one variable per bundle and device-verify before merging to
+   prod.** Stacking multiple candidate fixes into a single test bundle is
+   precisely what made a *deterministic* bug (#619) look intermittent — you
+   can't attribute a pass/fail when two things changed at once.
+
+### Postmortem addendum: it happened again via #629 (2026-07-30)
+
+Same symptom (video → download card, animated GIFs blank, static images fine),
+same *class* (a re-keyed Expo native-module graph), but a **variant the
+#619 guard cannot see** — which is why it shipped despite green CI.
+
+**What the lockfile looks like.** `pnpm-lock.yaml` holds, and always has, two
+peer-keyed instances of `react-native` (and of `expo`):
+
+```
+react-native@0.81.5(@babel/core@7.29.0)(@types/react@19.1.17)(react@19.1.0)  <- apps/mobile's
+react-native@0.81.5(@babel/core@7.29.0)(react@19.1.0)                        <- the workspace root's
+```
+
+The workspace root's own `package.json` declares `expo`, `react-native` and
+`react`, which is what creates the second family. That is harmless **as long as
+the Expo native chain points at the same instance the app imports.**
+
+**What #629 did.** "chore: migrate dev-assistant onto
+`@supa-media/dev-assistant@2.0.0`" (2026-07-17) re-resolved the workspace and
+flipped nine Expo blocks onto the *other* instance — 13 dependency references:
+
+`expo-modules-core`, `expo-asset`, `expo-constants`, `expo-file-system`,
+`expo-font`, `expo-keep-awake`, `@expo/devtools`, `@expo/metro-config`,
+`@expo/prebuild-config`.
+
+Nothing in that PR touches react-native. Its lockfile diff was +129/−130 of pure
+resolution churn — exactly the hazard already written down above: *a bare
+workspace-root `pnpm install` can non-deterministically re-key
+expo/expo-modules-core/react-native*. It had only ever been prose; now it's
+enforced (see below).
+
+**Mechanism.** Two physical `react-native` copies in one bundle means two Fabric
+view/module registries. `expo-modules-core` registers views into its copy's
+registry while the app's components look them up in the other, so
+`requireNativeViewManager('ExpoVideo','VideoView')` returns `undefined` →
+`ViewManagerAdapter_ExpoVideo_VideoView … must be a function (received
+undefined)` → `VideoErrorBoundary` swaps in the download card. The same split
+registry breaks the animated-`Image` path, so bundled RSVP GIFs go blank, while
+static images — which need no native view — keep working. Verified on disk:
+
+```
+main:   apps/mobile       react-native -> …_@types+react@19.1.17_react@19.1.0
+        expo-modules-core react-native -> …@7.29.0_react@19.1.0        ❌ different
+fixed:  both                           -> …_@types+react@19.1.17_react@19.1.0   ✅ same
+```
+
+**Why the two-week delay in noticing.** The bad lockfile landed 2026-07-17, but
+production takes JS only on a manual deploy, and the next production OTA was
+2026-07-27. So video/GIFs worked from #620 (07-15) through 07-27 and broke with
+that deploy — the regression is in the *deploy*, not the day the commit merged.
+When dating a regression, use the production OTA history, not `git log`.
+
+**Why every existing guard passed.** `check-react-consistency` gate #1 asks "is
+a second React **version** keyed onto native packages?" Both instances here are
+keyed `(react@19.1.0)`, so the version set is a clean `{pinned}` and it passes on
+the broken lockfile — confirmed by running it against both trees. Gate #2
+(denylist) is irrelevant: no new library was added. `check-fingerprint` ignores
+`pnpm-lock.yaml` by design. Jest mocks native modules; the Metro bundle builds;
+web never touches Fabric.
+
+**The guard that closes it.** Gate #4, *single native instance*: every **shared**
+native package (exactly one copy in the lockfile) must resolve the same
+`react-native`/`expo` instance `apps/mobile` resolves.
+
+- Runs in `ci.yml`'s `test-mobile` job as `Check native instance`.
+- Only *shared* packages are checked. A multi-copy package has one copy per
+  instance family and each correctly points at its own family's runtime (the
+  root's own `expo`, its `@react-native/virtualized-lists`, a build-time second
+  `@expo/cli`). Flagging those would fire on a healthy graph — including on the
+  known-good pre-regression baseline — and a gate that fires on a healthy graph
+  is a gate someone switches off.
+- Fails closed: a missing importers block, an importer not in the lockfile, or an
+  importer with no react-native/expo are all errors, never skips.
+- Validated in three directions against real lockfiles: passes the #620
+  known-good baseline, passes the fix, and fails `main` naming exactly the 13
+  references.
+- Canonical implementation is upstream in `@supa-media/native-safety` as gate #4
+  of `check-react-consistency`. `apps/mobile/scripts/check-native-instance.js` is
+  a marked temporary copy because this repo is on 1.1.0; delete it and fold the
+  flag onto the existing `npx check-react-consistency` step once the release
+  lands (the path #628 took after #619 added its script locally).
+
+**The rule this adds.** A dependency change in *any* workspace can re-key the
+mobile native graph. After **any** lockfile change — even one in `apps/web` or
+`apps/convex` with no relation to react-native — the native-instance gate must
+pass. Prefer scoped `pnpm add <pkg> --filter <workspace>` over a bare
+workspace-root `pnpm install`, and never "resolve" a split graph with
+`pnpm.overrides`: an override can collapse the lockfile keys while leaving two
+physical copies installed.
 
 ## References
 

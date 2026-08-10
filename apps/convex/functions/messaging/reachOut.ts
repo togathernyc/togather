@@ -11,6 +11,7 @@ import { query, mutation } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
+import { resolveChannelCommunityId } from "../../lib/messaging/communityScope";
 import { getDisplayName, getMediaUrl } from "../../lib/utils";
 import { isLeaderRole, isActiveMembership } from "../../lib/helpers";
 
@@ -141,6 +142,7 @@ export const submitTaskRequest = mutation({
     const preview = content.length > 100 ? content.substring(0, 97) + "..." : content;
     const messageId = await ctx.db.insert("chatMessages", {
       channelId: leadersChannel._id,
+      communityId: await resolveChannelCommunityId(ctx, leadersChannel._id),
       senderId: userId,
       senderName: submitterName,
       senderProfilePhoto: submitter ? getMediaUrl(submitter.profilePhoto) : undefined,
@@ -514,6 +516,7 @@ export const submitRequest = mutation({
     const preview = content.length > 100 ? content.substring(0, 97) + "..." : content;
     const messageId = await ctx.db.insert("chatMessages", {
       channelId: leadersChannel._id,
+      communityId: await resolveChannelCommunityId(ctx, leadersChannel._id),
       senderId: userId,
       senderName: submitterName,
       senderProfilePhoto: submitter ? getMediaUrl(submitter.profilePhoto) : undefined,

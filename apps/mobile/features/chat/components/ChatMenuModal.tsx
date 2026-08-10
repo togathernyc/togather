@@ -22,7 +22,6 @@ type ChatMenuModalProps = {
   onMembersPress: () => void;
   onEventsPress: () => void;
   onAttendancePress: () => void;
-  onFollowupPress: () => void;
   onBotsPress: () => void;
   onGroupPagePress: () => void;
   onShareGroupPress?: () => void;
@@ -37,7 +36,6 @@ export const ChatMenuModal = memo(function ChatMenuModal({
   onMembersPress,
   onEventsPress,
   onAttendancePress,
-  onFollowupPress,
   onBotsPress,
   onGroupPagePress,
   onShareGroupPress,

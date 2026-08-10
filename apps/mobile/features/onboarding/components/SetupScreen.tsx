@@ -9,7 +9,7 @@
  * 3. Show pre-filled form for community configuration
  * 4. On submit: complete setup -> create Stripe checkout -> redirect to Stripe
  */
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback } from "react";
 import {
   View,
   Text,
@@ -28,6 +28,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQuery, useMutation, useAction, api } from "@services/api/convex";
 import { useTheme } from "@hooks/useTheme";
 import { DOMAIN_CONFIG } from "@togather/shared/config";
+import { ColorInput, isValidHex } from "./ColorInput";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -61,11 +62,6 @@ function isReservedSlug(slug: string): boolean {
   return RESERVED_SLUGS.has(slug);
 }
 
-/** Validate a hex color string (#RRGGBB). */
-function isValidHex(hex: string): boolean {
-  return /^#[0-9A-Fa-f]{6}$/.test(hex);
-}
-
 // ---------------------------------------------------------------------------
 // Submission phases
 // ---------------------------------------------------------------------------
@@ -83,104 +79,6 @@ function getPhaseLabel(phase: SubmissionPhase): string {
     default:
       return "Continue to Payment";
   }
-}
-
-// ---------------------------------------------------------------------------
-// Sub-components
-// ---------------------------------------------------------------------------
-
-function ColorInput({
-  label,
-  value,
-  onChange,
-  colors,
-}: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  colors: ReturnType<typeof useTheme>["colors"];
-}) {
-  const [textValue, setTextValue] = useState(value);
-  const valid = isValidHex(textValue);
-
-  useEffect(() => {
-    setTextValue(value);
-  }, [value]);
-
-  function handleTextChange(newValue: string) {
-    let normalized = newValue;
-    if (normalized && !normalized.startsWith("#")) {
-      normalized = "#" + normalized;
-    }
-    setTextValue(normalized);
-    if (isValidHex(normalized)) {
-      onChange(normalized);
-    }
-  }
-
-  return (
-    <View style={styles.fieldGroup}>
-      <Text style={[styles.label, { color: colors.textSecondary }]}>
-        {label}
-      </Text>
-      <View style={styles.colorRow}>
-        {/* Native color picker on web */}
-        {Platform.OS === "web" && (
-          <View style={styles.colorPickerWrapper}>
-            <input
-              type="color"
-              value={valid ? textValue : "#000000"}
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              onChange={(e: any) => {
-                const hex = (e.target as HTMLInputElement).value.toUpperCase();
-                setTextValue(hex);
-                onChange(hex);
-              }}
-              style={{
-                width: 40,
-                height: 40,
-                border: "none",
-                borderRadius: 8,
-                cursor: "pointer",
-                padding: 2,
-                backgroundColor: "transparent",
-              }}
-            />
-          </View>
-        )}
-        <TextInput
-          style={[
-            styles.input,
-            styles.colorTextInput,
-            {
-              backgroundColor: colors.inputBackground,
-              borderColor:
-                textValue && !valid ? colors.error : colors.inputBorder,
-              color: colors.text,
-              fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
-            },
-          ]}
-          value={textValue}
-          onChangeText={handleTextChange}
-          placeholder="#3B82F6"
-          placeholderTextColor={colors.inputPlaceholder}
-          maxLength={7}
-          autoCapitalize="none"
-          autoCorrect={false}
-        />
-        {valid && (
-          <View
-            style={[styles.colorSwatch, { backgroundColor: textValue }]}
-          />
-        )}
-      </View>
-      {textValue && !valid && (
-        <Text style={[styles.fieldHint, { color: colors.error }]}>
-          Enter a valid hex color (e.g. #3B82F6)
-        </Text>
-      )}
-    </View>
-  );
 }
 
 // ---------------------------------------------------------------------------
@@ -896,25 +794,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     marginTop: 4,
     lineHeight: 18,
-  },
-  colorRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-  },
-  colorPickerWrapper: {
-    width: 40,
-    height: 40,
-    borderRadius: 8,
-    overflow: "hidden",
-  },
-  colorTextInput: {
-    flex: 1,
-  },
-  colorSwatch: {
-    width: 40,
-    height: 40,
-    borderRadius: 8,
   },
   colorPreviewRow: {
     flexDirection: "row",

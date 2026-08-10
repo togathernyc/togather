@@ -15,7 +15,11 @@ import { query, mutation, internalMutation, internalQuery } from "../_generated/
 import { internal } from "../_generated/api";
 import { Id } from "../_generated/dataModel";
 import { now, normalizePhone, getMediaUrl, buildSearchText } from "../lib/utils";
-import { requireAuth, getOptionalAuth } from "../lib/auth";
+import {
+  requireAuth,
+  requireAuthAllowArchivedCommunity,
+  getOptionalAuth,
+} from "../lib/auth";
 import { parseDate } from "../lib/validation";
 import { COMMUNITY_ROLES, COMMUNITY_ADMIN_THRESHOLD } from "../lib/permissions";
 import { adjustEnabledCounter } from "../lib/notifications/enabledCounter";
@@ -482,6 +486,29 @@ export const update = mutation({
       });
     }
 
+    // If name changed, fan out marketing integration syncs (Clearstream / Flodesk)
+    // across the user's active communities. Per-community sync is a no-op if no
+    // marketing integration is connected, so over-firing is cheap.
+    if (args.firstName !== undefined || args.lastName !== undefined) {
+      const memberships = await ctx.db
+        .query("userCommunities")
+        .withIndex("by_user", (q) => q.eq("userId", userId))
+        .collect();
+      for (const m of memberships) {
+        if (m.status !== 1) continue; // active only
+        await ctx.scheduler.runAfter(
+          0,
+          internal.functions.marketing.clearstream.syncUser,
+          { userId, communityId: m.communityId },
+        );
+        await ctx.scheduler.runAfter(
+          0,
+          internal.functions.marketing.flodesk.syncUser,
+          { userId, communityId: m.communityId },
+        );
+      }
+    }
+
     // If zipCode changed, sync to all communityPeople records for this user
     if (args.zipCode !== undefined) {
       const cpRecords = await ctx.db
@@ -506,7 +533,9 @@ export const update = mutation({
 export const clearActiveCommunity = mutation({
   args: { token: v.string() },
   handler: async (ctx, args) => {
-    const userId = await requireAuth(ctx, args.token);
+    // Escape hatch: dropping the active community must work even when that
+    // community is archived (this is how a stuck user gets to selection).
+    const userId = await requireAuthAllowArchivedCommunity(ctx, args.token);
 
     await ctx.db.patch(userId, {
       activeCommunityId: undefined,
@@ -538,6 +567,23 @@ export const recordActivity = mutation({
     }
 
     await ctx.db.patch(userId, { lastActiveAt: nowMs });
+
+    // Opening the app also counts as activity in the community you're in.
+    // This per-community timestamp is what the admin "Active Members" stat
+    // and the $1/month per-active-member bill are computed from (see
+    // functions/memberActivity.ts) — without it, members who stay in one
+    // community would look inactive there despite opening the app daily.
+    if (user.activeCommunityId) {
+      const membership = await ctx.db
+        .query("userCommunities")
+        .withIndex("by_user_community", (q) =>
+          q.eq("userId", userId).eq("communityId", user.activeCommunityId!),
+        )
+        .first();
+      if (membership && membership.status === 1) {
+        await ctx.db.patch(membership._id, { lastLogin: nowMs });
+      }
+    }
   },
 });
 
@@ -602,6 +648,9 @@ export const me = query({
       memberships.map(async (membership) => {
         const community = await ctx.db.get(membership.communityId);
         if (!community) return null;
+        // Archived (closed) communities are hidden — never listed as one of the
+        // user's communities, so the switcher/selection can't re-enter them.
+        if (community.isArchived) return null;
         const roleLevel = membership.roles ?? COMMUNITY_ROLES.MEMBER;
         return {
           communityId: community._id,
@@ -621,15 +670,42 @@ export const me = query({
     let activeCommunityName: string | null = null;
     let activeCommunityPrimaryColor: string | null = null;
     let activeCommunitySecondaryColor: string | null = null;
+    let activeCommunityChurchFeatures: { prayerEnabled: boolean } | null = null;
+    // When the active community has been archived (closed), surface it as if the
+    // user has no active community, so the client drops to community selection
+    // instead of resuming into a dead community. `activeCommunityArchived` lets
+    // the client react explicitly (clear it + navigate to selection).
+    let activeCommunityArchived = false;
+    let effectiveActiveCommunityId = user.activeCommunityId || null;
 
     if (user.activeCommunityId) {
       const activeCommunity = await ctx.db.get(user.activeCommunityId);
-      if (activeCommunity) {
+      if (activeCommunity?.isArchived) {
+        activeCommunityArchived = true;
+        effectiveActiveCommunityId = null;
+      } else if (activeCommunity) {
         activeCommunityName = activeCommunity.name || null;
         activeCommunityPrimaryColor = activeCommunity.primaryColor || null;
         activeCommunitySecondaryColor = activeCommunity.secondaryColor || null;
+        activeCommunityChurchFeatures = activeCommunity.churchFeatures ?? null;
       }
     }
+
+    // Knicks mode is now an APP-WIDE feature flag, flipped by Togather staff
+    // in /admin/features — no longer a per-community setting. Default OFF: an
+    // absent flag row means off. See functions/admin/featureFlags.ts.
+    //
+    // New mobile clients subscribe to the flag live via useConvexFeatureFlag
+    // and don't read it from this response. We still surface it below (as the
+    // legacy `activeCommunityKnicksMode` field) so OLD bundles — which read
+    // that field and default ON when it's absent — instead see the resolved
+    // app-wide value and stay OFF during the deploy/OTA window. Remove the
+    // response field once old clients have aged out.
+    const knicksModeFlag = await ctx.db
+      .query("featureFlags")
+      .withIndex("by_key", (q) => q.eq("key", "knicks-mode"))
+      .first();
+    const knicksMode = knicksModeFlag?.enabled ?? false;
 
     const notificationsDisabled = await isUserNotificationsDisabled(ctx, userId);
 
@@ -658,10 +734,16 @@ export const me = query({
       birthdayMonth: user.birthdayMonth ?? null,
       birthdayDay: user.birthdayDay ?? null,
       location: user.location ?? null,
-      activeCommunityId: user.activeCommunityId || null,
+      activeCommunityId: effectiveActiveCommunityId,
       activeCommunityName,
       activeCommunityPrimaryColor,
       activeCommunitySecondaryColor,
+      // Legacy field name, kept for old-client back-compat (see comment above).
+      activeCommunityKnicksMode: knicksMode,
+      activeCommunityChurchFeatures,
+      // True when the user's stored active community has been archived — the
+      // client should clear it and route to community selection.
+      activeCommunityArchived,
       communityMemberships: communityMemberships.filter(Boolean),
     };
   },

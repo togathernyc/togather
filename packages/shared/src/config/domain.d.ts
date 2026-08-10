@@ -21,6 +21,7 @@ export const DOMAIN_CONFIG: {
   communityUrl(subdomain: string): string;
   attendanceConfirmationUrl(token: string): string;
   communityLandingUrl(slug: string): string;
+  availabilityLinkUrl(token: string): string;
   eventLinkRegex(): RegExp;
   eventLinkRegexSingle(): RegExp;
   groupLinkRegex(): RegExp;

@@ -58,13 +58,21 @@ export const GroupChatsScreen: React.FC = () => {
         >
           <View style={styles.chatIcon}>
             <Text style={styles.chatIconText}>
-              {chat.channelType === 'leaders' ? '👑' : '💬'}
+              {chat.channelType === 'leaders'
+                ? '👑'
+                : chat.channelType === 'cross_team'
+                  ? '🔀'
+                  : '💬'}
             </Text>
           </View>
           <View style={styles.chatInfo}>
             <Text style={styles.chatName}>{chat.name}</Text>
             <Text style={styles.chatType}>
-              {chat.channelType === 'leaders' ? 'Leaders Hub' : 'General Chat'}
+              {chat.channelType === 'leaders'
+                ? 'Leaders Hub'
+                : chat.channelType === 'cross_team'
+                  ? 'Cross-team channel'
+                  : 'General Chat'}
             </Text>
           </View>
         </TouchableOpacity>

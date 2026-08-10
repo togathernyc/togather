@@ -5,7 +5,7 @@ import { MessageInput } from '../MessageInput';
 
 jest.mock('../../hooks/useImageUpload', () => ({
   useImageUpload: () => ({
-    uploadImage: jest.fn(),
+    uploadImage: jest.fn(() => Promise.resolve({ url: 'r2:chat/pasted.png' })),
     uploading: false,
     progress: 0,
     reset: jest.fn(),
@@ -94,6 +94,29 @@ jest.mock('../AttachmentPanel', () => ({
 
 jest.mock('../GifPicker', () => ({
   GifPicker: () => null,
+}));
+
+// Dev-assistant @Togather mention deps (added to MessageInput). The global
+// convex mock exposes `api: {}`, so provide the devAssistant path used here and
+// stub the auth/flag hooks (the bot mention is gated off in this test).
+jest.mock('@services/api/convex', () => ({
+  useQuery: jest.fn(),
+  api: {
+    functions: {
+      devAssistant: {
+        index: { getBotUserId: 'getBotUserId' },
+        maintainers: { myAccess: 'myAccess' },
+      },
+    },
+  },
+}));
+
+jest.mock('@/providers/AuthProvider', () => ({
+  useAuth: () => ({ user: null, token: 'mock-auth-token' }),
+}));
+
+jest.mock('@hooks/useConvexFeatureFlag', () => ({
+  useConvexFeatureFlag: () => ({ enabled: false, loaded: true }),
 }));
 
 jest.mock('@hooks/useTheme', () => ({
@@ -230,6 +253,13 @@ describe('MessageInput', () => {
       const input = getByPlaceholderText('Message...');
       expect(input.props.scrollEnabled).toBe(true);
     });
+
+    // NOTE: Image-paste detection is unit-tested directly against
+    // `getPastedImageFiles` in utils/__tests__/imageUpload.test.ts. The paste
+    // listener is attached to the real <textarea> DOM node via addEventListener
+    // (react-native-web silently drops an `onPaste` JSX prop), which the
+    // react-test-renderer host mock can't drive — so the end-to-end paste flow
+    // is verified manually in the browser rather than here.
   });
 
   // ==========================================================================

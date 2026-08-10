@@ -18,7 +18,7 @@ pnpm dev
 
 ## Agent Backend Selection Policy (Maintainer CI Agents Only)
 
-> **Open-source contributors**: This section does not apply to you. Create your own personal Convex deployment via `npx convex dev` — see `CLAUDE.md` for setup instructions.
+> **Open-source contributors**: This section does not apply to you. Create your own personal Convex deployment via `npx convex dev` — see the `onboarding-new-dev` skill (`.claude/skills/onboarding-new-dev/SKILL.md`) for setup instructions.
 
 - Allowed backend names are defined in `config/allowed-backends.json`.
 - Required launcher command: `pnpm dev:backend --backend=<choice>`.
@@ -104,13 +104,52 @@ pnpm dev
 | `STRIPE_WEBHOOK_SECRET` | Stripe webhook signing secret (starts with `whsec_`) | Billing disabled |
 | `STRIPE_PRODUCT_ID` | Stripe Product ID for "Togather Community Hosting" (optional — auto-created if not set) | Auto-created on first use |
 
-> **Note**: These variables are configured in the Convex deployment dashboard. The webhook URL should be registered as `https://<convex-deployment>.convex.site/stripe-webhook`.
+> **Note**: `STRIPE_SECRET_KEY` is synced from 1Password like everything else (it's in `ee/secrets-allowlist.json` `required`, and deploys forward it to Convex) — **staging must hold a test-mode `sk_test_…` key and production the live `sk_live_…` key**. A live key on staging makes Stripe reject the documented test tax IDs ("Invalid Tax ID … is not an allowed value") and breaks test-mode Connect onboarding; that shipped once because this key predated the 1Password sync and GitHub's manually-seeded live value was silently forwarded forever. `STRIPE_WEBHOOK_SECRET`/`STRIPE_PRODUCT_ID` are still manually configured (add them to the allowlist + 1Password before relying on the sync for them — an `optional` key absent from 1Password gets PRUNED from GitHub). The webhook URL should be registered as `https://<convex-deployment>.convex.site/stripe-webhook`.
 
 ### KLIPY GIF API (Optional)
 
 | Secret | Description | Degradation |
 |--------|-------------|-------------|
 | `EXPO_PUBLIC_KLIPY_API_KEY` | KLIPY API key (from partner.klipy.com) | GIF picker hidden |
+
+### Prayer-request moderation (Church Prayer feature)
+
+| Secret | Description | Degradation |
+|--------|-------------|-------------|
+| `OPENAI_SECRET_KEY` | OpenAI API key (already used by poster keywording). The prayer moderator calls `gpt-4o-mini` in JSON mode. | Moderator fails open — every prayer is accepted without LLM screening. |
+| `OLLAMA_API_KEY` | **Escape hatch only.** Used if you flip `PROVIDER` to `"ollama"` in `apps/convex/lib/moderation/prayer.ts` (e.g. if OpenAI spend gets too high). See https://ollama.com/pricing. | Same fail-open behavior when unset. |
+
+### Dev-Assistant Bot (@Togather pipeline, staff-only)
+
+Gated behind the `dev-assistant-bot` feature flag. Reuses `OPENAI_SECRET_KEY`
+(`gpt-4o` for vision) — no new LLM key. These wire the Claude Code Routine seam:
+
+| Secret | Description | Degradation |
+|--------|-------------|-------------|
+| `CLAUDE_ROUTINES_TRIGGER_URL` | Outbound POST target. When a bug is marked `READY_FOR_IMPL`, we POST `{ bugId, routineRunId, title, body, repro, screenshotUrls, callbackUrl }` here to kick off the routine. Also the shared fallback for all per-mode trigger URLs below (single-Routine setup). | Dispatch fails; bug stays `IN_PROGRESS` with `lastError`. Use the "Retry dispatch" action once configured. |
+| `CLAUDE_ROUTINES_TOKEN` | Bearer token sent as `Authorization: Bearer <token>` on the outbound POST. Shared fallback for the per-mode tokens below. | Same as above. |
+| `CLAUDE_ROUTINES_TRIGGER_URL_SPEC` / `CLAUDE_ROUTINES_TOKEN_SPEC` | Per-mode trigger for the **spec-drafting** Routine (dashboard contributions, read-only repo access). Optional — falls back to the legacy pair above. See `docs/dev-assistant/ROUTINE-PROMPT.md`. | Spec dispatches use the legacy single Routine. |
+| `CLAUDE_ROUTINES_TRIGGER_URL_IMPL` / `CLAUDE_ROUTINES_TOKEN_IMPL` | Per-mode trigger for the **implementation** Routine (read + push; also used for fix-mode runs, which need push access). Optional — falls back to the legacy pair. | Implementation/fix dispatches use the legacy single Routine. |
+| `CLAUDE_ROUTINES_TRIGGER_URL_REVIEW` / `CLAUDE_ROUTINES_TOKEN_REVIEW` | Per-mode trigger for the **PR review** Routine (read-only; posts findings as PR comments from a non-author identity). Optional — falls back to the legacy pair. | Review dispatches use the legacy single Routine. |
+| `DEV_ASSISTANT_CALLBACK_SECRET` | HMAC-SHA256 key for inbound callbacks. The routine signs the raw callback body and sends the hex digest in `x-togather-signature`; we recompute and constant-time compare. Callback endpoint: `POST https://<deployment>.convex.site/dev-assistant/callback`. Also gates `POST https://<deployment>.convex.site/dev-assistant/upload`, which lets a routine publish a before/after mock image to R2 (same signature scheme) and get back a fetchable URL for the callback's `screenshots` array. | Callbacks (and mock-image uploads) rejected with 401; bug never advances past `IN_PROGRESS`. |
+| `GH_WEBHOOK_SECRET` | HMAC-SHA256 secret for the inbound GitHub webhook (`POST https://<deployment>.convex.site/github/webhook`, `pull_request` closed events; `X-Hub-Signature-256`). Falls back to `DEV_ASSISTANT_CALLBACK_SECRET` so one shared secret can serve both inbound channels — set this to split them without a code change. Named `GH_*`, not `GITHUB_*`, because GitHub reserves the `GITHUB_` secret-name prefix (`gh secret set GITHUB_*` → 422) and a `GITHUB_`-prefixed key can't sync through 1Password→GitHub→Convex. | With neither set, webhook returns 503: merges done directly on GitHub don't flip items to `MERGED` (auto-merge still applies its own merges; otherwise use `markBugMerged` from the review screen). |
+| `GH_MIRROR_TOKEN` | GitHub PAT read by Convex for: mirroring dashboard items as tracking issues (**Issues read/write**), the in-app **Merge** button + Phase 3 auto-merge (also needs **Contents read/write**), and the in-app **Ship to production** button (also needs **Actions read/write**). Must reach the Convex env, not just GitHub — it's in `sync-secrets-to-convex.sh` `SECRET_KEYS`. `GITHUB_MIRROR_TOKEN` is the legacy fallback name. | Issue mirroring silently skipped; **in-app merge fails** with "GH_MIRROR_TOKEN not configured — try again, or merge the PR on GitHub"; auto-merge and prod-deploy dispatch blocked with a thread message. |
+| `AUTO_MERGE_ENABLED` | Master safety switch for Phase 3 policy auto-merge. Must be exactly `"true"` to arm — anything else (including unset) means off. Merges only low-risk, review-approved, staging-verified-when-required PRs. **Control it via 1Password only:** the sync sets it on Convex explicitly every deploy (defaulting to `false` when the item is absent), so **removing/blanking the 1Password item disables it** — a direct `convex env set` is overwritten on the next deploy. | Auto-merge never runs; maintainers merge manually. |
+| `AUTO_MERGE_METHOD` | GitHub merge method for auto-merge: `squash` (default), `merge`, or `rebase`. A 405 method-not-allowed retries once with plain `merge`. Set explicitly on Convex each deploy (defaults to `squash` when the item is absent). | Defaults to `squash`. |
+
+One-time per deployment (any environment), create the sentinel bot user so
+`@Togather` mentions resolve — idempotent, independent of the demo seed:
+
+```bash
+npx convex run migrations/ensureDevAssistantBotUser:ensureDevAssistantBotUser
+```
+
+> **Use in staff-only channels.** `@Togather` is staff/superuser-gated at the
+> originator and the bug-review card is staff-gated, but its status posts (PR
+> links, "Code's up", merge link) are normal bot messages visible to — and
+> push to — all channel members. Only mention `@Togather` in channels where
+> every member is staff. (Accepted MVP limitation; the full fix is to gate the
+> bot to all-staff channels or route status through a staff-gated surface.)
 
 ### Development Settings
 
@@ -150,6 +189,71 @@ When building or updating the mobile app via EAS (Expo Application Services), `a
 | OTA Update (`eas update`) | EAS cloud | EAS environment vars (must sync!) |
 | Local Dev (`expo start`) | Your machine | `.env` file |
 
+### GitHub Packages auth for native builds (`GH_PACKAGES_TOKEN`)
+
+`eas build` (no `--local`) does its own `pnpm install` on Expo's own remote
+infrastructure — a separate machine from the GitHub Actions runner. Since
+`.npmrc` points `@supa-media/*` at `npm.pkg.github.com` (see the
+`supa-framework` skill, `.claude/skills/supa-framework/SKILL.md`), that remote
+install needs a
+`GITHUB_TOKEN` env var to authenticate — GitHub Packages requires auth for
+every install, public or private packages alike. The Actions runner's own
+`secrets.GITHUB_TOKEN` never reaches that remote machine, and is the wrong
+choice even if it did (it's ephemeral and can expire before an async EAS
+build finishes) — so `build-mobile-native.yml`, `build-mobile.yml`, and
+`deploy-to-production.yml`'s "Sync secrets to EAS" steps forward a durable
+PAT instead, as `eas env:create --name GITHUB_TOKEN --value
+"$GH_PACKAGES_TOKEN" ...`.
+
+| Secret | Description | Degradation |
+|--------|-------------|-------------|
+| `GH_PACKAGES_TOKEN` | GitHub PAT with `read:packages` scope, used only to authenticate EAS's remote `pnpm install` to `npm.pkg.github.com` for `@supa-media/*`. Listed as `required` in `ee/secrets-allowlist.json`, so it must exist in 1Password **before** the next `sync-secrets.yml` dispatch, or the sync aborts for every other secret in that environment too. | Every native build (`eas build`) fails during remote dependency install; OTA-only deploys are unaffected. |
+
+**Provisioning required before the next native build** (as of PR #628): this
+secret does not exist yet. A maintainer must create a classic GitHub PAT
+scoped to `read:packages` (org: Supa-Media's packages are public, so no org
+grant is needed beyond the scope itself), add it to 1Password vault
+`Togather` as `GH_PACKAGES_TOKEN` (`staging`/`production` fields — the same
+value can be used for both), then run
+`gh workflow run sync-secrets.yml -f environment=both -f dry-run=true` to
+confirm the plan, followed by a real (`dry-run=false`) run.
+
+### Group giving (Stripe Connect + Increase)
+
+The group giving feature (ADR-032) enables communities to accept donations via Stripe and manage funds through Increase banking APIs. The donation and expense flows are powered by two separate webhook streams:
+
+| Secret | Description | Degradation |
+|--------|-------------|-------------|
+| `INCREASE_API_KEY` | Increase API key for Entity/Account/Transfer operations (required for production and staging; omit for dev-only testing) | Fund provisioning fails; allocation/payout jobs blocked |
+| `INCREASE_WEBHOOK_SECRET` | Webhook signing secret for Increase account/entity status updates (required to process bank account creation/activation) | Webhook events are accepted but unverified; status machine never transitions to "live" |
+| `INCREASE_API_BASE_URL` | Override for Increase API base URL — set to `https://sandbox.increase.com` for sandbox/staging, omit for production (defaults to `https://api.increase.com`) | Defaults to production API |
+| `STRIPE_CONNECT_WEBHOOK_SECRET` | Signing secret (`whsec_`) of the SECOND Stripe event destination, scoped "Events from: Connected accounts" | Connected-account events (donations, account verification, payouts, refunds) are rejected as unsigned; onboarding never completes |
+
+**Note on Stripe integration**: `STRIPE_SECRET_KEY` is shared with billing — no separate API key is needed. Webhooks need **two Stripe event destinations pointing at the same URL** (`https://<convex-deployment>.convex.site/stripe-webhook`), because Stripe scopes a destination at creation:
+
+1. **Events from: Your account** (billing — the pre-existing destination): `checkout.session.completed`, `customer.subscription.updated/deleted`, `invoice.payment_failed`. Its signing secret is `STRIPE_WEBHOOK_SECRET`.
+2. **Events from: Connected accounts** (group giving): `account.updated`, `payment_intent.succeeded`, `payout.paid`, `charge.refunded`, `charge.dispute.created`. Its signing secret is `STRIPE_CONNECT_WEBHOOK_SECRET`.
+
+**Recurring giving adds four more to destination 2** (ADR-032 addendum): `invoice.paid`, `invoice.payment_failed`, `customer.subscription.updated`, `customer.subscription.deleted`. A monthly donation is a Stripe Subscription on the *connected* account, so these arrive with `event.account` set and are routed to the finance handler rather than SaaS billing (`apps/convex/lib/finance/webhookRouting.ts`). Note the overlap with destination 1: the same three subscription/invoice event types are subscribed on **both** destinations, which is correct — the platform copies drive billing, the connected-account copies drive giving, and `event.account` is what separates them. Until this subscription is added, recurring gifts can be charged by Stripe while their status and donation rows silently never update, so it must be configured **before** recurring giving is switched on in an environment — not after.
+
+The endpoint verifies an incoming signature against either secret (`apps/convex/http.ts`).
+
+**Revoking `STRIPE_CONNECT_WEBHOOK_SECRET`**: the sync script deliberately skips
+absent keys (so a transient 1Password failure never wipes a live value), which
+means deleting the item from 1Password does NOT clear the value already in
+Convex. To actually revoke a compromised/retired connect signing secret, either
+**rotate it** (roll the secret on the Stripe destination, put the new value in
+1Password, re-sync — the old value is overwritten) or **remove it explicitly**
+with `npx convex env remove STRIPE_CONNECT_WEBHOOK_SECRET` on each deployment.
+Deleting the Stripe destination alone is not sufficient if the secret leaked.
+
+**Sandbox setup for dev/staging**:
+1. Create Increase sandbox API keys at https://dashboard.increase.com/settings/api (requires account)
+2. Add to 1Password vault `Togather` with `staging` field only: `INCREASE_API_KEY` (e.g., `key_sandbox_...`)
+3. Add `INCREASE_WEBHOOK_SECRET` (from the same dashboard: Webhooks > Create test webhook subscription, copy the secret)
+4. Add `INCREASE_API_BASE_URL` = `https://sandbox.increase.com` (only set for staging; omit for production)
+5. Set `INCREASE_API_KEY` to production key for prod environment (no base URL override)
+
 ### Adding a New EXPO_PUBLIC_* Variable
 
 When adding a new `EXPO_PUBLIC_*` environment variable:
@@ -163,6 +267,66 @@ When adding a new `EXPO_PUBLIC_*` environment variable:
 
 ## CI/CD Integration
 
+### Secret Update Flow (the one true path)
+
+Secrets always flow **1Password → GitHub → Convex/Expo**. Never shortcut either hop:
+
+```
+1Password (source of truth)
+   │  sync-secrets.yml  (manual or on allowlist change: op read → gh secret set, per environment)
+   │  — thin caller of Supa-Media/supa-framework's reusable sync-secrets.yml@v1,
+   │    which runs the shared `supa-sync-1password-to-github` bin against
+   │    ee/secrets-allowlist.json
+   ▼
+GitHub environment secrets  (staging / production)
+   │  deploy-convex.yml / mobile deploys  (on every deploy)
+   ▼
+Convex env vars + Expo/EAS env
+```
+
+**Why 1Password → GitHub first (not straight into GitHub)?** GitHub secrets are
+write-only — you can't read a value back out. 1Password is the single source of
+truth, so you set the value there and sync it forward. Editing a value directly
+in the GitHub UI means the next sync silently overwrites it and nothing else
+knows the real value.
+
+**Why GitHub → Convex/Expo on deploy (not 1Password → Convex/Expo directly)?**
+Every deploy re-pushes the full secret set. Reading all of them from 1Password on
+each deploy hits 1Password rate limits, so GitHub acts as the buffer: 1Password →
+GitHub happens once per change; GitHub → Convex/Expo happens on every deploy.
+
+**To add or rotate a secret:**
+
+1. Add/update the item in **1Password** vault `Togather` — one item per `KEY`,
+   with `staging` and `production` fields (`op://Togather/<KEY>/<env>`).
+2. Add `<KEY>` to `ee/secrets-allowlist.json` — `required` (a missing value
+   fails the sync) or `optional` (synced when present, **pruned from GitHub
+   when absent from 1Password** — so an `optional` key must tolerate being
+   deleted). **A key that isn't listed here is never synced.** Two other
+   allowlist buckets exist for special cases already in use: `alwaysSet` (an
+   on/off switch that's written every sync — the 1Password value if present,
+   else a safe default — see `AUTO_MERGE_ENABLED`/`AUTO_MERGE_METHOD`) and
+   `aliases` (copies another key's resolved value under a second GitHub secret
+   name — see `IMAGE_CDN_URL`, aliased from `R2_PUBLIC_URL`). Note: GitHub
+   reserves the `GITHUB_` prefix for secret names, so a `GITHUB_*` item can't
+   sync under its own name — name the item without that prefix (e.g.
+   `GH_MIRROR_TOKEN`, not `GITHUB_MIRROR_TOKEN`), or use an `aliases` entry to
+   rename it on the way in.
+3. **Only if a Convex function needs it at runtime**, also add `<KEY>` to
+   `SECRET_KEYS` in `ee/scripts/sync-secrets-to-convex.sh`. CI-only tokens (repo
+   automation, mirror pushes, etc.) stop at GitHub — leave them out.
+4. Push the value into GitHub by running the **Sync Secrets from 1Password**
+   workflow (needs `op` in CI): `gh workflow run sync-secrets.yml -f environment=both`.
+   This is a thin caller of Supa-Media/supa-framework's reusable
+   `sync-secrets.yml@v1` workflow, which runs the shared
+   `supa-sync-1password-to-github` bin (`@supa-media/scripts`) against
+   `ee/secrets-allowlist.json`. Pass `-f dry-run=true` first to preview the
+   plan (especially after editing the allowlist) — it prints exactly what
+   would be set/pruned with zero writes.
+5. On the next deploy, `deploy-convex.yml` forwards GitHub → Convex/Expo
+   automatically (`.github/actions/load-secrets` exports every GitHub secret).
+6. Add a row to the tables in this doc.
+
 ### GitHub Secrets
 
 Store service tokens as GitHub repository secrets for use in CI workflows. Example secrets:
@@ -172,6 +336,7 @@ Store service tokens as GitHub repository secrets for use in CI workflows. Examp
 | `EXPO_TOKEN` | Expo/EAS authentication | Build and deploy workflows |
 | `CLOUDFLARE_API_TOKEN` | Cloudflare Workers deployment | Landing page and worker deployments |
 | `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account identifier | Worker deployments |
+| `GH_MIRROR_TOKEN` | PAT for the repo mirror-push workflow **and** the dev-assistant merge/deploy pipeline (named `GH_*` not `GITHUB_*` because GitHub reserves the `GITHUB_` secret-name prefix) | Repo mirror workflow **and** forwarded to Convex (`sync-secrets-to-convex.sh`) — the in-app merge, auto-merge, and prod-deploy dispatch read it at runtime. See the dev-assistant secrets table above for scopes. |
 
 ---
 

@@ -5,7 +5,7 @@
  * These scores are computed at the community level (across all groups).
  *
  * Score slots:
- *   score1 = Service (PCO serving frequency)
+ *   score1 = Serving (serving frequency)
  *   score2 = Attendance (cross-group attendance %)
  *   score3 = Connection (leader outreach effectiveness — the primary triage score)
  *
@@ -75,9 +75,9 @@ export const SYSTEM_SCORES: SystemScoreDefinition[] = [
   {
     id: "sys_service",
     slot: "score1",
-    name: "Service",
+    name: "Serving",
     description:
-      "PCO serving frequency in past 2 months (20pts per service, max 100)",
+      "Serving frequency in past 2 months (20pts per service, max 100)",
     variables: [
       {
         variableId: "pco_services_past_2mo",
@@ -125,6 +125,12 @@ export const SYSTEM_SCORES: SystemScoreDefinition[] = [
         variableId: "attended_weeks_in_window",
         label: "Weeks attended",
         normHint: "Weeks where member had at least one attendance",
+        weight: 1,
+      },
+      {
+        variableId: "consecutive_missed",
+        label: "Consecutive missed weeks",
+        normHint: "Weeks in a row with no attendance since the last attended meeting. Caps the attendance portion: −15 pts per miss, 0 at 7+",
         weight: 1,
       },
       {
@@ -181,7 +187,7 @@ export const SYSTEM_VARIABLE_IDS: ReadonlySet<string> = new Set([
 /**
  * Calculate the 0-100 score for a single system score by ID.
  *
- * - `sys_service`: 20 points per PCO service in the past 2 months, max 100 at 5+.
+ * - `sys_service`: 20 points per service in the past 2 months, max 100 at 5+.
  * - `sys_attendance`: Percentage of weeks (in a join-date-adjusted 60-day window) with ≥1 attendance.
  * - `sys_togather`: Consecutive misses (0-70pts, -15 per consecutive missed meeting)
  *   + Follow-up (fills remaining: in-person=100%, call=75%, text=50%, decaying over time).

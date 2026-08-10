@@ -21,6 +21,7 @@ import {
   Alert,
   ActivityIndicator,
   Platform,
+  Switch,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
@@ -28,10 +29,12 @@ import { DEFAULT_PRIMARY_COLOR, DEFAULT_SECONDARY_COLOR } from "../../../utils/s
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useTheme } from "@hooks/useTheme";
 import { uploadAsync, FileSystemUploadType } from "expo-file-system/legacy";
-import { ImagePicker } from "@components/ui";
 import * as Linking from "expo-linking";
+import { getLocales } from "expo-localization";
+import { ImagePicker } from "@components/ui";
 import { useCommunitySettings, useGroupTypes, GroupType } from "../hooks";
 import { GroupTypeEditModal } from "./GroupTypeEditModal";
+import { ArchiveCommunityModal } from "./ArchiveCommunityModal";
 import { useAvailableIntegrations } from "../../integrations/hooks/useIntegrations";
 import { ColorPicker } from "./ColorPicker";
 import { ColorPreview } from "./ColorPreview";
@@ -41,6 +44,13 @@ import { useAuth } from "@providers/AuthProvider";
 import { useQuery, api } from "@services/api/convex";
 import { DOMAIN_CONFIG } from "@togather/shared/config";
 import type { Id } from "@services/api/convex";
+
+// Device region as a practical proxy for the App Store storefront (no API
+// exposes the storefront country). We only surface the outbound billing-
+// management link on US devices, where post-Epic App Store rules permit
+// linking out to an external web payment page (guideline 3.1.1 anti-steering
+// no longer applies in the US). Elsewhere the section stays read-only.
+const isUSRegion = getLocales()[0]?.regionCode === "US";
 
 export function SettingsContent() {
   const router = useRouter();
@@ -55,6 +65,7 @@ export function SettingsContent() {
     isUpdating,
     uploadLogo,
     isUploadingLogo,
+    archiveCommunity,
   } = useCommunitySettings();
 
   const {
@@ -68,10 +79,26 @@ export function SettingsContent() {
   } = useGroupTypes();
 
   // Billing data
-  const { community, token } = useAuth();
+  const { community, token, user, exitToCommunitySelection } = useAuth();
+  const isPrimaryAdmin = user?.is_primary_admin ?? false;
+  // Group giving is behind the app-wide "group-giving" feature flag
+  // (default off, flipped by Togather staff in /(user)/admin/features) —
+  // hide the Community Finance entry entirely until it's on.
+  const groupGivingEnabled = useQuery(api.functions.admin.featureFlags.getFeatureFlag, {
+    key: "group-giving",
+  });
+
   const billing = useQuery(
     api.functions.ee.billing.getSubscriptionStatus,
     community?.id && token
+      ? { token, communityId: community.id as Id<"communities"> }
+      : "skip"
+  );
+  // Live billable active-member count → estimated upcoming bill. Only needed
+  // for communities on the $1/active-member model; skip otherwise.
+  const billableSummary = useQuery(
+    api.functions.memberActivity.getBillableSummary,
+    community?.id && token && billing?.billingModel === "per_active_user"
       ? { token, communityId: community.id as Id<"communities"> }
       : "skip"
   );
@@ -107,6 +134,13 @@ export function SettingsContent() {
   const [exploreGroupTypes, setExploreGroupTypes] = useState<string[]>([]);
   const [exploreDefaultMeetingType, setExploreDefaultMeetingType] = useState<number | null>(null);
   const [isSavingExplore, setIsSavingExplore] = useState(false);
+
+  // Church Features state (opt-in religious features)
+  const [isSavingChurchFeatures, setIsSavingChurchFeatures] = useState(false);
+
+  // Archive (close) community state
+  const [isArchiving, setIsArchiving] = useState(false);
+  const [showArchiveModal, setShowArchiveModal] = useState(false);
 
   // Populate form with current settings
   useEffect(() => {
@@ -247,6 +281,69 @@ export function SettingsContent() {
     }
   };
 
+  const handleToggleChurchFeature = async (
+    feature: "prayerEnabled" | "eventTasksEnabled",
+    value: boolean,
+  ) => {
+    setIsSavingChurchFeatures(true);
+    try {
+      const current = settings?.churchFeatures ?? {
+        prayerEnabled: false,
+        eventTasksEnabled: false,
+      };
+      await updateSettings({
+        churchFeatures: { ...current, [feature]: value },
+      });
+    } catch (error: any) {
+      Alert.alert("Error", formatError(error, "Failed to update church features"));
+    } finally {
+      setIsSavingChurchFeatures(false);
+    }
+  };
+
+  const performArchive = async () => {
+    setIsArchiving(true);
+    try {
+      await archiveCommunity();
+      // Archiving closes the community for everyone, but it should only sign
+      // the admin out of *this community*, not the whole app. Drop them to
+      // community selection (re-mints a community-less token + clears caches).
+      await exitToCommunitySelection();
+      setShowArchiveModal(false);
+      router.replace("/(auth)/select-community");
+    } catch (error: any) {
+      Alert.alert("Error", formatError(error, "Failed to archive community"));
+    } finally {
+      setIsArchiving(false);
+    }
+  };
+
+  /**
+   * `SettingsContent` renders in BOTH shells, and in the WhatsApp one it sits
+   * inside `/(user)/you/admin/community` — i.e. inside the `(user)` route
+   * group, which `app/_layout.tsx` declares `presentation: "modal"`. A native
+   * modal sits above EVERY navigator screen, so pushing a ROOT-stack route
+   * (`/finance-setup/...`) from here lands the destination *behind* the still-
+   * open settings modal on iOS: the admin taps "Card provider" and nothing
+   * appears to happen. Dismiss the modal stack first, then push.
+   *
+   * Same pattern (and same comment) as `CommunityPageScreen`'s
+   * `pushOutOfModal`, `useStartDirectMessage`, `NotificationFeedScreen` and
+   * `NativeRunSheetView`.
+   *
+   * In the legacy shell this component renders in `/(tabs)/admin`, where there
+   * is no modal to dismiss — `canDismiss()` is false there and this degrades
+   * to a plain push, which is why one call site works for both shells.
+   *
+   * Destinations that stay INSIDE `(user)` (`/(user)/admin/*`,
+   * `/leader-tools/*`) must NOT go through this — they belong to the modal's
+   * own stack.
+   */
+  const pushOutOfModal = (path: string) => {
+    if (router.canDismiss?.()) router.dismissAll();
+    router.push(path as never);
+  };
+
   const toggleExploreGroupType = (groupTypeId: string) => {
     setExploreGroupTypes((prev) =>
       prev.includes(groupTypeId)
@@ -352,6 +449,58 @@ export function SettingsContent() {
             </View>
             <Ionicons name="chevron-forward" size={20} color={colors.textTertiary} />
           </TouchableOpacity>
+          {/* ADR-032 group giving: community-level onboarding (legal name,
+              EIN, address, Stripe identity verification) lives outside any
+              one group, so it's a top-level leader-tools route rather than
+              nested under a specific group's giving screens. */}
+          {/* ONE row, not three. Card provider and Financial controls used to
+              sit here beside this one; they are now sections of the Finance
+              home, which is their PARENT rather than their sibling — and which
+              also answers the question none of the three flat rows did ("how
+              much money does this community have, and which groups can receive
+              it?"). Their own routes are unchanged, so existing deep links
+              still land.
+
+              Shown to any community admin, not only to people who hold
+              financial controls: "primary admin OR an active grant" has no
+              cheap client-side signal, and the destination opens on an
+              explicit "you need financial-controls access — ask your primary
+              admin" state, which is a better answer than a row that silently
+              isn't there. */}
+          {groupGivingEnabled ? (
+          <TouchableOpacity
+            style={[styles.quickLinkItem, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
+            onPress={() => pushOutOfModal("/finance-setup")}
+          >
+            <View style={[styles.quickLinkIcon, { backgroundColor: colors.surface }]}>
+              <Ionicons name="wallet-outline" size={20} color={themePrimaryColor} />
+            </View>
+            <View style={styles.quickLinkInfo}>
+              <Text style={[styles.quickLinkName, { color: colors.text }]}>Finance</Text>
+              <Text style={[styles.quickLinkDescription, { color: colors.textSecondary }]}>
+                Balances, group funds, cards, and who can spend
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color={colors.textTertiary} />
+          </TouchableOpacity>
+          ) : null}
+          {settings?.churchFeatures?.prayerEnabled ? (
+            <TouchableOpacity
+              style={[styles.quickLinkItem, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
+              onPress={() => router.push("/(user)/admin/prayer-reviews")}
+            >
+              <View style={[styles.quickLinkIcon, { backgroundColor: colors.surface }]}>
+                <Ionicons name="shield-checkmark-outline" size={20} color={themePrimaryColor} />
+              </View>
+              <View style={styles.quickLinkInfo}>
+                <Text style={[styles.quickLinkName, { color: colors.text }]}>Prayer Reviews</Text>
+                <Text style={[styles.quickLinkDescription, { color: colors.textSecondary }]}>
+                  Approve or reject prayers our moderator held for human review
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={20} color={colors.textTertiary} />
+            </TouchableOpacity>
+          ) : null}
         </View>
 
         {/* Basic Info Section */}
@@ -625,6 +774,42 @@ export function SettingsContent() {
           </TouchableOpacity>
         </View>
 
+        {/* Church Features Section */}
+        <View style={[styles.section, { backgroundColor: colors.surface }]}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Church Features</Text>
+          <Text style={[styles.sectionDescription, { color: colors.textSecondary }]}>
+            Opt-in features for religious communities. Off by default.
+          </Text>
+
+          <View style={styles.churchFeatureRow}>
+            <View style={{ flex: 1, paddingRight: 12 }}>
+              <Text style={[styles.churchFeatureName, { color: colors.text }]}>Prayer Requests</Text>
+              <Text style={[styles.churchFeatureHint, { color: colors.textTertiary }]}>
+                Members can post prayer requests and pray for each other. Adds a Prayer tab.
+              </Text>
+            </View>
+            <Switch
+              value={settings?.churchFeatures?.prayerEnabled ?? false}
+              onValueChange={(v) => handleToggleChurchFeature("prayerEnabled", v)}
+              disabled={isSavingChurchFeatures}
+            />
+          </View>
+
+          <View style={styles.churchFeatureRow}>
+            <View style={{ flex: 1, paddingRight: 12 }}>
+              <Text style={[styles.churchFeatureName, { color: colors.text }]}>Event Tasks</Text>
+              <Text style={[styles.churchFeatureHint, { color: colors.textTertiary }]}>
+                Leaders define serving tasks per event; volunteers see their tasks in Serving Mode.
+              </Text>
+            </View>
+            <Switch
+              value={settings?.churchFeatures?.eventTasksEnabled ?? false}
+              onValueChange={(v) => handleToggleChurchFeature("eventTasksEnabled", v)}
+              disabled={isSavingChurchFeatures}
+            />
+          </View>
+        </View>
+
         {/* Group Types Section */}
         <View style={[styles.section, { backgroundColor: colors.surface }]}>
           <View style={styles.sectionHeader}>
@@ -686,6 +871,10 @@ export function SettingsContent() {
                   onPress={() => {
                     if (integration.type === "planning_center") {
                       router.push("/leader-tools/integrations/planning-center");
+                    } else if (integration.type === "clearstream") {
+                      router.push("/leader-tools/integrations/clearstream");
+                    } else if (integration.type === "flodesk") {
+                      router.push("/leader-tools/integrations/flodesk");
                     }
                   }}
                 >
@@ -709,6 +898,26 @@ export function SettingsContent() {
           ) : (
             <Text style={[styles.emptyText, { color: colors.textTertiary }]}>No integrations available</Text>
           )}
+        </View>
+
+        {/* Developer Section */}
+        <View style={[styles.section, { backgroundColor: colors.surface }]}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Developer</Text>
+          <Text style={[styles.sectionDescription, { color: colors.textSecondary }]}>
+            Issue API keys so external apps can read this community's data.
+          </Text>
+          <TouchableOpacity
+            style={[styles.integrationItem, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
+            onPress={() => router.push("/(user)/admin/developer/api-keys")}
+          >
+            <View style={styles.groupTypeInfo}>
+              <Text style={[styles.groupTypeName, { color: colors.text }]}>API Keys</Text>
+              <Text style={[styles.groupTypeDescription, { color: colors.textSecondary }]} numberOfLines={2}>
+                Create and manage API keys for the attendance API.
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color={colors.textTertiary} />
+          </TouchableOpacity>
         </View>
 
         {/* Billing Section */}
@@ -736,10 +945,62 @@ export function SettingsContent() {
                   </Text>
                 </View>
               </View>
-              {billing.subscriptionPriceMonthly != null && (
-                <Text style={[styles.sectionDescription, { color: colors.textSecondary }]}>
-                  ${billing.subscriptionPriceMonthly}/month
-                </Text>
+
+              {billing.billingModel === "per_active_user" ? (
+                <>
+                  <Text style={[styles.sectionDescription, { color: colors.textSecondary, marginBottom: 8 }]}>
+                    $1/month per active member
+                  </Text>
+
+                  {/* Current bill — set at the last count, charged this cycle. */}
+                  {billing.subscriptionPriceMonthly != null && (
+                    <View style={[styles.billingRow, { borderTopColor: colors.border }]}>
+                      <View style={styles.groupTypeInfo}>
+                        <Text style={[styles.billingRowLabel, { color: colors.text }]}>Current bill</Text>
+                        <Text style={[styles.billingRowHint, { color: colors.textSecondary }]}>
+                          {billing.subscriptionPriceMonthly} active {billing.subscriptionPriceMonthly === 1 ? "member" : "members"} at the last count
+                        </Text>
+                      </View>
+                      <Text style={[styles.billingRowValue, { color: colors.text }]}>
+                        ${billing.subscriptionPriceMonthly}/mo
+                      </Text>
+                    </View>
+                  )}
+
+                  {/* Estimated next bill — live count, finalized on the 28th. */}
+                  {billableSummary != null && (
+                    <View style={[styles.billingRow, { borderTopColor: colors.border }]}>
+                      <View style={styles.groupTypeInfo}>
+                        <Text style={[styles.billingRowLabel, { color: colors.text }]}>Estimated next bill</Text>
+                        <Text style={[styles.billingRowHint, { color: colors.textSecondary }]}>
+                          {billableSummary.billableActiveUsers} active {billableSummary.billableActiveUsers === 1 ? "member" : "members"} right now
+                        </Text>
+                      </View>
+                      <Text style={[styles.billingRowValue, { color: colors.text }]}>
+                        ${billableSummary.monthlyPriceUsd}/mo
+                      </Text>
+                    </View>
+                  )}
+
+                  {/* Cycle reminder — mirror the Go Live screen's wording. */}
+                  <View style={[styles.billingNote, { backgroundColor: colors.surfaceSecondary }]}>
+                    <Ionicons name="calendar-outline" size={16} color={colors.textSecondary} style={{ marginTop: 1 }} />
+                    <Text style={[styles.billingNoteText, { color: colors.textSecondary }]}>
+                      Active members are counted on the 28th and charged on the 1st, billed a month ahead — we email the exact amount first. Only applicable sales tax is added on top.
+                    </Text>
+                  </View>
+                </>
+              ) : (
+                billing.subscriptionPriceMonthly != null && (
+                  <>
+                    <Text style={[styles.sectionDescription, { color: colors.textSecondary, marginBottom: 4 }]}>
+                      ${billing.subscriptionPriceMonthly}/month
+                    </Text>
+                    <Text style={[styles.sectionDescription, { color: colors.textTertiary }]}>
+                      Moving to $1/month per active member.
+                    </Text>
+                  </>
+                )
               )}
             </>
           ) : (
@@ -748,6 +1009,13 @@ export function SettingsContent() {
             </Text>
           )}
 
+          {/*
+            Web and US iOS expose a tappable link out to the web billing
+            dashboard (whole card is the button). On non-US native devices the
+            section stays read-only — an outbound link to an external
+            payment/management page risks App Store anti-steering rejection
+            (guideline 3.1.1) outside the US, where post-Epic rules don't apply.
+          */}
           {Platform.OS === "web" ? (
             <TouchableOpacity
               style={[styles.integrationItem, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
@@ -769,28 +1037,74 @@ export function SettingsContent() {
               </View>
               <Ionicons name="chevron-forward" size={20} color={colors.textTertiary} />
             </TouchableOpacity>
+          ) : isUSRegion ? (
+            <TouchableOpacity
+              style={[styles.integrationItem, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
+              onPress={() => {
+                if (community?.id) {
+                  Linking.openURL(`${DOMAIN_CONFIG.landingUrl}/billing/${community.id}`);
+                }
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="Manage billing on the web"
+            >
+              <View style={styles.groupTypeInfo}>
+                <Text style={[styles.groupTypeName, { color: colors.text }]}>
+                  Manage billing on the web
+                </Text>
+                <Text style={[styles.groupTypeDescription, { color: colors.textSecondary }]}>
+                  Update your payment method, view invoices, or manage your plan.
+                </Text>
+              </View>
+              <Ionicons name="open-outline" size={20} color={themePrimaryColor} />
+            </TouchableOpacity>
           ) : (
             <View style={[styles.integrationItem, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
               <View style={styles.groupTypeInfo}>
                 <Text style={[styles.groupTypeName, { color: colors.text }]}>
-                  Manage on Web
+                  Managed on the web
                 </Text>
                 <Text style={[styles.groupTypeDescription, { color: colors.textSecondary }]}>
-                  Billing is managed through the web app. Tap to open in your browser.
+                  Payment methods and invoices are handled from the Togather web dashboard.
                 </Text>
               </View>
-              <TouchableOpacity
-                onPress={() => {
-                  if (community?.id) {
-                    Linking.openURL(`${DOMAIN_CONFIG.landingUrl}/billing/${community.id}`);
-                  }
-                }}
-              >
-                <Ionicons name="open-outline" size={20} color={themePrimaryColor} />
-              </TouchableOpacity>
             </View>
           )}
         </View>
+
+        {/* Danger Zone — primary admin only */}
+        {isPrimaryAdmin && (
+          <View
+            style={[
+              styles.section,
+              styles.dangerSection,
+              { backgroundColor: colors.surface, borderColor: colors.error },
+            ]}
+          >
+            <Text style={[styles.sectionTitle, { color: colors.error }]}>Danger Zone</Text>
+            <Text style={[styles.sectionDescription, { color: colors.textSecondary }]}>
+              Archiving closes this community permanently. No one will be able to
+              log in, and it will be removed from search. This cannot be undone
+              from the app.
+            </Text>
+            <TouchableOpacity
+              style={[styles.dangerButton, { borderColor: colors.error }, isArchiving && styles.saveButtonDisabled]}
+              onPress={() => setShowArchiveModal(true)}
+              disabled={isArchiving}
+            >
+              {isArchiving ? (
+                <ActivityIndicator size="small" color={colors.error} />
+              ) : (
+                <>
+                  <Ionicons name="archive-outline" size={18} color={colors.error} />
+                  <Text style={[styles.dangerButtonText, { color: colors.error }]}>
+                    Archive Community
+                  </Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
+        )}
 
         {/* Spacer for save button */}
         <View style={{ height: 80 }} />
@@ -823,6 +1137,17 @@ export function SettingsContent() {
         }}
         onSave={handleSaveGroupType}
         isSaving={isUpdatingGroupType || isCreating}
+      />
+
+      {/* Archive Community confirmation (type-to-confirm) */}
+      <ArchiveCommunityModal
+        visible={showArchiveModal}
+        communityName={settings?.name || ""}
+        onCancel={() => {
+          if (!isArchiving) setShowArchiveModal(false);
+        }}
+        onConfirm={performArchive}
+        isLoading={isArchiving}
       />
     </View>
   );
@@ -968,6 +1293,40 @@ const styles = StyleSheet.create({
     padding: 12,
     borderWidth: 1,
   },
+  billingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    paddingVertical: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  billingRowLabel: {
+    fontSize: 15,
+    fontWeight: "600",
+  },
+  billingRowHint: {
+    fontSize: 13,
+    marginTop: 2,
+  },
+  billingRowValue: {
+    fontSize: 17,
+    fontWeight: "700",
+  },
+  billingNote: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+    borderRadius: 12,
+    padding: 12,
+    marginTop: 12,
+    marginBottom: 4,
+  },
+  billingNoteText: {
+    flex: 1,
+    fontSize: 13,
+    lineHeight: 18,
+  },
   connectedBadge: {
     flexDirection: "row",
     alignItems: "center",
@@ -1061,5 +1420,36 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontSize: 15,
     fontWeight: "600",
+  },
+  churchFeatureRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 8,
+  },
+  dangerSection: {
+    borderWidth: 1,
+  },
+  dangerButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    borderRadius: 8,
+    borderWidth: 1.5,
+    padding: 14,
+    marginTop: 4,
+  },
+  dangerButtonText: {
+    fontSize: 15,
+    fontWeight: "600",
+  },
+  churchFeatureName: {
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  churchFeatureHint: {
+    fontSize: 13,
+    marginTop: 4,
+    lineHeight: 18,
   },
 });

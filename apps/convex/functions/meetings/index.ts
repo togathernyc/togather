@@ -6,8 +6,11 @@
 
 import { v } from "convex/values";
 import { query, mutation } from "../../_generated/server";
+import type { MutationCtx } from "../../_generated/server";
+import type { Id } from "../../_generated/dataModel";
 import { internal } from "../../_generated/api";
 import { now, generateShortId, getDisplayName, getMediaUrl } from "../../lib/utils";
+import { resolveChannelCommunityId } from "../../lib/messaging/communityScope";
 import { requireAuth } from "../../lib/auth";
 import { isActiveLeader, isActiveMembership } from "../../lib/helpers";
 import {
@@ -26,6 +29,7 @@ import {
 } from "../../lib/meetingConfig";
 import { buildMeetingSearchText } from "../../lib/meetingSearchText";
 import { findSeriesByGroupAndName } from "../eventSeries";
+import { resolveGroupDefaultChannelForUser } from "../messaging/channels";
 
 // Re-export meeting config for consumers that import from this module
 export {
@@ -83,6 +87,38 @@ export {
 } from "./migrations";
 
 // ============================================================================
+// Helpers
+// ============================================================================
+
+/**
+ * Sanitize the list of groups an event is explicitly shared with (used by the
+ * 'groups' visibility level). Drops duplicates, the hosting group itself (it
+ * always has access), and any group that doesn't belong to the same community.
+ * Returns `undefined` when nothing valid remains so the field stays unset.
+ */
+async function resolveVisibleGroupIds(
+  ctx: MutationCtx,
+  requested: Id<"groups">[] | undefined,
+  hostGroupId: Id<"groups">,
+  communityId: Id<"communities">
+): Promise<Id<"groups">[] | undefined> {
+  if (!requested || requested.length === 0) return undefined;
+
+  const seen = new Set<string>();
+  const resolved: Id<"groups">[] = [];
+  for (const groupId of requested) {
+    const key = String(groupId);
+    if (seen.has(key) || key === String(hostGroupId)) continue;
+    seen.add(key);
+    const group = await ctx.db.get(groupId);
+    if (group && group.communityId === communityId) {
+      resolved.push(groupId);
+    }
+  }
+  return resolved.length > 0 ? resolved : undefined;
+}
+
+// ============================================================================
 // Basic Meeting CRUD
 // ============================================================================
 
@@ -127,6 +163,9 @@ export const create = mutation({
     ),
     hideRsvpCount: v.optional(v.boolean()),
     visibility: v.optional(v.string()),
+    // When visibility is 'groups', the additional groups (beyond the hosting
+    // group) whose members can see and RSVP.
+    visibleGroupIds: v.optional(v.array(v.id("groups"))),
     seriesId: v.optional(v.id("eventSeries")),
     // Hosts own the event. When omitted on create we default to
     // [createdById] so the filer is seated as host; pass `[]` to explicitly
@@ -210,10 +249,23 @@ export const create = mutation({
       throw new Error("Group not found");
     }
 
+    // Only persist shared-with groups when visibility is 'groups'. Validate
+    // each belongs to the same community and drop the hosting group (it always
+    // has access) plus duplicates.
+    const visibleGroupIds =
+      args.visibility === "groups"
+        ? await resolveVisibleGroupIds(
+            ctx,
+            args.visibleGroupIds,
+            args.groupId,
+            group.communityId
+          )
+        : undefined;
+
     // Generate a short ID for URLs (e.g., "abc123xyz")
     const shortId = generateShortId();
 
-    // Calculate reminder time (1 hour before)
+    // Calculate reminder time (2 hours before)
     const reminderAt = args.scheduledAt - DEFAULT_REMINDER_OFFSET_MS;
 
     // Calculate attendance confirmation time (30 min after end)
@@ -246,6 +298,7 @@ export const create = mutation({
       rsvpOptions: effectiveRsvpOptions,
       hideRsvpCount: args.hideRsvpCount,
       visibility: args.visibility,
+      visibleGroupIds,
       seriesId: args.seriesId,
       // Scheduled job fields
       reminderAt,
@@ -339,6 +392,10 @@ export const update = mutation({
     ),
     hideRsvpCount: v.optional(v.boolean()),
     visibility: v.optional(v.string()),
+    // When visibility is 'groups', the additional groups whose members can see
+    // and RSVP. Pass `[]` to clear. Ignored unless the (new or existing)
+    // visibility is 'groups'.
+    visibleGroupIds: v.optional(v.array(v.id("groups"))),
     scope: v.optional(v.union(v.literal("this_only"), v.literal("all_in_series"))),
     // Pass an array (including `[]` to delegate to group leaders) to change
     // hosts; omit to leave unchanged.
@@ -444,6 +501,31 @@ export const update = mutation({
     // empty string that every read path would have to treat as falsy).
     if (cleanedUpdates.coverImage === "") {
       cleanedUpdates.coverImage = undefined;
+    }
+
+    // Resolve the shared-with groups for the 'groups' visibility level. We key
+    // off the *effective* visibility (incoming change, or existing value when
+    // unchanged) so editing the group list on an already-'groups' event works,
+    // and switching away from 'groups' clears the stale list.
+    let visibleGroupIdsTouched = false;
+    const effectiveVisibility = updates.visibility ?? meeting.visibility;
+    if (effectiveVisibility === "groups") {
+      if (updates.visibleGroupIds !== undefined) {
+        const meetingGroup = await ctx.db.get(meeting.groupId);
+        cleanedUpdates.visibleGroupIds = meetingGroup
+          ? await resolveVisibleGroupIds(
+              ctx,
+              updates.visibleGroupIds,
+              meeting.groupId,
+              meetingGroup.communityId
+            )
+          : undefined;
+        visibleGroupIdsTouched = true;
+      }
+    } else if (updates.visibility !== undefined) {
+      // Visibility moved away from 'groups' — drop the now-irrelevant list.
+      cleanedUpdates.visibleGroupIds = undefined;
+      visibleGroupIdsTouched = true;
     }
 
     // If this meeting is linked to a community-wide event and hasn't been overridden yet,
@@ -606,6 +688,9 @@ export const update = mutation({
       if (updates.rsvpOptions !== undefined) seriesUpdates.rsvpOptions = updates.rsvpOptions;
       if (updates.hideRsvpCount !== undefined) seriesUpdates.hideRsvpCount = updates.hideRsvpCount;
       if (updates.visibility !== undefined) seriesUpdates.visibility = updates.visibility;
+      // Cascade the resolved shared-with groups alongside visibility so series
+      // siblings stay in sync. `undefined` deletes the field on each sibling.
+      if (visibleGroupIdsTouched) seriesUpdates.visibleGroupIds = cleanedUpdates.visibleGroupIds;
       if (updates.locationOverride !== undefined) seriesUpdates.locationOverride = updates.locationOverride;
       // Hosts cascade like any other non-temporal field. Without this, a
       // "change hosts on all events in series" edit would only touch the
@@ -808,6 +893,7 @@ export const createSeriesEvents = mutation({
     ),
     hideRsvpCount: v.optional(v.boolean()),
     visibility: v.optional(v.string()),
+    visibleGroupIds: v.optional(v.array(v.id("groups"))),
   },
   handler: async (ctx, args) => {
     const createdById = await requireAuth(ctx, args.token);
@@ -853,6 +939,16 @@ export const createSeriesEvents = mutation({
     const effectiveRsvpEnabled = args.rsvpEnabled ?? true;
     const effectiveRsvpOptions = args.rsvpOptions ?? (effectiveRsvpEnabled ? DEFAULT_RSVP_OPTIONS : undefined);
 
+    const visibleGroupIds =
+      args.visibility === "groups"
+        ? await resolveVisibleGroupIds(
+            ctx,
+            args.visibleGroupIds,
+            args.groupId,
+            group.communityId
+          )
+        : undefined;
+
     const meetingIds: string[] = [];
 
     for (const scheduledAt of args.dates) {
@@ -878,6 +974,7 @@ export const createSeriesEvents = mutation({
         rsvpOptions: effectiveRsvpOptions,
         hideRsvpCount: args.hideRsvpCount,
         visibility: args.visibility,
+        visibleGroupIds,
         seriesId,
         reminderAt,
         reminderSent: false,
@@ -959,23 +1056,26 @@ export const postToChat = mutation({
       throw new Error("Only group leaders can share events to chat");
     }
 
-    // Find the group's main channel
-    const mainChannel = await ctx.db
-      .query("chatChannels")
-      .withIndex("by_group_type", (q) =>
-        q.eq("groupId", meeting.groupId).eq("channelType", "main")
-      )
-      .first();
+    // Find the group's default channel to post to. General (main) is now
+    // optional, so fall back to the next-best active channel when it's
+    // disabled. Resolve among channels THIS sender can post to, so the
+    // membership gate below doesn't reject a fallback they aren't in (e.g. a
+    // custom channel) instead of falling through to Leaders.
+    const targetChannel = await resolveGroupDefaultChannelForUser(
+      ctx,
+      meeting.groupId,
+      userId
+    );
 
-    if (!mainChannel) {
-      throw new Error("Group chat channel not found");
+    if (!targetChannel) {
+      throw new Error("This group has no active channel to share to");
     }
 
     // Check user is a member of the channel
     const channelMembership = await ctx.db
       .query("chatChannelMembers")
       .withIndex("by_channel_user", (q) =>
-        q.eq("channelId", mainChannel._id).eq("userId", userId)
+        q.eq("channelId", targetChannel._id).eq("userId", userId)
       )
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
@@ -1004,7 +1104,8 @@ export const postToChat = mutation({
 
     // Insert the chat message
     const messageId = await ctx.db.insert("chatMessages", {
-      channelId: mainChannel._id,
+      channelId: targetChannel._id,
+      communityId: await resolveChannelCommunityId(ctx, targetChannel._id),
       senderId: userId,
       content,
       contentType: "text",
@@ -1017,7 +1118,7 @@ export const postToChat = mutation({
 
     // Update channel with last message info
     const preview = content.slice(0, 100);
-    await ctx.db.patch(mainChannel._id, {
+    await ctx.db.patch(targetChannel._id, {
       lastMessageAt: timestamp,
       lastMessagePreview: preview,
       lastMessageSenderId: userId,
@@ -1028,7 +1129,7 @@ export const postToChat = mutation({
     // Trigger notification logic
     await ctx.scheduler.runAfter(0, internal.functions.messaging.events.onMessageSent, {
       messageId,
-      channelId: mainChannel._id,
+      channelId: targetChannel._id,
       senderId: userId,
     });
 

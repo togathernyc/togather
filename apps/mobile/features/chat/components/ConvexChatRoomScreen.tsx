@@ -13,10 +13,8 @@ import {
   Text,
   TouchableOpacity,
   Alert,
-  KeyboardAvoidingView,
   Platform,
   Keyboard,
-  Pressable,
   Share,
   ActionSheetIOS,
   InteractionManager,
@@ -26,10 +24,13 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useLocalSearchParams, usePathname, useRouter } from "expo-router";
 import { useAuth } from "@providers/AuthProvider";
 import { useNotifications } from "@providers/NotificationProvider";
+import { dismissChannelNotifications } from "@features/notifications/utils/dismissChannelNotifications";
 import { useLeaveGroup } from "@features/groups/hooks/useLeaveGroup";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useTheme } from "@hooks/useTheme";
+import { useWhatsappShell } from "@hooks/useWhatsappShell";
+import { waAccentPalette } from "@utils/waPalette";
 import { parseStreamChannelId } from "@togather/shared";
 import { DOMAIN_CONFIG } from "@togather/shared";
 import type { Id } from "@services/api/convex";
@@ -39,6 +40,7 @@ import { useQuery, api, useStoredAuthToken } from "@services/api/convex";
 import { ChatHeader, ChatHeaderPlaceholder } from "./ChatHeader";
 import { ChatRoomHeader } from "./ChatRoomHeader";
 import { ChatPrivacyCard } from "./ChatPrivacyCard";
+import { ChatRoomSurface } from "./ChatRoomSurface";
 import { ChatNavigation, type ChannelTab } from "./ChatNavigation";
 import { ChatMenuModal } from "./ChatMenuModal";
 import { ExternalChatModal } from "./ExternalChatModal";
@@ -57,6 +59,7 @@ import { useReadState } from "../hooks/useReadState";
 import { useTypingIndicators } from "../hooks/useTypingIndicators";
 import { useSendMessage } from "../hooks/useConvexSendMessage";
 import { useParentMessage } from "../hooks/useParentMessage";
+import { isOptimisticMessageId, resolveReplyPreview } from "../utils/replyPreview";
 import { BlockedUsersProvider, useBlockedUsersContext } from "../context/BlockedUsersContext";
 import { useMutation, useAction } from "@services/api/convex";
 import { useGroupCache } from "@/stores/groupCache";
@@ -86,6 +89,14 @@ type ChatRoomParams = {
   leadersChannelId?: string;
   isAnnouncementGroup?: string;
   externalChatLink?: string;
+  /** When arriving from inbox search, the message to scroll to and highlight. */
+  messageId?: string;
+  /**
+   * When arriving from an inbox search hit on a thread reply, the parent
+   * message id whose thread should auto-open (so the matched reply is shown in
+   * context). `messageId` points at the same parent for scroll/highlight.
+   */
+  openThreadId?: string;
 };
 
 const ConvexChatRoomScreenInner: React.FC = () => {
@@ -96,7 +107,10 @@ const ConvexChatRoomScreenInner: React.FC = () => {
   const { user } = useAuth();
   const token = useStoredAuthToken();
   const { primaryColor } = useCommunityTheme();
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
+  // WhatsApp-shell chat-room chrome (WHATSAPP-DESIGN-SYSTEM.md §5) —
+  // flag-gated; flag-off rendering below is untouched.
+  const whatsappShellEnabled = useWhatsappShell();
 
   // Mutations
   const flagMessageMutation = useMutation(api.functions.messaging.flagging.flagMessage);
@@ -165,7 +179,10 @@ const ConvexChatRoomScreenInner: React.FC = () => {
 
   // Derive active slug from route parameter (URL-based routing)
   // Priority: resolvedChannelSlug > parsedChannel type > default "general"
-  const activeSlug: string = useMemo(() => {
+  // This is the slug the URL asked for. The slug actually displayed
+  // (`activeSlug`, derived further below) may differ when General is disabled
+  // and we fall back to the group's default channel.
+  const routeActiveSlug: string = useMemo(() => {
     // If we have a channel slug from the URL, use it directly
     if (resolvedChannelSlug) return resolvedChannelSlug;
     // Fallback to parsed channel type if available (legacy Stream URLs)
@@ -218,6 +235,13 @@ const ConvexChatRoomScreenInner: React.FC = () => {
     resolvedGroupId && token ? { token, groupId: resolvedGroupId } : "skip"
   );
 
+  // Whether the group has a native run sheet — surfaces the Run Sheet tool
+  // for native-only groups even without PCO channels.
+  const hasNativeRunSheet = useQuery(
+    api.functions.scheduling.events.groupHasRunSheet,
+    resolvedGroupId && token ? { token, groupId: resolvedGroupId } : "skip"
+  );
+
   // Cache integration for group channels (eliminates tab bar flash)
   const { setGroupChannels: cacheGroupChannels, getGroupChannels: getCachedGroupChannels } = useChannelsCache();
 
@@ -234,23 +258,9 @@ const ConvexChatRoomScreenInner: React.FC = () => {
     : null;
   const effectiveGroupChannels = groupChannels ?? cachedGroupChannels;
 
-  // Build channel tabs from the query result (or cache) — member + leader-enabled (tab bar)
-  const channelTabs: ChannelTab[] = useMemo(() => {
-    if (!effectiveGroupChannels) return [];
-
-    return effectiveGroupChannels
-      .filter(
-        (channel: any) =>
-          channel.isMember && channel.isEnabled !== false
-      )
-      .map((channel: any) => ({
-        slug: channel.slug,
-        channelType: channel.channelType,
-        name: channel.name,
-        unreadCount: channel.unreadCount,
-        isShared: channel.isShared || undefined,
-      }));
-  }, [effectiveGroupChannels]);
+  // `channelTabs` is defined further down, once `isAdminViewer` has resolved
+  // from the group role — admin browsers are shown the group's full channel
+  // set, regular members only the channels they belong to.
 
   // Get Convex channel IDs for main and leaders
   const mainChannelId = useConvexChannelFromGroup(resolvedGroupId, "main");
@@ -262,6 +272,24 @@ const ConvexChatRoomScreenInner: React.FC = () => {
     // Only query if we have a custom channel slug (not general or leaders)
     resolvedGroupId && token && isCustomChannel && resolvedChannelSlug
       ? { token, groupId: resolvedGroupId, slug: resolvedChannelSlug }
+      : "skip"
+  );
+
+  // General (main) channel can be disabled (archived) by a leader. When it is,
+  // `useConvexChannelFromGroup(groupId, "main")` resolves to null (the backend
+  // filters archived channels), which would leave the user on an empty chat.
+  // Detect that case and fall back to the group's best default channel.
+  //
+  // Gated to ONLY run when General is the target AND no active main channel
+  // exists — passing "skip" otherwise avoids an extra round-trip in the common
+  // (General available) path. `mainChannelId === null` (not `undefined`) means
+  // the lookup completed and found no active main channel.
+  const isGeneralUnavailable =
+    routeActiveSlug === "general" && mainChannelId === null && !!resolvedGroupId;
+  const defaultChannelFallback = useQuery(
+    api.functions.messaging.channels.getGroupDefaultChannel,
+    isGeneralUnavailable && resolvedGroupId && token
+      ? { token, groupId: resolvedGroupId }
       : "skip"
   );
 
@@ -280,17 +308,48 @@ const ConvexChatRoomScreenInner: React.FC = () => {
       return channelBySlug._id;
     }
 
-    // Use slug-based selection for standard channels - activeSlug is derived from URL
-    let channelId = activeSlug === "general" ? mainChannelId : leadersChannelId;
+    // Use slug-based selection for standard channels - routeActiveSlug is derived from URL
+    let channelId = routeActiveSlug === "general" ? mainChannelId : leadersChannelId;
 
     // Fallback: if leaders slug is requested but user doesn't have access,
     // use main channel instead to prevent infinite loading
-    if (activeSlug === "leaders" && leadersChannelId === null && mainChannelId) {
+    if (routeActiveSlug === "leaders" && leadersChannelId === null && mainChannelId) {
       channelId = mainChannelId;
     }
 
+    // Fallback: General was requested but the main channel is disabled
+    // (archived). Land on the group's default channel instead of an empty
+    // chat. `getGroupDefaultChannel` returns null when the group has no active
+    // member-facing channel — leave `channelId` null so the no-channel handling
+    // below applies as before.
+    if (isGeneralUnavailable && defaultChannelFallback) {
+      channelId = defaultChannelFallback.channelId;
+    }
+
     return channelId;
-  }, [activeSlug, resolvedChannelSlug, isCustomChannel, mainChannelId, leadersChannelId, channelBySlug, isConvexChannelId, directChannelId]);
+  }, [routeActiveSlug, resolvedChannelSlug, isCustomChannel, mainChannelId, leadersChannelId, channelBySlug, isConvexChannelId, directChannelId, isGeneralUnavailable, defaultChannelFallback]);
+
+  // Slug actually displayed. When General is disabled and we've fallen back to
+  // the group's default channel, reflect the fallback's slug so the tab bar
+  // highlights the correct tab and the header / channel-type checks line up
+  // with the channel the user is really viewing.
+  const activeSlug =
+    isGeneralUnavailable && defaultChannelFallback
+      ? defaultChannelFallback.slug
+      : routeActiveSlug;
+
+  // Per-channel composer hint (e.g. "put experience updates here"), configured
+  // by leaders on the channel info screen. Resolve from the active channel doc;
+  // custom channels come through channelBySlug, the rest through the group list.
+  const activeChannelHint = useMemo(() => {
+    if (isCustomChannel && channelBySlug?._id === activeChannelId) {
+      return channelBySlug?.hint ?? undefined;
+    }
+    const active = effectiveGroupChannels?.find(
+      (ch: any) => ch._id === activeChannelId
+    );
+    return active?.hint ?? undefined;
+  }, [isCustomChannel, channelBySlug, activeChannelId, effectiveGroupChannels]);
 
   // Fetch group details for display (with token to get user's role)
   const groupDetailsRaw = useQuery(
@@ -329,6 +388,14 @@ const ConvexChatRoomScreenInner: React.FC = () => {
   const displayType =
     groupType || groupDetails?.groupTypeName || groupData?.groupTypeName || "";
   const displayImage = imageUrl || groupDetails?.preview || groupData?.preview || "";
+  // Cross-team tabs are their own room, not the group — when one is active the
+  // header must show the channel's identity (name / "Cross-team" / its own
+  // member count), not the host group's name/type/member-count. Every other tab
+  // keeps the group header unchanged.
+  const activeChannel = effectiveGroupChannels?.find(
+    (ch: any) => ch._id === activeChannelId
+  );
+  const activeIsCrossTeam = activeChannel?.channelType === "cross_team";
   // Determine leader status from backend data - this is the source of truth for authorization.
   // While loading, use channelTypeParam as a hint to avoid UI flash (if navigating to leaders
   // channel, user must be a leader since notifications only go to leaders).
@@ -345,6 +412,43 @@ const ConvexChatRoomScreenInner: React.FC = () => {
   const hasGroup = !!resolvedGroupId;
   // Get user role for toolbar visibility
   const userRole = (groupDetails?.userRole || groupData?.userRole) as "admin" | "leader" | "member" | undefined;
+
+  // Community admin viewing a group whose membership isn't confirmed yet. This
+  // covers BOTH the role-loading window and a settled non-member: the channel
+  // lookup can resolve before groups.getById, so if we waited for the role to
+  // settle the composer would briefly mount as sendable for a non-member (whose
+  // send the server then rejects — the exact bug this change removes). Members
+  // have a role ("member"/"leader"), so this flips false the moment that lands.
+  const isCommunityAdminGroupView =
+    isCommunityAdmin && hasGroup && userRole === undefined;
+  // Confirmed admin viewer: role has settled and they're definitely not a
+  // member. Drives the channel-tab expansion and the explanatory banner copy
+  // (kept distinct so we don't show "viewing as admin" to a member-admin during
+  // the brief loading window).
+  const isAdminViewer = isCommunityAdminGroupView && !isRoleLoading;
+
+  // Build channel tabs from the query result (or cache). Admin viewers get the
+  // group's full enabled channel set so they can browse every channel; members
+  // only get the channels they belong to.
+  const channelTabs: ChannelTab[] = useMemo(() => {
+    if (!effectiveGroupChannels) return [];
+
+    return effectiveGroupChannels
+      .filter((channel: any) => {
+        if (channel.isEnabled === false) return false;
+        // Admin viewers browse every readable channel. Skip reach_out — it's a
+        // leader workflow surface (ReachOutScreen), not a conversation to read.
+        if (isAdminViewer) return channel.channelType !== "reach_out";
+        return channel.isMember;
+      })
+      .map((channel: any) => ({
+        slug: channel.slug,
+        channelType: channel.channelType,
+        name: channel.name,
+        unreadCount: channel.unreadCount,
+        isShared: channel.isShared || undefined,
+      }));
+  }, [effectiveGroupChannels, isAdminViewer]);
   // Type for group with visibility settings
   type GroupWithVisibility = typeof groupDetails & {
     showToolbarToMembers?: boolean;
@@ -412,9 +516,16 @@ const ConvexChatRoomScreenInner: React.FC = () => {
     channelData,
   ]);
 
+  // Leaders-only posting is now carried solely by the "announcements" channel
+  // (server-enforced in sendMessage), for every group including the
+  // community-wide announcement group. The announcement group's general
+  // channel is open to everyone, just like any other group's general channel.
+  // Admin viewers are read-only everywhere (they haven't joined); otherwise
+  // only Announcements restricts posting to leaders. Gated on the broader
+  // "group view" flag so the composer never mounts for a community admin while
+  // their membership role is still resolving.
   const canSendMessages =
-    (!isAnnouncementGroup || isUserLeader) &&
-    (!isAnnouncementsChannel || isUserLeader);
+    !isCommunityAdminGroupView && (!isAnnouncementsChannel || isUserLeader);
 
   // UI state
   const [menuVisible, setMenuVisible] = useState(false);
@@ -430,11 +541,24 @@ const ConvexChatRoomScreenInner: React.FC = () => {
   const [selectedMessageSenderPhoto, setSelectedMessageSenderPhoto] = useState<string | undefined>();
   const [selectedMessageAttachments, setSelectedMessageAttachments] = useState<Array<{ type: string; url: string }> | undefined>();
   const [replyToMessageId, setReplyToMessageId] = useState<Id<"chatMessages"> | null>(null);
+  // The tapped message's already-in-hand name/preview, captured when the reply
+  // is initiated. Used as the immediate (and, for optimistic messages, only)
+  // source for the "Replying to …" banner — see the fetch guard below.
+  const [replyToLocal, setReplyToLocal] = useState<{ content: string; senderName?: string } | null>(null);
 
   // Load the parent message when a reply is in progress so the composer can
   // show a real "Replying to <name>: <preview>" banner instead of the empty
   // placeholder it used to render.
-  const { message: replyParentMessage } = useParentMessage(replyToMessageId);
+  //
+  // A just-sent message is still optimistic: its id is a synthetic
+  // `optimistic-…` string the server query can't resolve, so we skip the fetch
+  // for those ids (it would only ever come back empty) and rely on the local
+  // preview captured at reply time. Real messages still fetch as before so
+  // edits/latest content override the local snapshot.
+  const isOptimisticReplyTarget = isOptimisticMessageId(replyToMessageId);
+  const { message: replyParentMessage } = useParentMessage(
+    isOptimisticReplyTarget ? null : replyToMessageId
+  );
 
   // Sync modal state
   const [syncModalVisible, setSyncModalVisible] = useState(false);
@@ -464,6 +588,10 @@ const ConvexChatRoomScreenInner: React.FC = () => {
   useEffect(() => {
     if (activeChannelId && currentUserId) {
       markAsRead();
+      // Clear this channel's stacked OS push notifications from the tray —
+      // expo-notifications only auto-clears the single tapped notification, so
+      // siblings linger until we sweep them here.
+      dismissChannelNotifications(activeChannelId);
     }
   }, [activeChannelId, currentUserId, markAsRead]);
 
@@ -475,15 +603,15 @@ const ConvexChatRoomScreenInner: React.FC = () => {
   // 3. Main channel exists (we have somewhere to redirect to)
   // Reset guard when the group or slug changes (component instance may be reused)
   const hasRedirectedFromLeaders = useRef(false);
-  const prevLeadersKey = useRef(`${resolvedGroupId}:${activeSlug}`);
-  if (prevLeadersKey.current !== `${resolvedGroupId}:${activeSlug}`) {
-    prevLeadersKey.current = `${resolvedGroupId}:${activeSlug}`;
+  const prevLeadersKey = useRef(`${resolvedGroupId}:${routeActiveSlug}`);
+  if (prevLeadersKey.current !== `${resolvedGroupId}:${routeActiveSlug}`) {
+    prevLeadersKey.current = `${resolvedGroupId}:${routeActiveSlug}`;
     hasRedirectedFromLeaders.current = false;
   }
   useEffect(() => {
     if (hasRedirectedFromLeaders.current) return;
     if (
-      activeSlug === "leaders" &&
+      routeActiveSlug === "leaders" &&
       leadersChannelId === null && // null = query completed, channel not found (not undefined = still loading)
       mainChannelId &&
       resolvedGroupId
@@ -503,7 +631,7 @@ const ConvexChatRoomScreenInner: React.FC = () => {
         },
       });
     }
-  }, [activeSlug, leadersChannelId, mainChannelId, resolvedGroupId, router, displayName, displayType, groupTypeIdSource, displayImage, isUserLeader, isAnnouncementGroup, externalChatLink]);
+  }, [routeActiveSlug, leadersChannelId, mainChannelId, resolvedGroupId, router, displayName, displayType, groupTypeIdSource, displayImage, isUserLeader, isAnnouncementGroup, externalChatLink]);
 
   // Track active channel for notification suppression
   // When viewing a channel, suppress push notification banners for that channel
@@ -547,6 +675,7 @@ const ConvexChatRoomScreenInner: React.FC = () => {
     (slug: string) => {
       // Clear reply when switching tabs
       setReplyToMessageId(null);
+      setReplyToLocal(null);
       // Navigate via URL for URL-based tab routing, preserving params
       if (resolvedGroupId) {
         router.replace({
@@ -601,14 +730,6 @@ const ConvexChatRoomScreenInner: React.FC = () => {
     const id = getGroupIdForNavigation();
     if (id) {
       router.push(`/(user)/leader-tools/${id}/attendance`);
-    }
-  }, [router, getGroupIdForNavigation]);
-
-  const handleGoToFollowup = useCallback(() => {
-    setMenuVisible(false);
-    const id = getGroupIdForNavigation();
-    if (id) {
-      router.push(`/(user)/leader-tools/${id}/followup`);
     }
   }, [router, getGroupIdForNavigation]);
 
@@ -673,9 +794,6 @@ const ConvexChatRoomScreenInner: React.FC = () => {
       case 'attendance':
         handleGoToAttendance();
         break;
-      case 'followup':
-        handleGoToFollowup();
-        break;
       case 'events':
         handleGoToEvents();
         break;
@@ -692,7 +810,7 @@ const ConvexChatRoomScreenInner: React.FC = () => {
         handleSyncPress();
         break;
     }
-  }, [handleGoToAttendance, handleGoToFollowup, handleGoToEvents, handleGoToBots, handleGoToTasks, handleGoToRunSheet, handleSyncPress]);
+  }, [handleGoToAttendance, handleGoToEvents, handleGoToBots, handleGoToTasks, handleGoToRunSheet, handleSyncPress]);
 
   // Handle long-press on channel tab to show members modal
   const handleTabLongPress = useCallback((channel: ChannelTab) => {
@@ -717,10 +835,9 @@ const ConvexChatRoomScreenInner: React.FC = () => {
 
   /**
    * Handler for the (i) icon in the chat header (replaced the old 3-dot
-   * menu opener). Routes:
-   *   - General (channelType === "main"): → /groups/{id}  (group page IS
-   *     the channel info for General)
-   *   - Other channels: → /inbox/{groupId}/{slug}/info
+   * menu opener). Always routes to the group page (group info) regardless
+   * of which channel is active — the (i) is a shortcut to the group, not
+   * the per-channel info screen.
    *
    * `ChatMenuModal` stays mounted because other components rely on its
    * handlers; we just stopped opening it from the (i).
@@ -728,17 +845,8 @@ const ConvexChatRoomScreenInner: React.FC = () => {
   const handleOpenChannelInfo = useCallback(() => {
     const id = getGroupIdForNavigation();
     if (!id) return;
-    // Determine channel type from the active tab. Fall back to "main" if
-    // we can't resolve — the General -> group page route is the safest
-    // default.
-    const activeTab = channelTabs.find((t) => t.slug === activeSlug);
-    const isMain = !activeTab || activeTab.channelType === "main";
-    if (isMain) {
-      router.push(`/groups/${id}`);
-    } else {
-      router.push(`/inbox/${id}/${activeSlug}/info` as any);
-    }
-  }, [router, getGroupIdForNavigation, channelTabs, activeSlug]);
+    router.push(`/groups/${id}`);
+  }, [router, getGroupIdForNavigation]);
 
   const handleShareGroup = useCallback(() => {
     setMenuVisible(false);
@@ -779,10 +887,20 @@ const ConvexChatRoomScreenInner: React.FC = () => {
   }, [groupDetails, groupData, displayName]);
 
   // Message action handlers
-  const handleMessageReply = useCallback((messageId: Id<"chatMessages">) => {
-    setReplyToMessageId(messageId);
-    setOverlayVisible(false);
-  }, []);
+  const handleMessageReply = useCallback(
+    (
+      messageId: Id<"chatMessages">,
+      localPreview?: { content: string; senderName?: string },
+    ) => {
+      setReplyToMessageId(messageId);
+      // Capture the tapped message's name/preview so the reply banner is never
+      // blank — critical for a just-sent (optimistic) message whose id the
+      // server can't resolve yet.
+      setReplyToLocal(localPreview ?? null);
+      setOverlayVisible(false);
+    },
+    [],
+  );
 
   const handleMessageReact = useCallback((messageId: Id<"chatMessages">) => {
     // This is called when "React" is tapped from the action sheet
@@ -947,7 +1065,59 @@ const ConvexChatRoomScreenInner: React.FC = () => {
 
   const handleCancelReply = useCallback(() => {
     setReplyToMessageId(null);
+    setReplyToLocal(null);
   }, []);
+
+  // Threads that currently show exactly one reply inline — the ones a next
+  // reply collapses — keyed by every message you can tap "reply" on to land in
+  // them (the root, and the inline reply itself), mapped to the thread's root.
+  // Reported by MessageList (flag-on only) and held in a ref because nothing
+  // renders from it; it's only read at send time.
+  const collapsibleThreadsRef = useRef<Map<string, string>>(new Map());
+  const handleCollapsibleThreadsChange = useCallback(
+    (rootByReplyTarget: Map<string, string>) => {
+      collapsibleThreadsRef.current = rootByReplyTarget;
+    },
+    [],
+  );
+
+  /**
+   * Follow a reply that just turned its parent into a thread.
+   *
+   * On the send that tips a parent from one visible reply to two, BOTH replies
+   * leave the timeline and are replaced by a summary pill on the parent — which
+   * may be scrolled far up. Without this, the message you just sent appears to
+   * vanish. So on exactly that send, open the thread the message actually
+   * landed in.
+   *
+   * Deliberately conservative: it fires only when the thread was known to have
+   * an inline reply loaded right now. A first reply (nothing inline yet) stays
+   * put, an already-collapsed thread can't be replied to from the timeline, and
+   * an unknown/unloaded target does nothing.
+   *
+   * `replyTargetId` is the message the sender tapped, which is not necessarily
+   * the thread — replying to an inline reply roots at that reply's parent — so
+   * the lookup resolves the ROOT, and that is the thread we open.
+   */
+  const handleReplySent = useCallback(
+    (replyTargetId: Id<"chatMessages">) => {
+      if (!whatsappShellEnabled) return;
+      const threadRootId = collapsibleThreadsRef.current.get(String(replyTargetId));
+      if (!threadRootId) return;
+      // Same parallel group/DM routes MessageItem's thread pill uses.
+      if (resolvedGroupId) {
+        router.push({
+          pathname: `/inbox/${resolvedGroupId}/thread/${threadRootId}` as any,
+          params: { channelName: activeSlug || "general" },
+        });
+      } else if (activeChannelId) {
+        router.push({
+          pathname: `/inbox/dm/${activeChannelId}/thread/${threadRootId}` as any,
+        });
+      }
+    },
+    [whatsappShellEnabled, resolvedGroupId, activeChannelId, activeSlug, router],
+  );
 
   // Dismiss keyboard when tapping outside input
   const dismissKeyboard = useCallback(() => {
@@ -1006,8 +1176,63 @@ const ConvexChatRoomScreenInner: React.FC = () => {
     router.push(`/inbox/dm/${activeChannelId}/info` as any);
   }, [router, activeChannelId]);
 
+  // Auto-open the parent thread when arriving from an inbox search hit on a
+  // reply. Fire once, after the channel context resolves; the channel
+  // underneath keeps scrolling to and highlighting the parent (via
+  // `messageId`), so dismissing the thread lands on the highlighted parent.
+  const autoOpenedThreadRef = useRef(false);
+  useEffect(() => {
+    if (autoOpenedThreadRef.current) return;
+    const openThreadId = params.openThreadId;
+    if (!openThreadId || !activeChannelId) return;
+    if (!resolvedGroupId && !isAdHocChannel) return;
+    autoOpenedThreadRef.current = true;
+    if (resolvedGroupId) {
+      router.push({
+        pathname: `/inbox/${resolvedGroupId}/thread/${openThreadId}` as any,
+        params: { channelName: activeSlug },
+      });
+    } else {
+      router.push({
+        pathname: `/inbox/dm/${activeChannelId}/thread/${openThreadId}` as any,
+      });
+    }
+  }, [
+    params.openThreadId,
+    activeChannelId,
+    resolvedGroupId,
+    isAdHocChannel,
+    activeSlug,
+    router,
+  ]);
+
   const isEssentialDataReady =
     (resolvedGroupId || isAdHocChannel) && activeChannelId != null;
+
+  // General was disabled and there's no fallback channel this user can open
+  // (getGroupDefaultChannel resolved to null — distinct from `undefined`, which
+  // means still loading). Show an unavailable message instead of spinning
+  // forever, since activeChannelId will never become non-null here.
+  const hasNoAvailableChannel =
+    isGeneralUnavailable && defaultChannelFallback === null;
+
+  if (hasNoAvailableChannel) {
+    return (
+      <View style={[styles.container, { backgroundColor: colors.surface }]}>
+        <ChatHeaderPlaceholder
+          displayName={displayName}
+          onBack={handleBack}
+          topInset={insets.top}
+        />
+        <View style={[styles.centered, { backgroundColor: colors.surface }]}>
+          <Text style={[styles.loadingText, { color: colors.textSecondary }]}>
+            This channel isn't available. The General channel has been turned
+            off for this group.
+          </Text>
+        </View>
+      </View>
+    );
+  }
 
   // Loading state: show placeholder while essential data resolves
   if (!isEssentialDataReady) {
@@ -1042,12 +1267,10 @@ const ConvexChatRoomScreenInner: React.FC = () => {
   }
 
   return (
-    <KeyboardAvoidingView
-      style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.surface }]}
-      behavior="padding"
-      keyboardVerticalOffset={0}
+    <ChatRoomSurface
+      whatsappShellEnabled={whatsappShellEnabled}
+      onPress={Platform.OS === 'web' ? undefined : dismissKeyboard}
     >
-      <Pressable style={[styles.container, { backgroundColor: colors.surface }]} onPress={Platform.OS === 'web' ? undefined : dismissKeyboard}>
         {isAdHocChannel && adHocChannelType ? (
           <ChatRoomHeader
             channelType={adHocChannelType}
@@ -1058,15 +1281,19 @@ const ConvexChatRoomScreenInner: React.FC = () => {
           />
         ) : (
           <ChatHeader
-            displayName={displayName}
-            displayType={displayType}
+            displayName={activeIsCrossTeam ? activeChannel.name : displayName}
+            displayType={activeIsCrossTeam ? "Cross-team" : displayType}
             displayImage={displayImage}
             groupTypeId={groupTypeId}
             // Announcement groups auto-include everyone in the community, so
             // surfacing a count next to them reads as noise ("9225 members" on
             // every post) rather than signal. Hide for those only.
             memberCount={
-              isAnnouncementGroup ? undefined : groupDetails?.memberCount
+              isAnnouncementGroup
+                ? undefined
+                : activeIsCrossTeam
+                  ? activeChannel.memberCount
+                  : groupDetails?.memberCount
             }
             onBack={handleBack}
             onInfoPress={handleOpenChannelInfo}
@@ -1087,6 +1314,7 @@ const ConvexChatRoomScreenInner: React.FC = () => {
             onExternalChatPress={() => setExternalChatModalVisible(true)}
             tools={(groupDetails as { leaderToolbarTools?: string[] } | undefined)?.leaderToolbarTools}
             hasPcoChannels={hasPcoChannels ?? false}
+            hasNativeRunSheet={hasNativeRunSheet ?? false}
             toolVisibility={groupWithVisibility?.toolVisibility}
             toolDisplayNames={groupWithVisibility?.toolDisplayNames}
             userRole={userRole}
@@ -1102,7 +1330,6 @@ const ConvexChatRoomScreenInner: React.FC = () => {
           onMembersPress={handleGoToMembers}
           onEventsPress={handleGoToEvents}
           onAttendancePress={handleGoToAttendance}
-          onFollowupPress={handleGoToFollowup}
           onBotsPress={handleGoToBots}
           onGroupPagePress={handleGoToGroupPage}
           onShareGroupPress={handleShareGroup}
@@ -1128,8 +1355,18 @@ const ConvexChatRoomScreenInner: React.FC = () => {
                 position above the list (not in the inverted FlatList) avoids
                 upending the chat scroll behavior. */}
             {isAdHocChannel && <ChatPrivacyCard />}
-            {/* Message List - handles its own loading state when channelId is null */}
-            <View style={styles.chatContainer}>
+            {/* Message List - handles its own loading state when channelId is null.
+                §S4.1: the wallpaper is painted once at screen level above, so
+                this wrapper (and MessageList itself) must stay transparent —
+                painting `chatWallpaper` here again would flatten the doodle
+                pattern back out. Flag-off keeps inheriting the screen's
+                surface color as before. */}
+            <View
+              style={[
+                styles.chatContainer,
+                whatsappShellEnabled && styles.waTransparent,
+              ]}
+            >
               <MessageList
                 channelId={activeChannelId ?? null}
                 currentUserId={currentUserId}
@@ -1143,6 +1380,7 @@ const ConvexChatRoomScreenInner: React.FC = () => {
                 optimisticMessages={optimisticMessages}
                 onRetryMessage={retryMessage}
                 onDismissMessage={dismissMessage}
+                onCollapsibleThreadsChange={handleCollapsibleThreadsChange}
                 onAvatarPress={(userId) => {
                   // Short-circuit on self — self-profile lives on a
                   // different route; the MessageItem already filters
@@ -1151,6 +1389,11 @@ const ConvexChatRoomScreenInner: React.FC = () => {
                   if (userId === currentUserId) return;
                   router.push(`/profile/${userId}` as any);
                 }}
+                highlightMessageId={
+                  params.messageId
+                    ? (params.messageId as Id<"chatMessages">)
+                    : null
+                }
               />
             </View>
 
@@ -1212,14 +1455,19 @@ const ConvexChatRoomScreenInner: React.FC = () => {
                   replyToMessageId
                     ? {
                         _id: replyToMessageId,
-                        content: replyParentMessage?.content ?? "",
-                        senderName: replyParentMessage?.senderName ?? "",
+                        // Prefer the fetched parent (authoritative, reflects
+                        // edits) but fall back to the locally-captured values so
+                        // the banner is never blank — e.g. when replying to a
+                        // just-sent optimistic message the server can't resolve.
+                        ...resolveReplyPreview(replyParentMessage, replyToLocal),
                       }
                     : null
                 }
                 onCancelReply={handleCancelReply}
+                onReplySent={handleReplySent}
                 externalSendMessage={sendMessage}
                 externalIsSending={isSending}
+                placeholder={activeChannelHint}
                 // Ad-hoc DM where recipient hasn't accepted yet — strip
                 // attachment UI client-side. Backend rejects (messages.ts);
                 // hiding here means the user never triggers the failure path
@@ -1228,12 +1476,48 @@ const ConvexChatRoomScreenInner: React.FC = () => {
                   isAdHocChannel && channelData?.recipientPending === true
                 }
               />
+            ) : whatsappShellEnabled ? (
+              // §5 "Announcement footer note: centered, 13pt, text.secondary
+              // with the actionable noun in accent" — flag-on restyle of the
+              // same read-only affordance below (base styles reused, new
+              // wa* entries added; the flag-off branch is untouched).
+              <View style={[styles.readOnlyBanner, styles.waReadOnlyBanner, styles.waTransparent]}>
+                <Text style={[styles.readOnlyText, styles.waReadOnlyText, { color: colors.textSecondary }]}>
+                  {isCommunityAdminGroupView ? (
+                    isRoleLoading ? (
+                      "Checking your access…"
+                    ) : (
+                      "You're viewing as a community admin. Join the group to post."
+                    )
+                  ) : isAnnouncementsChannel ? (
+                    <>
+                      Only{" "}
+                      <Text style={{ color: waAccentPalette(primaryColor, isDark).accent, fontWeight: "600" }}>
+                        leaders
+                      </Text>{" "}
+                      can post in Announcements. You can react to messages.
+                    </>
+                  ) : (
+                    <>
+                      Only{" "}
+                      <Text style={{ color: waAccentPalette(primaryColor, isDark).accent, fontWeight: "600" }}>
+                        admins
+                      </Text>{" "}
+                      can post in this channel. You can react to messages.
+                    </>
+                  )}
+                </Text>
+              </View>
             ) : (
               <View style={[styles.readOnlyBanner, { backgroundColor: colors.surfaceSecondary, borderTopColor: colors.border }]}>
                 <Text style={[styles.readOnlyText, { color: colors.textSecondary }]}>
-                  {isAnnouncementsChannel
-                    ? "Only leaders can post in Announcements. You can react to messages."
-                    : "Only admins can post in this channel. You can react to messages."}
+                  {isCommunityAdminGroupView
+                    ? isRoleLoading
+                      ? "Checking your access…"
+                      : "You're viewing as a community admin. Join the group to post."
+                    : isAnnouncementsChannel
+                      ? "Only leaders can post in Announcements. You can react to messages."
+                      : "Only admins can post in this channel. You can react to messages."}
                 </Text>
               </View>
             )}
@@ -1274,7 +1558,11 @@ const ConvexChatRoomScreenInner: React.FC = () => {
                 }
               },
               deleteMessage: () => handleMessageDelete(selectedMessageId),
-              quotedReply: () => handleMessageReply(selectedMessageId),
+              quotedReply: () =>
+                handleMessageReply(selectedMessageId, {
+                  content: selectedMessageContent,
+                  senderName: selectedMessageSenderName,
+                }),
               flagMessage: handleFlagMessage,
               blockUser: handleBlockUser,
             }}
@@ -1307,8 +1595,7 @@ const ConvexChatRoomScreenInner: React.FC = () => {
             setSyncResults(null);
           }}
         />
-      </Pressable>
-    </KeyboardAvoidingView>
+    </ChatRoomSurface>
   );
 };
 
@@ -1366,6 +1653,21 @@ const styles = StyleSheet.create({
   readOnlyText: {
     fontSize: 14,
     textAlign: "center",
+  },
+  // --- WhatsApp-shell announcement footer note (flag-gated) -----------------
+  // Additive-only overrides layered on top of the flag-off styles above,
+  // which are never edited. See WHATSAPP-DESIGN-SYSTEM.md §5.
+  waReadOnlyBanner: {
+    borderTopWidth: 0,
+  },
+  waReadOnlyText: {
+    fontSize: 13,
+  },
+  // §S4.1 — every flag-on layer between the wallpaper and the content must be
+  // see-through, or the pattern gets painted over (the "white on white"
+  // bug this pass fixes).
+  waTransparent: {
+    backgroundColor: "transparent",
   },
 });
 

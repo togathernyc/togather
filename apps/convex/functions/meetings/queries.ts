@@ -13,6 +13,16 @@ import { getOptionalAuth } from "../../lib/auth";
 import { getSeriesNumber } from "../eventSeries";
 import { isLeaderRole } from "../../lib/helpers";
 import { getHostUserIds, isMeetingHost } from "../../lib/meetingPermissions";
+import {
+  audienceOf,
+  canAccessMeeting,
+  withoutHiddenPrivateEvents,
+} from "../../lib/meetingAudience";
+import {
+  GOING_RSVP_OPTION_ID,
+  MAYBE_RSVP_OPTION_ID,
+  CANT_GO_RSVP_OPTION_ID,
+} from "../../lib/meetingConfig";
 
 /**
  * Get meeting by short ID (for public sharing URLs)
@@ -41,11 +51,11 @@ export const getByShortId = query({
       .withIndex("by_meeting", (q) => q.eq("meetingId", meeting._id))
       .take(1000);
 
-    // Count by rsvpOptionId (1=yes, 2=no, 3=maybe based on rsvpOptions)
+    // Count by the standard option id slots (1=Going, 2=Maybe, 3=Can't Go)
     const rsvpCounts = {
-      yes: rsvps.filter((r) => r.rsvpOptionId === 1).length,
-      no: rsvps.filter((r) => r.rsvpOptionId === 2).length,
-      maybe: rsvps.filter((r) => r.rsvpOptionId === 3).length,
+      yes: rsvps.filter((r) => r.rsvpOptionId === GOING_RSVP_OPTION_ID).length,
+      no: rsvps.filter((r) => r.rsvpOptionId === CANT_GO_RSVP_OPTION_ID).length,
+      maybe: rsvps.filter((r) => r.rsvpOptionId === MAYBE_RSVP_OPTION_ID).length,
       total: rsvps.length,
     };
 
@@ -81,22 +91,10 @@ export const getByShortId = query({
       userRole = groupMembership.role || "member";
     }
 
-    // Check visibility-based access
-    const visibility = meeting.visibility || "group";
-    if (visibility === "public") {
-      hasAccess = true;
-    } else if (visibility === "community" && userId) {
-      // Check if user is in the community
-      const communityMembership = await ctx.db
-        .query("userCommunities")
-        .withIndex("by_user_community", (q) =>
-          q.eq("userId", userId).eq("communityId", group.communityId)
-        )
-        .first();
-      hasAccess = !!communityMembership;
-    } else if (groupMembership) {
-      hasAccess = true;
-    }
+    // Audience gate — one shared rule, see lib/meetingAudience.ts. Note this
+    // deliberately does NOT grant hosting-group members access to a
+    // team-scoped event; staying narrower than the group is the point.
+    hasAccess = await canAccessMeeting(ctx, audienceOf(meeting), userId);
 
     // Get group type name
     const groupType = await ctx.db.get(group.groupTypeId);
@@ -164,6 +162,11 @@ export const getByShortId = query({
       note: hasAccess ? meeting.note : null,
       coverImage: getMediaUrl(effectiveCoverImage ?? undefined),
       visibility: meeting.visibility || "group",
+      // Only expose the shared-with audience to viewers who can access the
+      // event. Otherwise this public share endpoint would leak the intended
+      // private audience to outsiders — matching how meetingLink/note are
+      // redacted above.
+      visibleGroupIds: hasAccess ? meeting.visibleGroupIds ?? [] : [],
       rsvpEnabled: meeting.rsvpEnabled ?? true,
       rsvpOptions: meeting.rsvpOptions || [],
       rsvpCounts,
@@ -182,6 +185,8 @@ export const getByShortId = query({
       communityId: community?._id || null,
       communityName: community?.name || null,
       communityLogo: getMediaUrl(community?.logo),
+      // Timezone for rendering scheduledAt in local time (e.g. link previews).
+      timezone: community?.timezone || null,
       // Host info. `hosts` is the canonical attribution; share page UI
       // shows "Hosted by {primary}" when non-empty, group fallback otherwise.
       hosts,
@@ -226,11 +231,11 @@ export const getWithDetails = query({
       .withIndex("by_meeting", (q) => q.eq("meetingId", args.meetingId))
       .collect();
 
-    // Count by rsvpOptionId (1=yes, 2=no, 3=maybe based on rsvpOptions)
+    // Count by the standard option id slots (1=Going, 2=Maybe, 3=Can't Go)
     const rsvpCounts = {
-      yes: rsvps.filter((r) => r.rsvpOptionId === 1).length,
-      no: rsvps.filter((r) => r.rsvpOptionId === 2).length,
-      maybe: rsvps.filter((r) => r.rsvpOptionId === 3).length,
+      yes: rsvps.filter((r) => r.rsvpOptionId === GOING_RSVP_OPTION_ID).length,
+      no: rsvps.filter((r) => r.rsvpOptionId === CANT_GO_RSVP_OPTION_ID).length,
+      maybe: rsvps.filter((r) => r.rsvpOptionId === MAYBE_RSVP_OPTION_ID).length,
       total: rsvps.length,
     };
 
@@ -332,6 +337,10 @@ export const isCommunityWideEvent = query({
  */
 export const listByGroup = query({
   args: {
+    // Optional so existing unauthenticated callers keep working. When absent
+    // we simply can't recognize a host or invitee, so every private event is
+    // withheld — the safe direction to fail.
+    token: v.optional(v.string()),
     groupId: v.id("groups"),
     status: v.optional(meetingStatusValidator),
     startAfter: v.optional(v.number()),
@@ -353,7 +362,10 @@ export const listByGroup = query({
     // Filter by time range and status
     const meetings = await meetingsQuery.take(limit * 3); // Fetch extra for filtering
 
-    const filtered = meetings
+    const viewerId = await getOptionalAuth(ctx, args.token);
+    const visible = await withoutHiddenPrivateEvents(ctx, meetings, viewerId);
+
+    const filtered = visible
       .filter((m) => {
         if (args.status && m.status !== args.status) return false;
         if (args.startAfter && m.scheduledAt < args.startAfter) return false;
@@ -479,12 +491,16 @@ export const listUpcomingForUser = query({
       })
     );
 
-    // Flatten and sort by scheduledAt
-    const meetings = allMeetings
-      .flat()
+    // Flatten and sort by scheduledAt. Private events reach this list purely
+    // through group membership, which is exactly what must not grant access.
+    const meetings = await withoutHiddenPrivateEvents(
+      ctx,
+      allMeetings.flat(),
+      userId
+    );
+
+    return meetings
       .sort((a, b) => a.scheduledAt - b.scheduledAt)
       .slice(0, limit);
-
-    return meetings;
   },
 });

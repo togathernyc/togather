@@ -66,6 +66,8 @@ The Event Details page displays comprehensive information about a specific sched
 - **To**:
   - `/leader-tools/[group_id]/events` (Back to events list)
   - `/inbox?dp_id=[group_id]&dp_name=[encoded_group_name]` (Group chat in inbox)
+  - `/leader-tools/[group_id]/events/[event_id]/guests` (Guest List — view-only roster)
+  - `/leader-tools/[group_id]/events/[event_id]/checkin` (Check in — interactive attendance; managers only, see `checkin.tsx`)
   - Same page (After editing event, if successful)
 
 ## Route Parameters

@@ -1046,3 +1046,79 @@ describe("linked-group leader channel visibility", () => {
     expect(primaryRow?.isEnabled).toBe(true);
   });
 });
+
+// ============================================================================
+// Poll moderation is NOT conferred by a share on a non-announcements channel
+// ============================================================================
+
+describe("poll moderation on a shared custom channel", () => {
+  // Regression guard. Leaders of an accepted secondary group are mirrored to
+  // channel role "admin" for shared ANNOUNCEMENTS channels only
+  // (`channelIsSharedAnnouncements` in functions/sync/memberships.ts). Other
+  // shared channel types use manual membership, so a secondary group's leader
+  // has no standing here — they may not even be a channel member. Poll
+  // moderation must not hand them rights that `deleteMessage`, which reads the
+  // mirrored channel role, would refuse.
+  test("leader of an accepted secondary group cannot delete a poll in a shared custom channel", async () => {
+    const t = convexTest(schema, modules);
+    const data = await seedSharedChannelTestData(t);
+
+    await t.mutation(api.functions.messaging.sharedChannels.inviteGroupToChannel, {
+      token: data.primaryLeaderToken,
+      channelId: data.channelId,
+      groupId: data.secondaryGroupId,
+    });
+    await t.mutation(api.functions.messaging.sharedChannels.respondToChannelInvite, {
+      token: data.secondaryLeaderToken,
+      channelId: data.channelId,
+      groupId: data.secondaryGroupId,
+      response: "accepted",
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const { pollId } = await t.mutation(api.functions.messaging.polls.createPoll, {
+      token: data.primaryLeaderToken,
+      channelId: data.channelId,
+      question: "Primary group poll",
+      options: ["Yes", "No"],
+      allowMultiple: false,
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    await expect(
+      t.mutation(api.functions.messaging.polls.deletePoll, {
+        token: data.secondaryLeaderToken,
+        pollId,
+      })
+    ).rejects.toThrow(/Only the poll author or a leader can delete this poll/);
+
+    const poll = await t.run((ctx) => ctx.db.get(pollId));
+    expect(poll).not.toBeNull();
+
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+  });
+
+  test("owning group's leader can still delete a poll in a shared custom channel", async () => {
+    const t = convexTest(schema, modules);
+    const data = await seedSharedChannelTestData(t);
+
+    const { pollId } = await t.mutation(api.functions.messaging.polls.createPoll, {
+      token: data.primaryMemberToken,
+      channelId: data.channelId,
+      question: "Member's poll",
+      options: ["Yes", "No"],
+      allowMultiple: false,
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    await t.mutation(api.functions.messaging.polls.deletePoll, {
+      token: data.primaryLeaderToken,
+      pollId,
+    });
+
+    const poll = await t.run((ctx) => ctx.db.get(pollId));
+    expect(poll).toBeNull();
+
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+  });
+});

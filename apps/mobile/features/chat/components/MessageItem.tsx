@@ -21,6 +21,7 @@ import {
   Linking,
   ActivityIndicator,
   Animated,
+  Image,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
@@ -41,13 +42,60 @@ import { ThreadReplies } from './ThreadReplies';
 import { ReactionDetailsModal } from './ReactionDetailsModal';
 import { ReachOutRequestCardFromMessage } from './ReachOutRequestCardFromMessage';
 import { TaskCardFromMessage } from './TaskCardFromMessage';
-import { extractEventShortIds, extractToolShortIds, extractChannelInviteShortIds, stripEventLinksFromText, stripToolLinksFromText, stripChannelInviteLinksFromText, extractFirstExternalUrl } from '../utils/eventLinkUtils';
+import { BugCardFromMessage } from './BugCardFromMessage';
+import { PollCardFromMessage } from './PollCardFromMessage';
+import { AvailabilityRequestCardFromMessage } from './AvailabilityRequestCardFromMessage';
+import { AvailabilityLinkCard } from './AvailabilityLinkCard';
+import { extractEventShortIds, extractToolShortIds, extractChannelInviteShortIds, extractAvailabilityTokens, stripEventLinksFromText, stripToolLinksFromText, stripChannelInviteLinksFromText, stripAvailabilityLinksFromText, extractFirstExternalUrl } from '../utils/eventLinkUtils';
 import { useLinkPreview } from '../hooks/useLinkPreview';
 import { parseMessageContent } from '@features/shared/utils/linkify';
 import { getMediaUrl } from '@/utils/media';
 import { colors } from '@utils/styles';
 import { useTheme } from '@hooks/useTheme';
+import { useWhatsappShell } from '@hooks/useWhatsappShell';
+import { useCommunityTheme } from '@hooks/useCommunityTheme';
+import { waAccentPalette } from '@utils/waPalette';
+import {
+  WA_BUBBLE_RADIUS,
+  WA_BUBBLE_TAIL_CORNER_RADIUS,
+  WA_BUBBLE_MAX_WIDTH_PCT,
+  WA_BUBBLE_PADDING_V,
+  WA_BUBBLE_PADDING_H,
+  WA_BUBBLE_RUN_GAP,
+  WA_BUBBLE_GROUPED_GAP,
+} from '@components/wa/metrics';
+import {
+  WA_BUBBLE_SHADOW,
+  WA_BUBBLE_BODY_SIZE,
+  WA_BUBBLE_BODY_LINE_HEIGHT,
+  WA_BUBBLE_SENDER_SIZE,
+  WA_BUBBLE_TIMESTAMP_SIZE,
+  waSenderColor,
+} from '../waChatChrome';
+import { ReplyQuoteBlock, type ReplyQuote } from './ReplyQuoteBlock';
+import { ThreadSummaryPill, type ThreadSummary } from './ThreadSummaryPill';
 import type { ChannelPrefetchState } from '../context/ChatPrefetchContext';
+
+// §5 "Bubble timestamp + ticks placement": on outgoing bubbles the timestamp
+// renders on top of the tinted bubble fill, not a themed surface, so it uses
+// a fixed black/white-alpha overlay rather than a theme token.
+const WA_TIMESTAMP_ON_TINT_LIGHT = 'rgba(0,0,0,0.45)';
+const WA_TIMESTAMP_ON_TINT_DARK = 'rgba(255,255,255,0.6)';
+
+/**
+ * Incoming-message avatar diameter, flag-on. The one chat-surface measurement
+ * that came in SMALLER than the reference (ours 24 vs WA's 30) in the
+ * calibrated pixel pass, 2026-07-29 — 28 closes most of the gap without
+ * pushing the bubble column inward.
+ */
+const WA_INCOMING_AVATAR = 28;
+
+/**
+ * The Togather brand mark, shown as the avatar for automated bot messages
+ * (contentType "bot" with no human sender) so the bot reads as first-party
+ * rather than an initials placeholder.
+ */
+const TOGATHER_BOT_AVATAR = require('@/assets/gatherful-logo.png');
 
 interface MessageItemProps {
   message: {
@@ -79,6 +127,9 @@ interface MessageItemProps {
     hideLinkPreview?: boolean;
     reachOutRequestId?: Id<"reachOutRequests">;
     taskId?: Id<"tasks">;
+    bugId?: Id<"devBugs">;
+    pollId?: Id<"polls">;
+    availabilityRequestId?: Id<"availabilityRequests">;
     /** Present only on messages that mirror an event text blast (SMS + push). */
     blastId?: Id<"eventBlasts">;
   };
@@ -125,6 +176,39 @@ interface MessageItemProps {
    * are rendered) or for bot/system messages (senderId will be missing).
    */
   onAvatarPress?: (userId: Id<"users">) => void;
+  /**
+   * When true, the row briefly flashes a highlight background. Used when the
+   * user jumps to this message from inbox search so it stands out on arrival.
+   */
+  isHighlighted?: boolean;
+  /**
+   * WHATSAPP-DESIGN-SYSTEM.md §5 consecutive-message grouping — whether this
+   * message starts/ends a same-sender run (computed by MessageList: sender
+   * change, or a date separator/ghost boundary on that side). Read ONLY when
+   * `whatsappShellEnabled`; flag-off rendering never looks at these props.
+   * Undefined (no grouping info supplied) is treated as a standalone run —
+   * both first and last — which reproduces the pre-grouping flag-on look
+   * (sender name always shown, tail corner always squared).
+   */
+  isFirstInGroup?: boolean;
+  /** Mirrors `isFirstInGroup`, but for whether a same-sender message follows. */
+  isLastInGroup?: boolean;
+  /**
+   * WHATSAPP-DESIGN-SYSTEM.md §5 reply-quote bar. Present (flag-on only) when
+   * this message is a reply that the timeline admitted — i.e. it is its
+   * parent's ONLY live reply. Renders the quoted parent INSIDE this bubble,
+   * above its own text. Supplied by `getMessages`' `replyQuote` decoration.
+   */
+  replyQuote?: ReplyQuote;
+  /** Tap the quote → scroll the list to the quoted message and flash it. */
+  onQuotePress?: (parentMessageId: Id<"chatMessages">) => void;
+  /**
+   * The collapsed-thread pill's data (flag-on only). Present when this message
+   * has TWO OR MORE live replies, which is exactly when its replies stop
+   * rendering inline and become a thread. `getMessages` decides that — a bare
+   * `threadReplyCount` is not enough, since it counts deleted replies too.
+   */
+  threadSummary?: ThreadSummary;
 }
 
 /**
@@ -184,9 +268,42 @@ function MessageItemInner({
   optimisticStatus,
   onRetry,
   onAvatarPress,
+  isHighlighted,
+  isFirstInGroup,
+  isLastInGroup,
+  replyQuote,
+  onQuotePress,
+  threadSummary,
 }: MessageItemProps) {
   const router = useRouter();
-  const { colors: themeColors } = useTheme();
+  const { colors: themeColors, isDark } = useTheme();
+  // WhatsApp-shell bubble anatomy (WHATSAPP-DESIGN-SYSTEM.md §5) — flag-gated;
+  // flag-off rendering below is untouched.
+  const whatsappShellEnabled = useWhatsappShell();
+  const { primaryColor } = useCommunityTheme();
+  const waPalette = useMemo(
+    () => waAccentPalette(primaryColor, isDark),
+    [primaryColor, isDark]
+  );
+
+  // Flash a highlight background when this message is the jump target from
+  // inbox search. Animates in quickly, holds, then fades out.
+  const highlightAnim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (!isHighlighted) return;
+    highlightAnim.setValue(0);
+    const animation = Animated.sequence([
+      Animated.timing(highlightAnim, { toValue: 1, duration: 300, useNativeDriver: false }),
+      Animated.delay(1400),
+      Animated.timing(highlightAnim, { toValue: 0, duration: 700, useNativeDriver: false }),
+    ]);
+    animation.start();
+    return () => animation.stop();
+  }, [isHighlighted, highlightAnim]);
+  const highlightBackground = highlightAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['transparent', 'rgba(255, 204, 0, 0.28)'],
+  });
 
   // Slide-up from keyboard + bounce animation for new messages
   const isNewMessage = isOptimistic && optimisticStatus === 'sending';
@@ -221,6 +338,16 @@ function MessageItemInner({
   }, []); // Only on mount
 
   const isOwnMessage = message.senderId === currentUserId;
+
+  // Card-style content renders outside the chat bubble (see the bubble gate
+  // below) — which also means it can't carry the flag-on in-bubble sender
+  // name, so these keep the above-content name line under the shell.
+  const isSpecialCardMessage =
+    message.contentType === 'reach_out_request' ||
+    message.contentType === 'task_card' ||
+    message.contentType === 'bug_card' ||
+    message.contentType === 'poll' ||
+    message.contentType === 'availability_request';
 
   // Get read receipts (only for own messages, skip for optimistic)
   const { readByCount, totalMembers, isLoading: readReceiptsLoading } = useReadReceipts(
@@ -289,7 +416,13 @@ function MessageItemInner({
     return extractChannelInviteShortIds(message.content);
   }, [message.content, message.isDeleted]);
 
-  // Get display text (with event, tool, and channel invite links stripped if we're showing cards)
+  // Detect availability links (/a/<token>) in message content
+  const availabilityTokens = useMemo(() => {
+    if (message.isDeleted) return [];
+    return extractAvailabilityTokens(message.content);
+  }, [message.content, message.isDeleted]);
+
+  // Get display text (with event, tool, channel invite, and availability links stripped if we're showing cards)
   const displayText = useMemo(() => {
     let text = message.content;
     if (eventShortIds.length > 0) {
@@ -301,17 +434,20 @@ function MessageItemInner({
     if (channelInviteShortIds.length > 0) {
       text = stripChannelInviteLinksFromText(text);
     }
+    if (availabilityTokens.length > 0) {
+      text = stripAvailabilityLinksFromText(text);
+    }
     return text;
-  }, [message.content, eventShortIds, toolShortIds, channelInviteShortIds]);
+  }, [message.content, eventShortIds, toolShortIds, channelInviteShortIds, availabilityTokens]);
 
   // Whether this message has visible text content (used to avoid empty padding wrapper)
   const hasTextContent = message.isDeleted || displayText.trim().length > 0;
 
-  // Detect external URLs for link preview (only if no event/tool/channel invite cards)
+  // Detect external URLs for link preview (only if no event/tool/channel invite/availability cards)
   const externalUrl = useMemo(() => {
-    if (message.isDeleted || eventShortIds.length > 0 || toolShortIds.length > 0 || channelInviteShortIds.length > 0) return null;
+    if (message.isDeleted || eventShortIds.length > 0 || toolShortIds.length > 0 || channelInviteShortIds.length > 0 || availabilityTokens.length > 0) return null;
     return extractFirstExternalUrl(message.content);
-  }, [message.content, message.isDeleted, eventShortIds, toolShortIds, channelInviteShortIds]);
+  }, [message.content, message.isDeleted, eventShortIds, toolShortIds, channelInviteShortIds, availabilityTokens]);
 
   // Check for prefetched link preview first
   const prefetchedLinkPreview = useMemo(() => {
@@ -479,8 +615,16 @@ function MessageItemInner({
   const renderMessageContent = () => {
     if (message.isDeleted) {
       return (
-        <Text style={[styles.messageText, styles.deletedText, { color: themeColors.textTertiary }]}>
+        <Text
+          style={[
+            styles.messageText,
+            whatsappShellEnabled && styles.waMessageText,
+            styles.deletedText,
+            { color: themeColors.textTertiary },
+          ]}
+        >
           This message was deleted
+          {inlineTimestampReservation}
         </Text>
       );
     }
@@ -494,7 +638,15 @@ function MessageItemInner({
     }
 
     return (
-      <Text style={[styles.messageText, { color: themeColors.text }, isOwnMessage && { color: themeColors.chatBubbleOwnText }]}>
+      <Text
+        style={[
+          styles.messageText,
+          // §S4.2 "16px body" — flag-off keeps the 14pt baseline.
+          whatsappShellEnabled && styles.waMessageText,
+          { color: themeColors.text },
+          isOwnMessage && { color: themeColors.chatBubbleOwnText },
+        ]}
+      >
         {parts.map((part, index) => {
           if (part.type === 'mention') {
             return (
@@ -520,6 +672,9 @@ function MessageItemInner({
           }
           return <Text key={index}>{part.value}</Text>;
         })}
+        {/* LAST inline child, after every mention/URL/plain run — see
+            `timestampReservation`. */}
+        {inlineTimestampReservation}
       </Text>
     );
   };
@@ -531,7 +686,12 @@ function MessageItemInner({
     }
 
     return (
-      <View style={styles.eventCardsContainer}>
+      <View
+        style={[
+          styles.eventCardsContainer,
+          whatsappShellEnabled && styles.waEventCardsStack,
+        ]}
+      >
         {eventShortIds.map((shortId) => {
           // Get prefetched event data if available
           const prefetchedEvent = prefetchState?.eventData?.get(shortId);
@@ -542,6 +702,20 @@ function MessageItemInner({
               isMyMessage={isOwnMessage}
               embedded
               prefetchedData={prefetchedEvent}
+              // §7: flag-on the card dresses as *this* message's bubble —
+              // same fill as the text bubble beside it — so it reads as a
+              // rich link preview rather than a separate attachment panel.
+              // Passed only when the flag is on; absent === legacy card.
+              wa={
+                whatsappShellEnabled
+                  ? {
+                      accent: waPalette.accent,
+                      bubbleFill: isOwnMessage
+                        ? waPalette.bubbleOutgoing
+                        : themeColors.bubbleIncoming,
+                    }
+                  : undefined
+              }
             />
           );
         })}
@@ -583,6 +757,19 @@ function MessageItemInner({
             shortId={shortId}
             groupId={groupId}
           />
+        ))}
+      </View>
+    );
+  };
+
+  // Render availability cards for detected togather.nyc/a/ links
+  const renderAvailabilityLinkCards = () => {
+    if (availabilityTokens.length === 0) return null;
+
+    return (
+      <View style={styles.eventCardsContainer}>
+        {availabilityTokens.map((token) => (
+          <AvailabilityLinkCard key={`a-${token}`} token={token} />
         ))}
       </View>
     );
@@ -668,6 +855,145 @@ function MessageItemInner({
     };
   }, [message.attachments]);
 
+  // §5 reply-quote bar: only ever rendered flag-on, and only when the timeline
+  // admitted this reply as its parent's sole live reply.
+  const showReplyQuote = whatsappShellEnabled && !!replyQuote;
+
+  // An image-only message (images, no text or other attachments) renders edge-to-edge
+  // like iMessage: no bubble background, padding, footer, or tail around the image, so
+  // the blue/gray bubble color never shows as a border. Reply/reactions are unaffected —
+  // their handlers live on the outer Pressable and the reactions row outside the bubble.
+  // Blast messages keep their bubble so the "Also sent via SMS" badge stays readable.
+  //
+  // A photo REPLY keeps its bubble: the quote bar needs the bubble fill behind
+  // it, and WhatsApp draws exactly that — a small framed photo under a quote,
+  // not an edge-to-edge one.
+  const isImageOnlyMessage =
+    validImageAttachments.length > 0 &&
+    !hasTextContent &&
+    !showReplyQuote &&
+    !message.blastId &&
+    documentAttachments.length === 0 &&
+    audioAttachments.length === 0 &&
+    videoAttachments.length === 0;
+
+  // Bubbles wrapping media rely on the base `overflow: 'hidden'` to round the
+  // photo/video corners, which on iOS also suppresses the bubble shadow — see
+  // `styles.waMessageBubbleShadow`.
+  const bubbleClipsMedia = validImageAttachments.length > 0 || videoAttachments.length > 0;
+
+  // §S4.2: flag-on, an incoming message's sender name renders *inside* the
+  // bubble's top padding rather than on a line above it — but never on an
+  // edge-to-edge image-only bubble, whose fill is transparent (the label
+  // would float on the wallpaper with nothing behind it).
+  const showInBubbleSenderName =
+    whatsappShellEnabled &&
+    !isOwnMessage &&
+    (isFirstInGroup ?? true) &&
+    !isImageOnlyMessage;
+
+  /**
+   * §7: flag-on, a message whose *entire* content is a single event link has
+   * nothing left to put in a bubble — `displayText` is empty once the link is
+   * stripped — yet the bubble still rendered, so the thread showed a stub
+   * metadata-only bubble (sender name, timestamp, tail, no body) stacked
+   * above the card's own bubble. The card IS the bubble here, exactly like
+   * the poll/task/bug cards `isSpecialCardMessage` already suppresses it for.
+   *
+   * Deliberately a *separate* value rather than another clause on
+   * `isSpecialCardMessage`: that one also gates flag-off rendering, which
+   * must stay byte-identical. `whatsappShellEnabled` leads the conjunction so
+   * this is always false flag-off.
+   *
+   * Narrow on purpose — anything else in the message still needs a real
+   * bubble to live in: text beside the link, a reply quote, attachments, the
+   * SMS-blast badge, another card type, or a second event card (two card
+   * bubbles with one name line above them would be ambiguous about which
+   * bubble the name belongs to).
+   */
+  const isEventCardOnlyMessage =
+    whatsappShellEnabled &&
+    !isSpecialCardMessage &&
+    !hasTextContent &&
+    eventShortIds.length === 1 &&
+    toolShortIds.length === 0 &&
+    channelInviteShortIds.length === 0 &&
+    availabilityTokens.length === 0 &&
+    !showReplyQuote &&
+    !message.blastId &&
+    validImageAttachments.length === 0 &&
+    documentAttachments.length === 0 &&
+    audioAttachments.length === 0 &&
+    videoAttachments.length === 0;
+
+  /**
+   * Card content skips the bubble, and with it the §S4.2 in-bubble sender
+   * name, so the name goes back on a line above the card. The event card
+   * follows §5 grouping the way real bubbles do (name only on the first of a
+   * run); the older special cards keep their pre-existing always-on line.
+   */
+  const showAboveContentSenderName =
+    !isOwnMessage &&
+    (!whatsappShellEnabled ||
+      isSpecialCardMessage ||
+      (isEventCardOnlyMessage && (isFirstInGroup ?? true)));
+
+  // --- §5 "Bubble timestamp + ticks placement": WhatsApp's inline timestamp --
+  //
+  // WhatsApp does not give the timestamp a row of its own. It reserves an
+  // INVISIBLE slug at the very end of the message's text flow and paints the
+  // real timestamp absolutely in the bubble's bottom-right corner. A short
+  // message therefore gets the time beside its last line instead of under it
+  // (~15pt of bubble height back, per message); wrapped text just flows around
+  // the reservation, and if the last line is already full the slug wraps to a
+  // line of its own — which is what WhatsApp does too.
+  //
+  // Only correct when the text run is the bubble's LAST content: with media, a
+  // document/audio player, or the SMS-blast badge below it, an absolutely
+  // positioned bottom-right timestamp would land on top of that content. Those
+  // bubbles keep the flag-on footer row.
+  const useInlineTimestamp =
+    whatsappShellEnabled &&
+    hasTextContent &&
+    !isImageOnlyMessage &&
+    !bubbleClipsMedia &&
+    documentAttachments.length === 0 &&
+    audioAttachments.length === 0 &&
+    !message.blastId;
+
+  // Paragraph direction decides which corner the inline stamp anchors to:
+  // under RTL bidi layout the end-of-flow reservation lands at the visual
+  // LEFT, so the visible stamp must follow it there (WhatsApp does the same —
+  // Arabic/Hebrew bubbles carry their timestamp bottom-left). Direction comes
+  // from the first strong-directional character, like the text engine's own
+  // first-strong heuristic.
+  const firstStrongDirectionalChar = (message.content ?? '').match(
+    // First strong-directional character: LTR letters (Latin/Greek/Cyrillic)
+    // or the RTL blocks (Hebrew/Arabic/Syriac + presentation forms).
+    /[A-Za-z\u00C0-\u024F\u0370-\u04FF]|[\u0590-\u08FF\uFB1D-\uFDFD\uFE70-\uFEFF]/u
+  )?.[0];
+  const isRtlMessage =
+    useInlineTimestamp &&
+    firstStrongDirectionalChar !== undefined &&
+    /[\u0590-\u08FF\uFB1D-\uFDFD\uFE70-\uFEFF]/u.test(firstStrongDirectionalChar);
+
+  /**
+   * The reservation's text. Every space is a NBSP so the slug wraps as one unit
+   * but never breaks mid-way (a broken slug would leave the absolute timestamp
+   * sitting on top of body copy). "(edited)" joins it, and the whole thing
+   * renders at the timestamp's own 11pt, so the reservation is always at least
+   * as wide as the visible cluster it stands in for.
+   */
+  const timestampReservation = `\u00A0\u00A0${formatMessageTime(message.createdAt)}${
+    message.editedAt && !message.isDeleted ? '\u00A0(edited)' : ''
+  }`.replace(/ /g, '\u00A0');
+
+  const inlineTimestampReservation = useInlineTimestamp ? (
+    <Text testID="wa-timestamp-reservation" style={styles.waInlineTimestampReservation}>
+      {timestampReservation}
+    </Text>
+  ) : null;
+
   // Handle image tap - open gallery viewer
   const handleImagePress = useCallback((index: number) => {
     setImageViewerInitialIndex(index);
@@ -681,7 +1007,7 @@ function MessageItemInner({
     }
 
     return (
-      <View style={styles.attachmentsContainer}>
+      <View style={isImageOnlyMessage ? styles.imageOnlyAttachments : styles.attachmentsContainer}>
         <ImageAttachmentsGrid
           images={validImageAttachments}
           onImagePress={handleImagePress}
@@ -768,13 +1094,28 @@ function MessageItemInner({
 
     return (
       <Pressable onPress={handleReactionsAreaTap}>
-        <View style={styles.reactionsContainer}>
+        <View
+          style={[
+            styles.reactionsContainer,
+            // §5 "Reaction chips: anchored to the bottom-outer corner of a
+            // bubble, overlapping it by ~40%" — pulled up over the bubble's
+            // bottom edge with a negative margin rather than repositioning
+            // this into the bubble's own (unmoved) render tree, and aligned
+            // to the same side the bubble/tail renders on.
+            whatsappShellEnabled && styles.waReactionsContainer,
+            whatsappShellEnabled && { justifyContent: isOwnMessage ? 'flex-end' : 'flex-start' },
+          ]}
+        >
           {reactions.map((reaction: Reaction) => (
             <Pressable
               key={reaction.emoji}
               style={[
                 styles.reactionBadge,
                 { backgroundColor: themeColors.surfaceSecondary, borderColor: themeColors.border },
+                whatsappShellEnabled && {
+                  backgroundColor: themeColors.surface,
+                  borderColor: themeColors.separator,
+                },
                 reaction.hasReacted && { backgroundColor: '#E3F2FD', borderColor: '#1976D2' },
               ]}
               onPress={() => handleReactionTap(reaction.emoji)}
@@ -826,8 +1167,21 @@ function MessageItemInner({
     );
   };
 
-  // Render thread replies indicator
+  // Render the thread affordance under the bubble.
+  //
+  // Flag-on this is the ONE "more in the conversation" pill, and it appears
+  // only for a genuinely collapsed thread — `threadSummary` is present exactly
+  // when the message has two or more live replies. A single reply gets no pill
+  // at all: it's already a bubble in the timeline, quoting this message.
+  //
+  // Flag-off keeps the old Slack-style indicator, driven straight off
+  // `threadReplyCount` and its own per-pill query.
   const renderThreadReplies = () => {
+    if (whatsappShellEnabled) {
+      if (!threadSummary) return null;
+      return <ThreadSummaryPill summary={threadSummary} onPress={handleThreadPress} />;
+    }
+
     const replyCount = message.threadReplyCount;
     if (!replyCount || replyCount === 0) {
       return null;
@@ -850,6 +1204,39 @@ function MessageItemInner({
     return (
       <View style={styles.eventCardsContainer}>
         <TaskCardFromMessage taskId={message.taskId} />
+      </View>
+    );
+  };
+
+  const renderBugCard = () => {
+    if (message.contentType !== "bug_card" || !message.bugId) {
+      return null;
+    }
+    return (
+      <View style={styles.eventCardsContainer}>
+        <BugCardFromMessage bugId={message.bugId} />
+      </View>
+    );
+  };
+
+  const renderPollCard = () => {
+    if (message.contentType !== "poll" || !message.pollId) {
+      return null;
+    }
+    return (
+      <View style={styles.eventCardsContainer}>
+        <PollCardFromMessage pollId={message.pollId} />
+      </View>
+    );
+  };
+
+  const renderAvailabilityRequestCard = () => {
+    if (message.contentType !== "availability_request" || !message.availabilityRequestId) {
+      return null;
+    }
+    return (
+      <View style={styles.eventCardsContainer}>
+        <AvailabilityRequestCardFromMessage requestId={message.availabilityRequestId} />
       </View>
     );
   };
@@ -898,11 +1285,25 @@ function MessageItemInner({
     // ✓✓ + count = read (colored)
 
     if (readByCount > 0) {
-      // Read by some people
+      // Read by some people. §5/§1.3: read ticks are WhatsApp-blue, never
+      // the brand accent — themeColors.mentionBlue on flag-on; flag-off
+      // keeps its existing (bubble-color) tick.
       return (
         <View style={styles.readReceiptsContainer}>
-          <Text style={[styles.readCheck, { color: themeColors.chatBubbleOwn }]}>✓✓</Text>
-          <Text style={[styles.readCount, { color: themeColors.chatBubbleOwn }]}>
+          <Text
+            style={[
+              styles.readCheck,
+              { color: whatsappShellEnabled ? themeColors.mentionBlue : themeColors.chatBubbleOwn },
+            ]}
+          >
+            ✓✓
+          </Text>
+          <Text
+            style={[
+              styles.readCount,
+              { color: whatsappShellEnabled ? themeColors.mentionBlue : themeColors.chatBubbleOwn },
+            ]}
+          >
             {readByCount}
           </Text>
         </View>
@@ -927,11 +1328,26 @@ function MessageItemInner({
   return (
     <Animated.View style={{ transform: [{ translateY: slideAnim }, { scale: scaleAnim }] }}>
     <Pressable ref={containerRef} onPress={handlePress} onLongPress={handleLongPress} delayLongPress={300}>
-      <View
+      <Animated.View
         style={[
           styles.container,
           isOwnMessage ? styles.ownMessageContainer : styles.otherMessageContainer,
+          whatsappShellEnabled && styles.waContainer,
+          // §5 consecutive-message grouping: tighten the vertical gap within a
+          // run (~2pt) vs. between different senders/runs (~9pt). Overrides
+          // the flag-off `marginVertical: 2` baseline in `styles.container`
+          // above — undefined props default to a standalone run (first in
+          // group), landing on the wider run-boundary gap. RN does not
+          // collapse vertical margins, so the whole gap lives on marginTop
+          // (owned by the lower bubble) and marginBottom is zeroed —
+          // otherwise adjacent rows' margins would sum to 4pt/18pt.
+          whatsappShellEnabled && {
+            marginTop: (isFirstInGroup ?? true) ? WA_BUBBLE_RUN_GAP : WA_BUBBLE_GROUPED_GAP,
+            marginBottom: 0,
+          },
           isOptimistic && (optimisticStatus === 'error' || optimisticStatus === 'queued') && { opacity: 0.7 },
+          isHighlighted && styles.highlightedContainer,
+          { backgroundColor: highlightBackground },
         ]}
       >
         {/* Avatar (only for others' messages).
@@ -941,7 +1357,10 @@ function MessageItemInner({
             Pressable still renders but its press is a no-op. */}
         {!isOwnMessage && (
           <Pressable
-            style={styles.avatarContainer}
+            style={[
+              styles.avatarContainer,
+              whatsappShellEnabled && styles.waAvatarContainer,
+            ]}
             onPress={handleAvatarPress}
             disabled={!onAvatarPress}
             accessibilityRole={onAvatarPress ? 'button' : undefined}
@@ -949,19 +1368,27 @@ function MessageItemInner({
               onAvatarPress ? `View ${message.senderName || 'user'}'s profile` : undefined
             }
           >
-            <AppImage
-              source={message.senderProfilePhoto}
-              style={styles.avatar}
-              optimizedWidth={50}
-              placeholder={{
-                type: 'initials',
-                name: message.senderName || 'User',
-                backgroundColor: '#E5E5E5',
-              }}
-            />
+            {!message.senderId && message.contentType === 'bot' && !message.senderProfilePhoto ? (
+              <Image
+                source={TOGATHER_BOT_AVATAR}
+                style={[styles.avatar, whatsappShellEnabled && styles.waAvatar]}
+                resizeMode="cover"
+              />
+            ) : (
+              <AppImage
+                source={message.senderProfilePhoto}
+                style={[styles.avatar, whatsappShellEnabled && styles.waAvatar]}
+                optimizedWidth={50}
+                placeholder={{
+                  type: 'initials',
+                  name: message.senderName || 'User',
+                  backgroundColor: '#E5E5E5',
+                }}
+              />
+            )}
             {message.senderNotificationsDisabled ? (
               <NotificationsDisabledBadge
-                avatarSize={24}
+                avatarSize={whatsappShellEnabled ? WA_INCOMING_AVATAR : 24}
                 ringColor={themeColors.background}
               />
             ) : null}
@@ -971,25 +1398,103 @@ function MessageItemInner({
         <View style={[
           styles.messageContent,
           isOwnMessage && styles.ownMessageContent,
+          // §S4.2 bubble geometry: max width from WA_BUBBLE_MAX_WIDTH_PCT.
+          // Also governs the content-type cards below (poll/event/task/etc.)
+          // since they share this same column.
+          whatsappShellEnabled && styles.waMessageContent,
         ]}>
-          {/* Sender name (only for others' messages) */}
-          {!isOwnMessage && (
-            <Text style={[styles.senderName, { color: themeColors.textSecondary }]}>{message.senderName || 'Unknown'}</Text>
+          {/* Sender name above the content: flag-off always; flag-on only for
+              card-style messages, whose content skips the bubble (and with it
+              the in-bubble name from §S4.2). */}
+          {showAboveContentSenderName && (
+            <Text style={[styles.senderName, { color: themeColors.textSecondary }]}>
+              {message.senderName || 'Unknown'}
+            </Text>
           )}
 
-          {/* Message bubble (hidden for special card messages) */}
-          {message.contentType !== "reach_out_request" && message.contentType !== "task_card" && (
+          {/* Message bubble (hidden for special card messages, and flag-on for
+              an event-link-only message whose card is already the bubble) */}
+          {!isSpecialCardMessage && !isEventCardOnlyMessage && (
             <View ref={bubbleRef} style={styles.bubbleWrapper}>
               <View
                 style={[
                   styles.messageBubble,
-                  isOwnMessage
-                    ? [styles.ownMessageBubble, { backgroundColor: themeColors.chatBubbleOwn }]
-                    : [styles.otherMessageBubble, { backgroundColor: themeColors.chatBubbleOther }],
+                  isOwnMessage ? styles.ownMessageBubble : styles.otherMessageBubble,
+                  // §5 bubble geometry: 18pt radius, 4pt "tail corner" nearest
+                  // the sender's origin, squared only on the first bubble of a
+                  // run — continuation bubbles get the full 18pt there (no
+                  // tail). Undefined `isFirstInGroup` defaults to true
+                  // (standalone run), reproducing the previous uniform
+                  // tail-corner rendering before MessageList wired grouping.
+                  whatsappShellEnabled && styles.waMessageBubble,
+                  whatsappShellEnabled && !bubbleClipsMedia && styles.waMessageBubbleShadow,
+                  whatsappShellEnabled &&
+                    (isOwnMessage
+                      ? ((isFirstInGroup ?? true) ? styles.waOwnMessageBubble : styles.waOwnMessageBubbleContinuation)
+                      : ((isFirstInGroup ?? true) ? styles.waOtherMessageBubble : styles.waOtherMessageBubbleContinuation)),
+                  isImageOnlyMessage
+                    ? styles.imageOnlyBubble
+                    : {
+                        backgroundColor: isOwnMessage
+                          ? (whatsappShellEnabled ? waPalette.bubbleOutgoing : themeColors.chatBubbleOwn)
+                          : (whatsappShellEnabled ? themeColors.bubbleIncoming : themeColors.chatBubbleOther),
+                      },
                 ]}
               >
+                {/* §S4.2 "sender name 15 semibold per-sender color INSIDE
+                    bubble". §5 grouping: only on the first bubble of a run
+                    (undefined defaults to a standalone run). The per-sender
+                    color is a deterministic hash of `senderId` (never the
+                    brand accent); bots/system messages carry no senderId and
+                    fall back to the neutral secondary. */}
+                {showInBubbleSenderName && (
+                  <Text
+                    style={[
+                      styles.waSenderNameInBubble,
+                      {
+                        color: message.senderId
+                          ? waSenderColor(message.senderId, isDark)
+                          : themeColors.textSecondary,
+                      },
+                    ]}
+                  >
+                    {message.senderName || 'Unknown'}
+                  </Text>
+                )}
+                {/* §5 reply-quote bar — above the reply's own content, below
+                    the sender name (WhatsApp's order: who is speaking, then
+                    what they're answering, then what they said). It sits in
+                    normal flow, so the inline-timestamp reservation at the end
+                    of the body text is unaffected. */}
+                {showReplyQuote && (
+                  <View
+                    style={[
+                      styles.waReplyQuoteWrapper,
+                      showInBubbleSenderName && styles.waReplyQuoteUnderName,
+                    ]}
+                  >
+                    <ReplyQuoteBlock
+                      quote={replyQuote!}
+                      isOwnBubble={isOwnMessage}
+                      onPress={onQuotePress}
+                    />
+                  </View>
+                )}
                 {hasTextContent && (
-                  <View style={styles.bubbleTextContent}>
+                  <View
+                    style={[
+                      styles.bubbleTextContent,
+                      whatsappShellEnabled && styles.waBubbleTextContent,
+                      // Whatever sits above the body inside the bubble (sender
+                      // name, reply quote, or both) has already spent the
+                      // bubble's top padding.
+                      (showInBubbleSenderName || showReplyQuote) &&
+                        styles.waBubbleTextContentUnderName,
+                      // With the footer lifted out of layout, the text block
+                      // owns the bubble's bottom padding.
+                      useInlineTimestamp && styles.waBubbleTextContentInline,
+                    ]}
+                  >
                     {renderMessageContent()}
                   </View>
                 )}
@@ -1016,38 +1521,94 @@ function MessageItemInner({
                   </View>
                 )}
 
-                {/* Timestamp and edited badge */}
-                <View style={[styles.messageFooter, styles.bubbleFooter]}>
-                  <Text
+                {/* Timestamp and edited badge — hidden on edge-to-edge image-only bubbles
+                    (iMessage shows no inline timestamp on photos; date separators and the
+                    read-receipt row below the bubble still convey timing). */}
+                {!isImageOnlyMessage && (
+                  <View
+                    testID="wa-bubble-footer"
                     style={[
-                      styles.timestamp,
-                      { color: themeColors.textTertiary },
-                      isOwnMessage && { color: themeColors.textSecondary },
+                      styles.messageFooter,
+                      styles.bubbleFooter,
+                      whatsappShellEnabled && styles.waBubbleFooter,
+                      // The visible cluster the reservation stands in for: same
+                      // nodes, same colors, just lifted out of flow into the
+                      // bubble's bottom trailing corner — bottom-right for LTR
+                      // text, bottom-LEFT for RTL, where bidi layout puts the
+                      // end-of-flow reservation (WhatsApp does the same).
+                      useInlineTimestamp && styles.waInlineTimestampAnchor,
+                      useInlineTimestamp &&
+                        isRtlMessage && {
+                          right: undefined,
+                          left: WA_BUBBLE_PADDING_H,
+                        },
                     ]}
+                    // The reservation is part of the body Text, so the time is
+                    // already in that element's accessibility label — voicing
+                    // this copy too would just stutter it.
+                    accessibilityElementsHidden={useInlineTimestamp}
+                    importantForAccessibility={
+                      useInlineTimestamp ? 'no-hide-descendants' : undefined
+                    }
                   >
-                    {formatMessageTime(message.createdAt)}
-                  </Text>
-                  {message.editedAt && !message.isDeleted && (
                     <Text
                       style={[
-                        styles.editedBadge,
+                        styles.timestamp,
+                        // §S4.2 "timestamp 11px gray inside bottom-right".
+                        whatsappShellEnabled && styles.waTimestamp,
                         { color: themeColors.textTertiary },
                         isOwnMessage && { color: themeColors.textSecondary },
+                        // §5 "on outgoing, rgba-on-tint" — overrides the
+                        // textSecondary fallback above, which assumes an
+                        // opaque themed surface rather than the tinted bubble.
+                        whatsappShellEnabled &&
+                          isOwnMessage && {
+                            color: isDark ? WA_TIMESTAMP_ON_TINT_DARK : WA_TIMESTAMP_ON_TINT_LIGHT,
+                          },
                       ]}
                     >
-                      (edited)
+                      {formatMessageTime(message.createdAt)}
                     </Text>
-                  )}
-                </View>
+                    {message.editedAt && !message.isDeleted && (
+                      <Text
+                        style={[
+                          styles.editedBadge,
+                          { color: themeColors.textTertiary },
+                          isOwnMessage && { color: themeColors.textSecondary },
+                          whatsappShellEnabled &&
+                            isOwnMessage && {
+                              color: isDark ? WA_TIMESTAMP_ON_TINT_DARK : WA_TIMESTAMP_ON_TINT_LIGHT,
+                            },
+                        ]}
+                      >
+                        (edited)
+                      </Text>
+                    )}
+                  </View>
+                )}
               </View>
-              {/* Bubble tail */}
-              <View
-                style={
-                  isOwnMessage
-                    ? [styles.ownMessageTail, { borderLeftColor: themeColors.chatBubbleOwn }]
-                    : [styles.otherMessageTail, { borderRightColor: themeColors.chatBubbleOther }]
-                }
-              />
+              {/* Legacy bubble tail — a CSS-triangle View parked 5pt OUTSIDE the
+                  bubble's edge. Omitted for edge-to-edge image-only bubbles so no
+                  blue/gray tail floats beside the photo.
+
+                  Flag-on it is omitted entirely: §5's bubble anatomy makes the
+                  tail the SQUARED corner radius
+                  (`WA_BUBBLE_TAIL_CORNER_RADIUS`), never a drawn triangle. The
+                  two treatments were rendering on top of each other — and
+                  because the flag-on bubble is rounder (12pt, or the full 12 on
+                  a continuation bubble that squares no corner at all) and casts
+                  its own shadow, the triangle read as a detached "broken arrow"
+                  fragment floating beside the bubble on both sides. */}
+              {!isImageOnlyMessage && !whatsappShellEnabled && (
+                <View
+                  testID="legacy-bubble-tail"
+                  style={
+                    isOwnMessage
+                      ? [styles.ownMessageTail, { borderLeftColor: themeColors.chatBubbleOwn }]
+                      : [styles.otherMessageTail, { borderRightColor: themeColors.chatBubbleOther }]
+                  }
+                />
+              )}
             </View>
           )}
 
@@ -1057,14 +1618,51 @@ function MessageItemInner({
           {/* Task card */}
           {renderTaskCard()}
 
+          {/* Dev-assistant bug card */}
+          {renderBugCard()}
+
+          {/* Poll card */}
+          {renderPollCard()}
+
+          {/* Availability request card */}
+          {renderAvailabilityRequestCard()}
+
           {/* Event cards for meeting links */}
           {renderEventCards()}
+
+          {/* The §5 out-of-flow inline stamp needs a text run to sit beside,
+              and the suppressed bubble took the footer row with it — so the
+              card-as-bubble case falls back to a timestamp row *under* the
+              card, the same fallback media bubbles use. It sits over the
+              wallpaper rather than a bubble tint, so it takes the theme's
+              tertiary ink both ways instead of the on-tint rgba. */}
+          {isEventCardOnlyMessage && (
+            <View testID="wa-card-footer" style={styles.messageFooter}>
+              <Text
+                style={[
+                  styles.timestamp,
+                  styles.waTimestamp,
+                  { color: themeColors.textTertiary },
+                ]}
+              >
+                {formatMessageTime(message.createdAt)}
+              </Text>
+              {message.editedAt && !message.isDeleted && (
+                <Text style={[styles.editedBadge, { color: themeColors.textTertiary }]}>
+                  (edited)
+                </Text>
+              )}
+            </View>
+          )}
 
           {/* Tool cards for run sheet/resource links */}
           {renderToolCards()}
 
           {/* Channel invite link cards */}
           {renderChannelInviteCards()}
+
+          {/* Availability cards for /a/ links */}
+          {renderAvailabilityLinkCards()}
 
           {/* Link preview for external URLs */}
           {renderLinkPreview()}
@@ -1082,7 +1680,7 @@ function MessageItemInner({
                 : renderOptimisticStatus())
             : renderReadReceipts()}
         </View>
-      </View>
+      </Animated.View>
 
       {/* Image Gallery Viewer */}
       <ImageViewer
@@ -1118,6 +1716,9 @@ const styles = StyleSheet.create({
   },
   otherMessageContainer: {
     justifyContent: 'flex-start',
+  },
+  highlightedContainer: {
+    borderRadius: 12,
   },
   avatarContainer: {
     width: 24,
@@ -1214,6 +1815,19 @@ const styles = StyleSheet.create({
   eventCardsContainer: {
     marginTop: 8,
   },
+  /**
+   * §7: flag-on every event card is dressed as its own bubble — bubble fill,
+   * §1.6 shadow, its own RSVP pill row — and `embedded` zeroes the card's
+   * legacy `marginVertical: 4`. Two event links therefore stacked with
+   * literally 0pt between them and read as one welded slab rather than two
+   * events. They are separate, independently actionable bubbles, so they take
+   * the same bubble-to-bubble gap two consecutive messages would.
+   *
+   * A single card is unaffected: `gap` only applies between siblings.
+   */
+  waEventCardsStack: {
+    gap: WA_BUBBLE_RUN_GAP,
+  },
   linkPreviewContainer: {
     marginTop: 8,
   },
@@ -1253,6 +1867,19 @@ const styles = StyleSheet.create({
   attachmentsContainer: {
     marginTop: 4,
     paddingHorizontal: 10,
+  },
+  // Edge-to-edge image-only bubble: image fills the bubble with no surrounding color.
+  // Restore the full corner radius — own/otherMessageBubble flatten the tail-side bottom
+  // corner to 3 to seat the tail, but image-only bubbles render no tail, so all four
+  // corners should match (otherwise the photo looks asymmetric under overflow: 'hidden').
+  imageOnlyBubble: {
+    backgroundColor: 'transparent',
+    borderBottomLeftRadius: 14,
+    borderBottomRightRadius: 14,
+  },
+  imageOnlyAttachments: {
+    marginTop: 0,
+    paddingHorizontal: 0,
   },
   bubbleTextContent: {
     paddingHorizontal: 10,
@@ -1318,5 +1945,142 @@ const styles = StyleSheet.create({
   },
   optimisticStatusText: {
     fontSize: 11,
+  },
+
+  // --- WhatsApp-shell bubble anatomy (flag-gated) ---------------------------
+  // Additive-only: applied via extra entries in a style array alongside the
+  // flag-off styles above, which are never edited. See WHATSAPP-DESIGN-
+  // SYSTEM.md §5.
+  /**
+   * §S4 gutter. This padding STACKS with `MessageList`'s `waListContent`, so
+   * the pair has to be read together: 4 + 4 = 8pt from each screen edge, vs
+   * the 24 the two 12s used to add up to (WA measures 7.5 — calibrated pixel
+   * pass, 2026-07-29).
+   */
+  waContainer: {
+    paddingHorizontal: 4,
+  },
+  waMessageContent: {
+    maxWidth: `${WA_BUBBLE_MAX_WIDTH_PCT * 100}%`,
+  },
+  /** See `WA_INCOMING_AVATAR`. */
+  waAvatarContainer: {
+    width: WA_INCOMING_AVATAR,
+    height: WA_INCOMING_AVATAR,
+  },
+  waAvatar: {
+    width: WA_INCOMING_AVATAR,
+    height: WA_INCOMING_AVATAR,
+    borderRadius: WA_INCOMING_AVATAR / 2,
+  },
+  // §S4.2 "sender name 15 semibold per-sender color INSIDE bubble" — flag-on
+  // the name moves from a line above the bubble into the bubble's own top
+  // padding, which is why it owns the padding rather than a margin.
+  waSenderNameInBubble: {
+    fontSize: WA_BUBBLE_SENDER_SIZE,
+    fontWeight: '600',
+    paddingHorizontal: WA_BUBBLE_PADDING_H,
+    paddingTop: WA_BUBBLE_PADDING_V,
+    marginBottom: 1,
+  },
+  /** Text block directly under an in-bubble sender name — the name already
+   *  paid the bubble's top padding. */
+  waBubbleTextContentUnderName: {
+    paddingTop: 0,
+  },
+  // §5 reply-quote bar: flush inside the bubble's own horizontal padding, and
+  // it owns the bubble's top padding when it's the bubble's first child.
+  waReplyQuoteWrapper: {
+    paddingHorizontal: WA_BUBBLE_PADDING_H,
+    paddingTop: WA_BUBBLE_PADDING_V,
+  },
+  waReplyQuoteUnderName: {
+    paddingTop: 0,
+  },
+  // §S4.2 "16px body".
+  waMessageText: {
+    fontSize: WA_BUBBLE_BODY_SIZE,
+    lineHeight: WA_BUBBLE_BODY_LINE_HEIGHT,
+  },
+  // §S4.2 "timestamp 11px gray inside bottom-right".
+  waTimestamp: {
+    fontSize: WA_BUBBLE_TIMESTAMP_SIZE,
+  },
+  waMessageBubble: {
+    borderRadius: WA_BUBBLE_RADIUS,
+  },
+  /**
+   * §S4.2 "subtle shadow (WA bubbles have a ~1px soft drop shadow)" — what
+   * separates a white incoming bubble from the cream wallpaper behind it.
+   *
+   * `overflow: 'visible'` is load-bearing: iOS sets `clipsToBounds` for
+   * `overflow: 'hidden'` (the base `messageBubble` style), and a clipped
+   * layer renders no shadow at all. Bubbles that actually need the clip —
+   * the ones wrapping a photo/video, where it rounds the media's corners —
+   * therefore opt out of the shadow instead; their media already gives them
+   * a hard edge against the wallpaper.
+   */
+  waMessageBubbleShadow: {
+    overflow: 'visible',
+    ...WA_BUBBLE_SHADOW,
+  },
+  waOwnMessageBubble: {
+    borderBottomRightRadius: WA_BUBBLE_TAIL_CORNER_RADIUS,
+  },
+  waOtherMessageBubble: {
+    borderBottomLeftRadius: WA_BUBBLE_TAIL_CORNER_RADIUS,
+  },
+  // §5 grouping: continuation bubbles (not first in their run) drop the tail
+  // and get the full radius on that corner instead of the squared one above.
+  waOwnMessageBubbleContinuation: {
+    borderBottomRightRadius: WA_BUBBLE_RADIUS,
+  },
+  waOtherMessageBubbleContinuation: {
+    borderBottomLeftRadius: WA_BUBBLE_RADIUS,
+  },
+  waBubbleTextContent: {
+    paddingHorizontal: WA_BUBBLE_PADDING_H,
+    paddingTop: WA_BUBBLE_PADDING_V,
+  },
+  waBubbleFooter: {
+    paddingHorizontal: WA_BUBBLE_PADDING_H,
+    paddingBottom: WA_BUBBLE_PADDING_V,
+    // §S4.2 "timestamp … inside bottom-RIGHT" — the flag-off footer is a
+    // left-packed row; WhatsApp right-aligns the timestamp cluster.
+    justifyContent: 'flex-end',
+  },
+  /** Bottom padding the (now out-of-flow) footer used to provide. */
+  waBubbleTextContentInline: {
+    paddingBottom: WA_BUBBLE_PADDING_V,
+  },
+  /**
+   * The invisible slug appended to the end of the text flow. `opacity: 0` is
+   * the spec'd treatment; `color: 'transparent'` is belt-and-braces because
+   * nested `<Text>` runs only honor a subset of styles on Android, and a
+   * visibly duplicated timestamp would be a loud bug.
+   */
+  waInlineTimestampReservation: {
+    opacity: 0,
+    color: 'transparent',
+    fontSize: WA_BUBBLE_TIMESTAMP_SIZE,
+  },
+  /**
+   * The real timestamp cluster, pinned to the bubble's bottom-right corner so
+   * it sits beside the last line of text rather than under it. The row's own
+   * flow paddings/margins are zeroed — they'd otherwise offset the anchor.
+   */
+  waInlineTimestampAnchor: {
+    position: 'absolute',
+    right: WA_BUBBLE_PADDING_H,
+    bottom: WA_BUBBLE_PADDING_V - 1,
+    paddingHorizontal: 0,
+    paddingBottom: 0,
+    marginTop: 0,
+  },
+  // §5 "Reaction chips ... overlapping it by ~40%" — negative top margin
+  // pulls the (unmoved-in-the-tree) reactions row up over the bubble's
+  // bottom edge instead of restructuring the render tree.
+  waReactionsContainer: {
+    marginTop: -14,
   },
 });

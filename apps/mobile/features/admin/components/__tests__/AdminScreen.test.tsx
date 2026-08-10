@@ -17,8 +17,8 @@ jest.mock("../PendingRequestsContent", () => ({
 jest.mock("../StatsContent", () => ({
   StatsContent: () => null,
 }));
-jest.mock("../PeopleContent", () => ({
-  PeopleContent: () => null,
+jest.mock("@features/people/components/PeopleTabScreen", () => ({
+  PeopleTabScreen: () => null,
 }));
 jest.mock("../SettingsContent", () => ({
   SettingsContent: () => null,
@@ -41,10 +41,11 @@ describe("AdminScreen", () => {
       user: { is_staff: true, is_superuser: false, is_admin: true },
     });
 
-    const { getByText } = render(<AdminScreen />);
+    const { getByText, queryByText } = render(<AdminScreen />);
 
     expect(getByText("Dashboard")).toBeTruthy();
     expect(getByText("Requests")).toBeTruthy();
+    expect(queryByText("Notify")).toBeNull();
   });
 
   test("shows only Dashboard tab for internal users who are not community admins", () => {
@@ -69,6 +70,7 @@ describe("AdminScreen", () => {
 
     expect(queryByText("Dashboard")).toBeNull();
     expect(getByText("Requests")).toBeTruthy();
+    expect(queryByText("Notify")).toBeNull();
   });
 
   test("shows internal dashboard without requiring a selected community", () => {

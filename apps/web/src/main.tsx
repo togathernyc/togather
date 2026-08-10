@@ -2,14 +2,10 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import './index.css'
-import App from './App.tsx'
-import { PrivacyPolicy } from './pages/PrivacyPolicy.tsx'
-import { TermsOfService } from './pages/TermsOfService.tsx'
-import { AndroidDownload } from './pages/AndroidDownload.tsx'
-import { Contribute } from './pages/Contribute.tsx'
-import { ReportIssue } from './pages/ReportIssue.tsx'
 import { CommunityRedirect } from './pages/CommunityRedirect.tsx'
 import { ScrollToTop } from './components/ScrollToTop.tsx'
+import { PageHead } from './components/PageHead.tsx'
+import { routes } from './routes.tsx'
 // Onboarding, billing, admin, and sign-in pages have been moved to the Expo web app.
 
 createRoot(document.getElementById('root')!).render(
@@ -17,14 +13,17 @@ createRoot(document.getElementById('root')!).render(
     <BrowserRouter>
       <ScrollToTop />
       <Routes>
-        <Route path="/" element={<App />} />
-        <Route path="/android" element={<AndroidDownload />} />
-        <Route path="/android-staging" element={<AndroidDownload variant="staging" />} />
-        <Route path="/contribute" element={<Contribute />} />
-        <Route path="/issue" element={<ReportIssue />} />
-        <Route path="/legal/privacy" element={<PrivacyPolicy />} />
-        <Route path="/legal/terms" element={<TermsOfService />} />
-        {/* Catch-all: redirect /:slug to community landing page */}
+        {/* Generated from the route registry (routes.tsx) — every page there
+            structurally ships link-preview metadata (see PageMeta). */}
+        {routes.map((route) => (
+          <Route
+            key={route.path}
+            path={route.path}
+            element={<PageHead meta={route}>{route.element}</PageHead>}
+          />
+        ))}
+        {/* Catch-all: redirect /:slug to community landing page. Deliberately
+            not in the registry — it's a redirect, not a page. */}
         <Route path="/:slug" element={<CommunityRedirect />} />
       </Routes>
     </BrowserRouter>

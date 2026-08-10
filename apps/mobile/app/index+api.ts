@@ -20,12 +20,12 @@ function generateLandingPageHtml(): string {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Togather - Connect Your Community</title>
-  <meta name="description" content="Togather brings your groups, messaging, and events together in one place. The all-in-one platform for churches and communities.">
+  <meta name="description" content="Togather brings your groups, messaging, and events together in one place. The all-in-one platform for communities.">
   <meta name="theme-color" content="#D4A574">
 
   <!-- Open Graph -->
   <meta property="og:title" content="Togather - Connect Your Community">
-  <meta property="og:description" content="Togather brings your groups, messaging, and events together in one place. The all-in-one platform for churches and communities.">
+  <meta property="og:description" content="Togather brings your groups, messaging, and events together in one place. The all-in-one platform for communities.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="${landingUrl}">
   <meta property="og:image" content="${landingUrl}/og-image.png">
@@ -341,9 +341,9 @@ ul, ol { list-style: none; }
             </a>
             <a href="${landingUrl}/android" class="btn btn-secondary btn-lg">
               <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M12 5v14M5 12l7 7 7-7"/>
+                <path d="M5 12h14M12 5l7 7-7 7"/>
               </svg>
-              Download for Android
+              Join Android testers
             </a>
           </div>
 
@@ -369,7 +369,7 @@ ul, ol { list-style: none; }
                 <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
                 <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
               </svg>
-              <span>Built for churches</span>
+              <span>Built for communities</span>
             </div>
           </div>
         </div>
@@ -567,7 +567,7 @@ ul, ol { list-style: none; }
             <div class="step-number">2</div>
             <div class="step-content">
               <h3>Join your community</h3>
-              <p>Search for your church or organization and connect with your people.</p>
+              <p>Search for your community or organization and connect with your people.</p>
             </div>
           </div>
 
@@ -608,7 +608,7 @@ ul, ol { list-style: none; }
             <p class="perspective-desc">
               See at a glance who's showing up and who's been absent. Track attendance
               patterns, send timely follow-ups, and make data-driven decisions about
-              your ministry. No more spreadsheets or guesswork.
+              your community. No more spreadsheets or guesswork.
             </p>
             <ul class="perspective-list">
               <li>Attendance tracking with visual trends</li>
@@ -719,11 +719,11 @@ ul, ol { list-style: none; }
                 <text x="60" y="28" text-anchor="middle" fill="white" font-size="14" font-weight="600" font-family="Inter, sans-serif">App Store</text>
               </svg>
             </a>
-            <a href="${landingUrl}/android" class="store-badge" aria-label="Download for Android">
+            <a href="${landingUrl}/android" class="store-badge" aria-label="Join Android testers">
               <svg viewBox="0 0 135 40" fill="currentColor">
                 <rect width="135" height="40" rx="6"/>
-                <text x="67" y="14" text-anchor="middle" fill="white" font-size="8" font-family="Inter, sans-serif">Download for</text>
-                <text x="67" y="28" text-anchor="middle" fill="white" font-size="14" font-weight="600" font-family="Inter, sans-serif">Android</text>
+                <text x="67" y="14" text-anchor="middle" fill="white" font-size="8" font-family="Inter, sans-serif">Join the</text>
+                <text x="67" y="28" text-anchor="middle" fill="white" font-size="14" font-weight="600" font-family="Inter, sans-serif">Android test</text>
               </svg>
             </a>
           </div>

@@ -12,6 +12,9 @@
 
 import { cronJobs } from "convex/server";
 import { internal } from "./_generated/api";
+import { registerDevAssistantCrons } from "@supa-media/dev-assistant";
+import { registerFinanceCrons } from "./functions/finance/jobs";
+import "./functions/devAssistant/config"; // side-effect: sets config first
 
 const crons = cronJobs();
 
@@ -76,6 +79,20 @@ crons.daily(
   "pco-auto-channel-rotation",
   { hourUTC: 5, minuteUTC: 0 },
   internal.functions.pcoServices.rotation.processAllAutoChannels
+);
+
+// =============================================================================
+// TEAM CHANNEL AUTO-SYNC
+// =============================================================================
+// Runs daily at 5:10 UTC (just after PCO rotation) to reconcile every serving-
+// team channel's membership against its event-plan role assignments. Adds
+// volunteers ~5 days before their event and removes them ~1 day after — the
+// rotation window advances even when no assignment mutation fires.
+
+crons.daily(
+  "team-channel-auto-sync",
+  { hourUTC: 5, minuteUTC: 10 },
+  internal.functions.scheduling.teamChannelSync.reconcileAllTeamChannels,
 );
 
 // =============================================================================
@@ -207,5 +224,95 @@ crons.daily(
   { hourUTC: 23, minuteUTC: 55 },
   internal.functions.notifications.dailyEnabledSnapshot.runDaily
 );
+
+// =============================================================================
+// PRAYER ARCHIVAL
+// =============================================================================
+// Runs daily at 6:00 UTC to archive active prayers older than 30 days.
+// Authors can still see archived prayers under My Prayers.
+
+crons.daily(
+  "prayer-archive-stale",
+  { hourUTC: 6, minuteUTC: 0 },
+  internal.functions.prayers.archiveStalePrayers,
+  {}
+);
+
+// =============================================================================
+// PRAYER DAILY DIGEST
+// =============================================================================
+// Runs daily at 14:00 UTC (9am ET / 6am PT). For each prayer-enabled
+// community, sends one push to eligible members summarizing how many new
+// approved prayers landed in the last 24 hours.
+
+crons.daily(
+  "prayer-daily-digest",
+  { hourUTC: 14, minuteUTC: 0 },
+  internal.functions.prayers.notifications.cronDailyDigest,
+  {}
+);
+
+// =============================================================================
+// PRAYER MONDAY NUDGE
+// =============================================================================
+// Runs daily at 14:15 UTC; the handler bails when the UTC weekday isn't
+// Monday. Sent to community members who don't currently have an active
+// prayer, nudging them to share a request to start the week.
+
+crons.daily(
+  "prayer-monday-nudge",
+  { hourUTC: 14, minuteUTC: 15 },
+  internal.functions.prayers.notifications.cronMondayNudge,
+  {}
+);
+
+// =============================================================================
+// PRAYER UPDATE NUDGE
+// =============================================================================
+// Runs daily at 14:30 UTC. Sends a single push to authors of prayers that
+// are still `status: "active"` ~14 days after creation, asking for an
+// update or praise report. One-shot per prayer.
+
+crons.daily(
+  "prayer-update-nudge",
+  { hourUTC: 14, minuteUTC: 30 },
+  internal.functions.prayers.notifications.cronUpdateNudge,
+  {}
+);
+
+// =============================================================================
+// PER-ACTIVE-USER BILLING SYNC
+// =============================================================================
+// Runs monthly, ahead of the billing anchor (subscriptions bill on the 1st),
+// and updates each per-active-user community's Stripe subscription quantity
+// to its current billable member count: real accounts who opened the app in
+// that community within the past month ($1/month each). See
+// functions/memberActivity.ts for the definition.
+
+crons.monthly(
+  "per-user-billing-sync",
+  { day: 28, hourUTC: 6, minuteUTC: 0 },
+  internal.functions.ee.billing.syncPerUserSubscriptionQuantities,
+  {}
+);
+
+// =============================================================================
+// DEV-ASSISTANT PR MERGE RECONCILE
+// =============================================================================
+// Backstop for the /github/webhook: polls open dev-dashboard PRs and flips a
+// bug to MERGED when its PR has merged on GitHub, so manual merges reflect on
+// the Contribute dashboard even when the webhook isn't delivering. Idempotent;
+// no-ops when the GitHub integration is unconfigured. See ADR-029 Phase 3.
+//
+// Registered by @supa-media/dev-assistant — same cron name
+// ("dev-assistant-pr-merge-reconcile"), same */15 cadence, same target action
+// (functions/devAssistant/actions:reconcileMergedPrs) as the previous
+// hand-written registration.
+registerDevAssistantCrons(crons); // reads functionsPath from the config holder
+
+// Group giving (ADR-032): nightly ledger-vs-bank reconcile + hourly
+// stale-allocation retry backstop (the primary allocation trigger is the
+// Stripe payout.paid webhook).
+registerFinanceCrons(crons);
 
 export default crons;

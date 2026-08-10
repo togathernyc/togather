@@ -1,13 +1,23 @@
 import React from "react";
 import { View, Text, StyleSheet } from "react-native";
 import { format } from "date-fns";
-import { MemberItem } from "./MemberItem";
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "@hooks/useTheme";
+import { WaInsetGroup } from "@components/wa/WaInsetGroup";
+import { WaCell } from "@components/wa/WaCell";
+import { WaRow } from "@components/wa/WaRow";
+import {
+  WA_GROUP_SPACING,
+  WA_CELL_PADDING,
+  WA_ROW_LEADING_PADDING,
+  WA_ROW_AVATAR_GAP,
+} from "@components/wa/metrics";
+
+/** Avatar well of a 40pt `WaRow`, so hairlines start at the name (S3.4). */
+const ROW_SEPARATOR_INSET = WA_ROW_LEADING_PADDING + 40 + WA_ROW_AVATAR_GAP;
 
 interface AttendanceViewModeProps {
   isFutureEvent: boolean;
-  projectedAttendance?: number;
   report?: any;
   submittedDate?: string;
   submittedBy?: {
@@ -21,9 +31,19 @@ const isAnonymousGuest = (guest: any) => {
   return guest.first_name?.startsWith("Guest ") && !guest.last_name;
 };
 
+/**
+ * The read-only attendance report.
+ *
+ * WHATSAPP-DESIGN-SYSTEM.md §3.2: one `WaInsetGroup` per section, people as
+ * `WaRow`s. The headline numbers sit in a single three-metric strip inside the
+ * summary card rather than the old pair of half-width stat tiles — same facts,
+ * roughly a third of the height, and "who attended" starts above the fold.
+ * Empty facts (no note, no change, no guests) render nothing at all instead of
+ * a placeholder box; a report of an event nobody has recorded yet is a short
+ * card, not a screen of zeros.
+ */
 export function AttendanceViewMode({
   isFutureEvent,
-  projectedAttendance = 0,
   report,
   submittedDate,
   submittedBy,
@@ -31,18 +51,19 @@ export function AttendanceViewMode({
   const { colors } = useTheme();
   if (isFutureEvent) {
     return (
-      <View style={styles.statsSection}>
-        <View style={[styles.messageContainer, { backgroundColor: colors.surfaceSecondary }]}>
-          <Ionicons
-            name="time-outline"
-            size={24}
-            color={colors.textSecondary}
-            style={styles.messageIcon}
-          />
-          <Text style={[styles.messageText, { color: colors.textSecondary }]}>
-            Wait until the day of the event or after to take attendance
-          </Text>
-        </View>
+      <View style={styles.section}>
+        <WaInsetGroup>
+          <View style={styles.messageRow}>
+            <Ionicons
+              name="time-outline"
+              size={22}
+              color={colors.textSecondary}
+            />
+            <Text style={[styles.messageText, { color: colors.textSecondary }]}>
+              Wait until the day of the event or after to take attendance
+            </Text>
+          </View>
+        </WaInsetGroup>
       </View>
     );
   }
@@ -64,256 +85,172 @@ export function AttendanceViewMode({
   const memberCount = report?.stats?.member_count ?? 0;
   const guestCount = report?.stats?.guest_count ?? 0;
   const totalAttended = report?.stats?.total_count ?? 0;
+  const change = report?.stats?.prev_diff ?? 0;
+
+  // NOTE: `useAttendanceReport` hardcodes `note: ""` and `prev_diff: 0` today
+  // (the schema stores neither), so these two branches don't fire in the app
+  // yet — they render for any caller that does supply them, and are covered by
+  // AttendanceViewMode.test.tsx. Wire the hook up and they light up as-is.
+  const note = report?.note;
+  const submissionFooter = submittedDate
+    ? `Submitted ${format(new Date(submittedDate), "MMM d, yyyy")}${
+        submittedBy ? ` by ${submittedBy.first_name} ${submittedBy.last_name}` : ""
+      }`
+    : undefined;
 
   return (
     <>
-      {/* Attendance Stats for Past Events */}
-      <View style={styles.statsSection}>
-        <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>Attendance</Text>
-        {submittedDate && (
-          <>
-            <Text style={[styles.submittedText, { color: colors.textSecondary }]}>
-              Submitted on {format(new Date(submittedDate), "MMM dd, yyyy")}
-            </Text>
-            {submittedBy && (
-              <Text style={[styles.submittedText, { color: colors.textSecondary }]}>
-                By {submittedBy.first_name} {submittedBy.last_name}
-              </Text>
+      {/* Headline numbers */}
+      <View style={styles.section}>
+        <WaInsetGroup header="Attendance" footer={submissionFooter} separatorInset={0}>
+          <View style={styles.statsStrip}>
+            <Stat label="Total" value={String(totalAttended)} color={colors.text} />
+            <View style={[styles.statDivider, { backgroundColor: colors.separator }]} />
+            <Stat label="Members" value={String(memberCount)} color={colors.text} />
+            <View style={[styles.statDivider, { backgroundColor: colors.separator }]} />
+            <Stat label="Guests" value={String(guestCount)} color={colors.text} />
+            {change !== 0 && (
+              <>
+                <View style={[styles.statDivider, { backgroundColor: colors.separator }]} />
+                <Stat
+                  label="vs last"
+                  value={`${change > 0 ? "+" : ""}${change}`}
+                  color={change > 0 ? colors.success : colors.destructive}
+                />
+              </>
             )}
-          </>
-        )}
-        <View style={[styles.noteContainer, { backgroundColor: colors.surfaceSecondary }]}>
-          <Text style={[styles.noteText, { color: colors.textSecondary }]}>{report?.note || "No note"}</Text>
-        </View>
-
-        {/* Stats Cards */}
-        <View style={styles.statsCards}>
-          <View style={[styles.statCard, { backgroundColor: colors.surfaceSecondary }]}>
-            <Text style={[styles.statCardTitle, { color: colors.textSecondary }]}>Attended</Text>
-            <Text style={[styles.statCardValue, { color: colors.text }]}>{totalAttended}</Text>
-            <Text style={[styles.statCardSubtitle, { color: colors.textTertiary }]}>
-              {memberCount} members, {guestCount} guests
-            </Text>
           </View>
-          <View style={[styles.statCard, { backgroundColor: colors.surfaceSecondary }]}>
-            <Text style={[styles.statCardTitle, { color: colors.textSecondary }]}>Change</Text>
-            <Text
-              style={[
-                styles.statCardValue,
-                {
-                  color:
-                    (report?.stats?.prev_diff || 0) > 0
-                      ? colors.success
-                      : (report?.stats?.prev_diff || 0) < 0
-                        ? colors.destructive
-                        : colors.text,
-                },
-              ]}
-            >
-              {report?.stats?.prev_diff || 0}
-            </Text>
-          </View>
-        </View>
+          {note ? <WaCell variant="footer" title={note} /> : null}
+        </WaInsetGroup>
       </View>
 
-      {/* Guests Section */}
+      {/* Guests */}
       {guestList.length > 0 && (
-        <View style={styles.attendedSection}>
-          <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>Guests</Text>
-          <View style={styles.membersList}>
-            {/* Anonymous Guests Summary Card */}
+        <View style={styles.section}>
+          <WaInsetGroup header="Guests" separatorInset={ROW_SEPARATOR_INSET}>
             {anonymousGuests.length > 0 && (
-              <View style={[styles.guestCard, { backgroundColor: colors.surfaceSecondary }]}>
-                <View style={[styles.guestIconContainer, { backgroundColor: colors.border }]}>
-                  <Ionicons name="people" size={20} color={colors.textSecondary} />
-                </View>
-                <View style={styles.guestInfo}>
-                  <Text style={[styles.guestName, { color: colors.text }]}>Anonymous Guests</Text>
-                  <Text style={[styles.guestDetail, { color: colors.textSecondary }]}>
-                    {anonymousGuests.length} guest
-                    {anonymousGuests.length !== 1 ? "s" : ""}
-                  </Text>
-                </View>
-              </View>
+              <WaRow
+                avatar={{ label: "Guests", size: 40 }}
+                title="Anonymous guests"
+                subtitle={`${anonymousGuests.length} guest${
+                  anonymousGuests.length !== 1 ? "s" : ""
+                }`}
+              />
             )}
-
-            {/* Named Guests Individual Cards */}
-            {namedGuests.map((guest: any) => (
-              <View key={guest.id} style={[styles.guestCard, { backgroundColor: colors.surfaceSecondary }]}>
-                <View style={[styles.guestIconContainer, { backgroundColor: colors.border }]}>
-                  <Ionicons name="person" size={20} color={colors.textSecondary} />
-                </View>
-                <View style={styles.guestInfo}>
-                  <Text style={[styles.guestName, { color: colors.text }]}>
-                    {guest.first_name} {guest.last_name || ""}
-                  </Text>
-                  {guest.phone_number && (
-                    <Text style={[styles.guestDetail, { color: colors.textSecondary }]}>{guest.phone_number}</Text>
-                  )}
-                  {guest.notes && (
-                    <Text style={[styles.guestDetail, { color: colors.textSecondary }]}>{guest.notes}</Text>
-                  )}
-                </View>
-              </View>
-            ))}
-          </View>
+            {namedGuests.map((guest: any) => {
+              // Check-in can create a guest with no name at all (the naming
+              // sheet is dismissible), so both parts need a fallback — an
+              // unguarded template literal renders the string "undefined".
+              const name = [guest.first_name, guest.last_name]
+                .filter(Boolean)
+                .join(" ")
+                .trim();
+              // Phone and notes are separate facts; showing only the first
+              // would silently drop a walk-in's note.
+              const detail = [guest.phone_number, guest.notes]
+                .filter(Boolean)
+                .join(" · ");
+              return (
+                <WaRow
+                  key={guest.id}
+                  avatar={{ label: name || "Guest", seed: guest.id, size: 40 }}
+                  title={name || "Guest"}
+                  subtitle={detail || undefined}
+                  subtitleLines={2}
+                />
+              );
+            })}
+          </WaInsetGroup>
         </View>
       )}
 
-      {/* Attended Members List */}
-      <View style={styles.attendedSection}>
-        <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>Members</Text>
-        <View style={styles.membersList}>
+      {/* Attended members */}
+      <View style={styles.section}>
+        <WaInsetGroup header="Members" separatorInset={ROW_SEPARATOR_INSET}>
           {attendedMembers.length > 0 ? (
-            attendedMembers.map((member: any) => (
-              <MemberItem
-                key={member.user?._id || member._id}
-                member={{
-                  ...member,
-                  id: member.user?._id || member._id,
-                  // Flatten user data for MemberItem compatibility
-                  first_name: member.user?.first_name || member.first_name || '',
-                  last_name: member.user?.last_name || member.last_name || '',
-                  profile_photo: member.user?.profile_photo || member.profile_photo || null,
-                }}
-                isAttended={true}
-                showCheckbox={false}
-              />
-            ))
+            attendedMembers.map((member: any) => {
+              const name = `${member.user?.first_name || member.first_name || ""} ${
+                member.user?.last_name || member.last_name || ""
+              }`.trim();
+              const userId = member.user?._id || member._id;
+              return (
+                <WaRow
+                  key={userId}
+                  avatar={{
+                    imageUrl:
+                      member.user?.profile_photo || member.profile_photo || null,
+                    label: name || "Member",
+                    seed: userId,
+                    size: 40,
+                  }}
+                  title={name || "Member"}
+                />
+              );
+            })
           ) : (
-            <View style={styles.emptyState}>
-              <Text style={[styles.emptyStateText, { color: colors.textTertiary }]}>No members attended</Text>
-            </View>
+            <WaCell variant="footer" title="No members attended" />
           )}
-        </View>
+        </WaInsetGroup>
       </View>
     </>
   );
 }
 
+/** One metric in the summary strip: value over label, evenly sharing the row. */
+function Stat({
+  label,
+  value,
+  color,
+}: {
+  label: string;
+  value: string;
+  color: string;
+}) {
+  const { colors } = useTheme();
+  return (
+    <View style={styles.stat}>
+      <Text style={[styles.statValue, { color }]}>{value}</Text>
+      <Text style={[styles.statLabel, { color: colors.textTertiary }]}>{label}</Text>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
-  statsSection: {
-    marginBottom: 24,
+  section: {
+    marginBottom: WA_GROUP_SPACING,
   },
-  sectionLabel: {
-    fontSize: 12,
-    fontWeight: "600",
-    marginBottom: 8,
-    textTransform: "uppercase",
-  },
-  projectedStatsContainer: {
+  statsStrip: {
     flexDirection: "row",
-    gap: 16,
-    marginTop: 16,
-  },
-  projectedStatItem: {
     alignItems: "center",
-    borderRadius: 8,
-    padding: 16,
-    minWidth: 100,
+    paddingVertical: 14,
   },
-  projectedStatValue: {
-    fontSize: 32,
-    fontWeight: "bold",
-    marginBottom: 4,
-  },
-  projectedStatLabel: {
-    fontSize: 14,
-    fontWeight: "500",
-  },
-  projectedNote: {
-    fontSize: 12,
-    marginTop: 8,
-    fontStyle: "italic",
-  },
-  submittedText: {
-    fontSize: 14,
-    marginTop: 8,
-  },
-  noteContainer: {
-    borderRadius: 8,
-    padding: 12,
-    marginTop: 8,
-  },
-  noteText: {
-    fontSize: 14,
-  },
-  statsCards: {
-    flexDirection: "row",
-    gap: 12,
-    marginTop: 16,
-  },
-  statCard: {
+  stat: {
     flex: 1,
-    borderRadius: 8,
-    padding: 16,
+    alignItems: "center",
   },
-  statCardTitle: {
-    fontSize: 12,
-    fontWeight: "600",
-    marginBottom: 8,
-  },
-  statCardValue: {
+  statValue: {
     fontSize: 24,
-    fontWeight: "bold",
+    fontWeight: "600",
   },
-  statCardSubtitle: {
-    fontSize: 11,
-    marginTop: 4,
-  },
-  guestCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: 12,
-    paddingHorizontal: 8,
-    borderRadius: 8,
-    marginBottom: 8,
-  },
-  guestIconContainer: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    alignItems: "center",
-    justifyContent: "center",
-    marginRight: 12,
-  },
-  guestInfo: {
-    flex: 1,
-  },
-  guestName: {
-    fontSize: 15,
-    fontWeight: "500",
-  },
-  guestDetail: {
+  statLabel: {
     fontSize: 13,
     marginTop: 2,
   },
-  attendedSection: {
-    marginBottom: 24,
+  statDivider: {
+    width: StyleSheet.hairlineWidth,
+    alignSelf: "stretch",
+    marginVertical: 4,
   },
-  membersList: {
-    marginTop: 8,
-  },
-  emptyState: {
-    padding: 20,
+  messageRow: {
+    flexDirection: "row",
     alignItems: "center",
-  },
-  emptyStateText: {
-    fontSize: 14,
-  },
-  messageContainer: {
-    borderRadius: 8,
-    padding: 20,
-    alignItems: "center",
-    justifyContent: "center",
-    marginTop: 16,
-  },
-  messageIcon: {
-    marginBottom: 12,
+    gap: 12,
+    paddingHorizontal: WA_CELL_PADDING,
+    paddingVertical: 16,
   },
   messageText: {
-    fontSize: 14,
-    textAlign: "center",
+    flex: 1,
+    fontSize: 15,
     lineHeight: 20,
   },
 });

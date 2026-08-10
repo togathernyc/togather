@@ -57,8 +57,8 @@ interface TestData {
   hostId: Id<"users">;
   leaderId: Id<"users">;
   goingId: Id<"users">;
-  notGoingId: Id<"users">;
-  maybeDisabledId: Id<"users">;
+  maybeId: Id<"users">;
+  cantGoDisabledId: Id<"users">;
   outsiderId: Id<"users">;
   hostToken: string;
   leaderToken: string;
@@ -118,15 +118,15 @@ async function setupTestData(t: ReturnType<typeof convexTest>): Promise<TestData
       createdAt: ts,
       updatedAt: ts,
     });
-    const notGoingId = await ctx.db.insert("users", {
-      firstName: "NotGoing",
+    const maybeId = await ctx.db.insert("users", {
+      firstName: "Maybe",
       lastName: "Attendee",
       phone: "+15551110004",
       createdAt: ts,
       updatedAt: ts,
     });
-    const maybeDisabledId = await ctx.db.insert("users", {
-      firstName: "MaybeDisabled",
+    const cantGoDisabledId = await ctx.db.insert("users", {
+      firstName: "CantGoDisabled",
       lastName: "Attendee",
       phone: "+15551110005",
       createdAt: ts,
@@ -141,7 +141,7 @@ async function setupTestData(t: ReturnType<typeof convexTest>): Promise<TestData
     });
 
     // Community memberships (everyone except outsiderId).
-    for (const uid of [hostId, leaderId, goingId, notGoingId, maybeDisabledId]) {
+    for (const uid of [hostId, leaderId, goingId, maybeId, cantGoDisabledId]) {
       await ctx.db.insert("userCommunities", {
         userId: uid,
         communityId,
@@ -152,7 +152,7 @@ async function setupTestData(t: ReturnType<typeof convexTest>): Promise<TestData
       });
     }
 
-    // Group memberships — host + leader as leaders, going/notGoing as members.
+    // Group memberships — host + leader as leaders, going/maybe as members.
     await ctx.db.insert("groupMembers", {
       groupId,
       userId: hostId,
@@ -176,14 +176,14 @@ async function setupTestData(t: ReturnType<typeof convexTest>): Promise<TestData
     });
     await ctx.db.insert("groupMembers", {
       groupId,
-      userId: notGoingId,
+      userId: maybeId,
       role: "member",
       joinedAt: ts,
       notificationsEnabled: true,
     });
     await ctx.db.insert("groupMembers", {
       groupId,
-      userId: maybeDisabledId,
+      userId: cantGoDisabledId,
       role: "member",
       joinedAt: ts,
       notificationsEnabled: true,
@@ -203,8 +203,8 @@ async function setupTestData(t: ReturnType<typeof convexTest>): Promise<TestData
       hostUserIds: [hostId],
       rsvpOptions: [
         { id: 1, label: "Going", enabled: true },
-        { id: 2, label: "Not Going", enabled: true },
-        { id: 3, label: "Maybe", enabled: false },
+        { id: 2, label: "Maybe", enabled: true },
+        { id: 3, label: "Can't Go", enabled: false },
       ],
       communityId,
     });
@@ -219,14 +219,14 @@ async function setupTestData(t: ReturnType<typeof convexTest>): Promise<TestData
     });
     await ctx.db.insert("meetingRsvps", {
       meetingId,
-      userId: notGoingId,
+      userId: maybeId,
       rsvpOptionId: 2,
       createdAt: ts,
       updatedAt: ts,
     });
     await ctx.db.insert("meetingRsvps", {
       meetingId,
-      userId: maybeDisabledId,
+      userId: cantGoDisabledId,
       rsvpOptionId: 3,
       createdAt: ts,
       updatedAt: ts,
@@ -239,8 +239,8 @@ async function setupTestData(t: ReturnType<typeof convexTest>): Promise<TestData
       hostId,
       leaderId,
       goingId,
-      notGoingId,
-      maybeDisabledId,
+      maybeId,
+      cantGoDisabledId,
       outsiderId,
       hostToken: `test-token-${hostId}`,
       leaderToken: `test-token-${leaderId}`,
@@ -325,7 +325,7 @@ describe("ensureEventChannel", () => {
     expect(hostMembership?.syncSource).toBe("event_rsvp");
   });
 
-  test("does NOT bulk-seed RSVPers — only the host is seated initially", async () => {
+  test("backfills Going/Maybe RSVPers as members; excludes Can't Go / disabled options", async () => {
     const t = convexTest(schema, modules);
     const data = await setupTestData(t);
 
@@ -342,15 +342,21 @@ describe("ensureEventChannel", () => {
     });
 
     const userIds = rows.map((r) => r.userId);
-    // Lazy-seed model: only the host is seated by ensureEventChannel.
-    // Non-host RSVPers become members when they call openEventChat.
-    expect(userIds).toEqual([data.hostId]);
-    expect(userIds).not.toContain(data.goingId);
-    expect(userIds).not.toContain(data.notGoingId);
-    expect(userIds).not.toContain(data.maybeDisabledId);
+    // Backfill model: the host (admin) plus every Going/Maybe RSVPer
+    // (option ids 1 & 2) are seated so they receive event updates.
+    expect(userIds).toContain(data.hostId);
+    expect(userIds).toContain(data.goingId);
+    expect(userIds).toContain(data.maybeId);
+    // The Can't Go RSVPer (disabled option id 3) is not seated.
+    expect(userIds).not.toContain(data.cantGoDisabledId);
+    expect(userIds).toHaveLength(3);
+
+    // Backfilled RSVPers are seated as members, not admins.
+    const goingRow = rows.find((r) => r.userId === data.goingId);
+    expect(goingRow?.role).toBe("member");
   });
 
-  test("memberCount starts at 1 (just the host)", async () => {
+  test("memberCount counts the host plus backfilled Going/Maybe RSVPers", async () => {
     const t = convexTest(schema, modules);
     const data = await setupTestData(t);
 
@@ -360,7 +366,41 @@ describe("ensureEventChannel", () => {
     );
 
     const channel = await t.run(async (ctx) => ctx.db.get(channelId));
-    expect(channel?.memberCount).toBe(1);
+    // host + goingId + maybeId = 3.
+    expect(channel?.memberCount).toBe(3);
+  });
+
+  test("does NOT backfill stale RSVPers whose option the host has since disabled", async () => {
+    const t = convexTest(schema, modules);
+    const data = await setupTestData(t);
+
+    // Host hides the Maybe option (id 2) after maybeId already RSVP'd to it.
+    await t.run(async (ctx) => {
+      const meeting = await ctx.db.get(data.meetingId);
+      await ctx.db.patch(data.meetingId, {
+        rsvpOptions: (meeting!.rsvpOptions ?? []).map((o) =>
+          o.id === 2 ? { ...o, enabled: false } : o,
+        ),
+      });
+    });
+
+    const channelId = await t.mutation(
+      (internal as any).functions.messaging.eventChat.ensureEventChannel,
+      { meetingId: data.meetingId },
+    );
+
+    const userIds = await t.run(async (ctx) => {
+      const rows = await ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel", (q) => q.eq("channelId", channelId))
+        .collect();
+      return rows.map((r) => r.userId);
+    });
+
+    // goingId (enabled option) is seated; maybeId is not, because their
+    // option is now hidden — consistent with losing chat access.
+    expect(userIds).toContain(data.goingId);
+    expect(userIds).not.toContain(data.maybeId);
   });
 
   test("throws when meeting has no shortId", async () => {
@@ -470,10 +510,10 @@ describe("getChannelByMeetingId", () => {
       { meetingId: data.meetingId },
     );
 
-    const maybeToken = `test-token-${data.maybeDisabledId}`;
+    const disabledToken = `test-token-${data.cantGoDisabledId}`;
     const result = await t.query(
       "functions/messaging/eventChat:getChannelByMeetingId" as any,
-      { token: maybeToken, meetingId: data.meetingId },
+      { token: disabledToken, meetingId: data.meetingId },
     );
 
     expect(result).toBeNull();
@@ -947,7 +987,7 @@ describe("openEventChat", () => {
 
     await expect(
       t.mutation("functions/messaging/eventChat:openEventChat" as any, {
-        token: `test-token-${data.maybeDisabledId}`,
+        token: `test-token-${data.cantGoDisabledId}`,
         meetingId: data.meetingId,
       }),
     ).rejects.toThrow(/access/i);
@@ -975,6 +1015,49 @@ describe("openEventChat", () => {
         .collect();
     });
     expect(channels).toHaveLength(1);
+  });
+
+  test("Can't Go RSVPer can open the chat but is NOT seated as a member", async () => {
+    const t = convexTest(schema, modules);
+    const data = await setupTestData(t);
+
+    // Enable the Can't Go option (id 3) and switch goingId's RSVP to it, so
+    // they retain chat access but no longer count as attending.
+    await t.run(async (ctx) => {
+      const meeting = await ctx.db.get(data.meetingId);
+      await ctx.db.patch(data.meetingId, {
+        rsvpOptions: (meeting!.rsvpOptions ?? []).map((o) =>
+          o.id === 3 ? { ...o, enabled: true } : o,
+        ),
+      });
+      const rsvp = await ctx.db
+        .query("meetingRsvps")
+        .withIndex("by_meeting_user", (q) =>
+          q.eq("meetingId", data.meetingId).eq("userId", data.goingId),
+        )
+        .first();
+      await ctx.db.patch(rsvp!._id, { rsvpOptionId: 3 });
+    });
+
+    // Opening succeeds (access is granted for any enabled option)...
+    const result = await t.mutation(
+      "functions/messaging/eventChat:openEventChat" as any,
+      { token: data.goingToken, meetingId: data.meetingId },
+    );
+    expect(result.channelId).toBeTruthy();
+
+    // ...but the Can't Go responder is not seated, so they receive no
+    // event-chat update notifications. This guards against re-adding a user
+    // who was just removed for switching to Can't Go.
+    const membership = await t.run(async (ctx) => {
+      return await ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", result.channelId).eq("userId", data.goingId),
+        )
+        .unique();
+    });
+    expect(membership).toBeNull();
   });
 });
 
@@ -1132,13 +1215,34 @@ describe("reactions auth on event channels", () => {
     const t = convexTest(schema, modules);
     const data = await setupTestData(t);
 
-    // Host opens chat → channel created + host seated. goingId is NOT
-    // seated yet under the lazy-seed model (they have an enabled RSVP
-    // but haven't called openEventChat).
-    const channelId = await t.mutation(
-      (internal as any).functions.messaging.eventChat.ensureEventChannel,
-      { meetingId: data.meetingId },
-    );
+    // Create the channel with only the host seated (bypassing
+    // ensureEventChannel's RSVP backfill) so goingId has channel access via
+    // their enabled RSVP but no chatChannelMembers row — the case this test
+    // exercises: reaction auth is access-based, not membership-based.
+    const channelId = await t.run(async (ctx) => {
+      const cid = await ctx.db.insert("chatChannels", {
+        groupId: data.groupId,
+        slug: "event-dinner123",
+        channelType: "event",
+        name: "Dinner Party",
+        createdById: data.hostId,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        isArchived: false,
+        isEnabled: true,
+        meetingId: data.meetingId,
+        memberCount: 1,
+      });
+      await ctx.db.insert("chatChannelMembers", {
+        channelId: cid,
+        userId: data.hostId,
+        role: "admin",
+        syncSource: "event_rsvp",
+        joinedAt: Date.now(),
+        isMuted: false,
+      });
+      return cid;
+    });
 
     // Verify goingId has no chatChannelMembers row.
     const noMembership = await t.run(async (ctx) => {

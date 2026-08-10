@@ -17,4 +17,13 @@ describe("TaskReminderConfigModal keyboard UX safeguards", () => {
     expect(source).toContain("onPress={Keyboard.dismiss}");
     expect(source).toContain('testID="task-editor-scroll"');
   });
+
+  it("exposes weekly/monthly frequency controls", () => {
+    expect(source).toContain("FREQUENCY_OPTIONS");
+    expect(source).toContain("WEEK_OF_MONTH_OPTIONS");
+    // The schedule heading reflects the chosen frequency.
+    expect(source).toContain('"MONTHLY SCHEDULE" : "WEEKLY SCHEDULE"');
+    // Week-of-month picker only shows when monthly is selected.
+    expect(source).toContain('config.frequency === "monthly"');
+  });
 });

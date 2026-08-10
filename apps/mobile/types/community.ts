@@ -8,7 +8,7 @@
 
 /**
  * Community member in list view.
- * Used by MemberSearch, PeopleContent, and other member-listing components.
+ * Used by MemberSearch and other member-listing components.
  */
 export interface CommunityMember {
   user_id: number | string; // Can be Convex Id<"users"> string or legacy number

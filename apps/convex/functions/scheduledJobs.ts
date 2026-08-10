@@ -25,6 +25,7 @@ import {
 import { internal } from "../_generated/api";
 import { Id } from "../_generated/dataModel";
 import { notifyBatch } from "../lib/notifications/send";
+import { resolveChannelCommunityId } from "../lib/messaging/communityScope";
 import { now, getMediaUrlWithTransform, ImagePresets } from "../lib/utils";
 import {
   calculateCommunicationBotNextSchedule,
@@ -1016,15 +1017,64 @@ type TaskReminderSchedule = Record<string, TaskReminderTask[]>;
 
 type TaskReminderDeliveryMode = "task_only" | "task_and_channel_post";
 
+type TaskReminderFrequency = "weekly" | "monthly";
+
+// Which occurrence of a weekday within the month a monthly reminder targets:
+// 1-4 for the Nth occurrence (1st–4th), or "last" for the final one in the
+// month. "last" is how the final occurrence is targeted, so there is no 5th.
+type TaskReminderWeekOfMonth = number | "last";
+
 type TaskReminderConfigData = {
   roles: TaskReminderRole[];
   schedule: TaskReminderSchedule;
   deliveryMode?: TaskReminderDeliveryMode;
   targetChannelSlugs?: string[];
+  // Monthly reminders reuse the weekday schedule but only fire on the
+  // configured weekday occurrence within the month (e.g. the first Monday).
+  frequency?: TaskReminderFrequency;
+  weekOfMonth?: TaskReminderWeekOfMonth;
   // Legacy fields kept for backwards compatibility with existing configs.
   delivery?: "chat" | "notification" | "both";
   targetChannelSlug?: string;
 };
+
+/**
+ * Decide whether a monthly task reminder should fire on a given date.
+ *
+ * Monthly reminders reuse the weekday schedule but only fire on a single
+ * occurrence of each weekday within the month. The weekday is already
+ * implied by which schedule list runs (e.g. Monday's tasks run on Mondays),
+ * so this only needs to confirm that today is the configured occurrence —
+ * the Nth one, or the last one in the month.
+ *
+ * @param dateKey "YYYY-MM-DD" for today in the community's timezone.
+ * @param weekOfMonth 1-4 for the Nth occurrence, or "last" for the final one.
+ */
+export function shouldFireMonthlyOnDate(
+  dateKey: string,
+  weekOfMonth: TaskReminderWeekOfMonth,
+): boolean {
+  const [yearStr, monthStr, dayStr] = dateKey.split("-");
+  const year = parseInt(yearStr, 10);
+  const month = parseInt(monthStr, 10); // 1-based
+  const day = parseInt(dayStr, 10);
+
+  if (Number.isNaN(year) || Number.isNaN(month) || Number.isNaN(day)) {
+    return false;
+  }
+
+  if (weekOfMonth === "last") {
+    // Day 0 of the next month is the last day of this month.
+    const daysInMonth = new Date(year, month, 0).getDate();
+    // The last occurrence of a weekday is whenever adding 7 days would
+    // overflow into the next month.
+    return day + 7 > daysInMonth;
+  }
+
+  // The Nth occurrence of a weekday falls in day ranges 1-7, 8-14, etc.
+  const occurrence = Math.ceil(day / 7);
+  return occurrence === weekOfMonth;
+}
 
 /**
  * Helper query to get group by ID.
@@ -1125,6 +1175,24 @@ export const runTaskReminderBot = internalAction({
     );
     const todayName: string = dayFormatter.format(nowDate).toLowerCase();
     const todayDateKey: string = dateFormatter.format(nowDate);
+
+    // Monthly reminders reuse the weekday schedule but only fire on the
+    // configured weekday occurrence within the month (e.g. the first Monday).
+    // The bucket cron still wakes this bot daily at 9 AM, so we filter here.
+    const frequency: TaskReminderFrequency = configData.frequency ?? "weekly";
+    if (
+      frequency === "monthly" &&
+      !shouldFireMonthlyOnDate(todayDateKey, configData.weekOfMonth ?? 1)
+    ) {
+      console.log(
+        `[TaskReminder] Monthly schedule not due today (${todayDateKey}) for group ${groupId}`,
+      );
+      return {
+        skipped: true,
+        reason: "not_scheduled_week_of_month",
+        day: todayName,
+      };
+    }
 
     const todayTasks: TaskReminderTask[] = schedule[todayName] || [];
 
@@ -1234,6 +1302,10 @@ export const runTaskReminderBot = internalAction({
 
           if (result.success) {
             messagesSent++;
+          } else if ("skipped" in result) {
+            console.info(
+              `[TaskReminder] Skipped task-card post for task ${assignment.taskId} to ${targetChannelSlug}: ${result.reason}`,
+            );
           } else {
             console.error(
               `[TaskReminder] Failed task-card post for task ${assignment.taskId} to ${targetChannelSlug}: ${result.error}`,
@@ -1507,6 +1579,7 @@ export const sendBotMessage = internalAction({
         channelId: Id<"chatChannels">;
         messageId: Id<"chatMessages">;
       }
+    | { success: false; skipped: true; reason: string }
     | { success: false; error: string }
   > => {
     // Determine target slug with backwards compatibility
@@ -1541,16 +1614,14 @@ export const sendBotMessage = internalAction({
       );
     }
 
-    if (!channel) {
-      console.error(`[sendBotMessage] No channel found for group ${groupId}`);
-      return { success: false, error: "Channel not found" };
-    }
-
-    // Check if channel is archived
-    if (channel.isArchived) {
-      const errorMsg = `Bot cannot post to archived channel "${channel.name}". Please update bot settings to target an active channel.`;
-      console.error(`[sendBotMessage] ${errorMsg}`);
-      return { success: false, error: errorMsg };
+    // When the target channel is missing or inactive (e.g. a leader disabled
+    // the General channel), suppress the bot message silently. This is a no-op
+    // skip — NOT an error — so callers don't retry, log a failure, or throw.
+    if (!channel || channel.isArchived || channel.isEnabled === false) {
+      console.info(
+        `[sendBotMessage] Skipping bot message for group ${groupId}: target channel "${targetSlug}" is inactive.`,
+      );
+      return { success: false, skipped: true, reason: "target channel inactive" };
     }
 
     // Insert the bot message
@@ -1654,6 +1725,8 @@ export const insertBotMessage = internalMutation({
     mentionedUserIds: v.optional(v.array(v.id("users"))),
     contentType: v.optional(v.string()),
     taskId: v.optional(v.id("tasks")),
+    bugId: v.optional(v.id("devBugs")),
+    parentMessageId: v.optional(v.id("chatMessages")),
     sourceKey: v.optional(v.string()),
   },
   handler: async (
@@ -1665,6 +1738,8 @@ export const insertBotMessage = internalMutation({
       mentionedUserIds,
       contentType,
       taskId,
+      bugId,
+      parentMessageId,
       sourceKey,
     },
   ) => {
@@ -1684,8 +1759,10 @@ export const insertBotMessage = internalMutation({
     const botNames: Record<string, string> = {
       birthday: "Birthday Bot 🎂",
       welcome: "Welcome Bot 👋",
+      followup: "Followup Bot 🤝",
       task_reminder: "Task Reminder 📋",
       communication: "Communication Bot 💬",
+      dev_assistant: "Togather Bot 🤖",
       system: "Togather Bot",
     };
     const senderName = botNames[botType] || "Togather Bot";
@@ -1693,17 +1770,32 @@ export const insertBotMessage = internalMutation({
     // Insert bot message (no senderId - it's a system/bot message)
     const messageId = await ctx.db.insert("chatMessages", {
       channelId,
+      communityId: await resolveChannelCommunityId(ctx, channelId),
       // senderId is undefined for bot messages
       content,
       contentType: contentType || "bot",
+      parentMessageId,
       createdAt: now_,
       isDeleted: false,
       senderName,
       mentionedUserIds: mentionedUserIds || undefined,
       taskId,
+      bugId,
       sourceKey,
       lastActivityAt: now_,
     });
+
+    // If this is a thread reply, bump the parent's reply count + activity so
+    // the thread surfaces in the channel list (mirror messaging/messages.ts).
+    if (parentMessageId) {
+      const parentMessage = await ctx.db.get(parentMessageId);
+      if (parentMessage) {
+        await ctx.db.patch(parentMessageId, {
+          threadReplyCount: (parentMessage.threadReplyCount || 0) + 1,
+          lastActivityAt: now_,
+        });
+      }
+    }
 
     // Update channel with last message info
     const preview = content.slice(0, 100);
@@ -2125,6 +2217,215 @@ export const getUserById = internalQuery({
 });
 
 // ============================================================================
+// FOLLOWUP BOT
+// ============================================================================
+
+/**
+ * Resolve (and persist) the followup assignment for a newly-joined member,
+ * atomically.
+ *
+ * This runs as a single mutation so the read of the round-robin pointer and
+ * the write that advances it happen in one transaction. The bot is
+ * event-triggered, so two members can join almost simultaneously (or a batch
+ * add can schedule many assignments at once); resolving-and-advancing here
+ * lets Convex's serializable mutations rotate leaders correctly instead of
+ * racing on a pointer read/write split across separate transactions.
+ *
+ * Returns a skip reason, or the resolved assignment (message + target channel +
+ * the leader to mention) for the calling action to deliver.
+ */
+export const prepareFollowupAssignment = internalMutation({
+  args: {
+    groupId: v.id("groups"),
+    userId: v.id("users"),
+  },
+  handler: async (
+    ctx,
+    { groupId, userId },
+  ): Promise<
+    | { skipped: true; reason: string }
+    | {
+        skipped: false;
+        assignedLeaderId: Id<"users">;
+        targetChannelSlug: string;
+        message: string;
+      }
+  > => {
+    const config = await ctx.db
+      .query("groupBotConfigs")
+      .withIndex("by_group_botType", (q) =>
+        q.eq("groupId", groupId).eq("botType", "followup"),
+      )
+      .first();
+
+    if (!config || !config.enabled) {
+      return { skipped: true, reason: "bot_not_enabled" };
+    }
+
+    const group = await ctx.db.get(groupId);
+    if (!group) return { skipped: true, reason: "group_not_found" };
+
+    const member = await ctx.db.get(userId);
+    if (!member) return { skipped: true, reason: "member_not_found" };
+
+    const community = await ctx.db.get(group.communityId);
+
+    // Active leaders for the group, excluding the new member so a leader who
+    // joins is never assigned to follow up with themselves.
+    const leaderMemberships = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group", (q) => q.eq("groupId", groupId))
+      .filter((q) =>
+        q.and(
+          q.eq(q.field("leftAt"), undefined),
+          q.eq(q.field("role"), "leader"),
+        ),
+      )
+      .take(100);
+
+    const resolvedLeaders = await Promise.all(
+      leaderMemberships
+        .filter((m) => m.userId !== userId)
+        .map(async (m) => {
+          const user = await ctx.db.get(m.userId);
+          if (!user) return null;
+          const displayName =
+            [user.firstName, user.lastName].filter(Boolean).join(" ") ||
+            "leader";
+          return { userId: m.userId, displayName };
+        }),
+    );
+    const leaders = resolvedLeaders.filter(
+      (leader): leader is BirthdayReminderLeader => leader !== null,
+    );
+
+    if (leaders.length === 0) {
+      return { skipped: true, reason: "no_leaders" };
+    }
+
+    const configData = (config.config as Record<string, unknown>) || {};
+    const state = (config.state as Record<string, unknown>) || {};
+    const assignmentMode =
+      (configData.assignmentMode as string) || "round_robin";
+    const specificLeaderId =
+      (configData.specificLeaderId as Id<"users"> | undefined) || undefined;
+    const lastLeaderIndex =
+      typeof state.lastLeaderIndex === "number"
+        ? (state.lastLeaderIndex as number)
+        : undefined;
+
+    // Reuse the shared resolver: specific leader when configured & present,
+    // else round-robin from the saved pointer.
+    const assignedLeader = resolveBirthdayReminderLeader({
+      leaders,
+      assignmentMode,
+      specificLeaderId,
+      lastLeaderIndex,
+    });
+
+    if (!assignedLeader) {
+      return { skipped: true, reason: "no_leader_resolved" };
+    }
+
+    // Advance the pointer whenever the assignment came from round-robin — i.e.
+    // unless we actually pinned the configured specific leader. This also keeps
+    // the rotation moving when a specific leader is no longer an active leader
+    // and the resolver falls back to round-robin.
+    const usedSpecificLeader =
+      assignmentMode === "specific_leader" &&
+      !!specificLeaderId &&
+      assignedLeader.userId === specificLeaderId;
+
+    if (!usedSpecificLeader) {
+      const assignedIndex = leaders.findIndex(
+        (leader) => leader.userId === assignedLeader.userId,
+      );
+      await ctx.db.patch(config._id, {
+        state: { ...state, lastLeaderIndex: assignedIndex },
+        updatedAt: now(),
+      });
+    }
+
+    const messageTemplate =
+      (configData.message as string) ||
+      "🤝 Hey [[leader_name]], please follow up with [[member_name]] who just joined [[group_name]]!";
+    const memberName =
+      [member.firstName, member.lastName].filter(Boolean).join(" ") ||
+      member.firstName ||
+      "a new member";
+    const communityName = community?.name || "Community";
+
+    // Use replacer functions so "$" sequences in the substituted values
+    // (names, group, community) are inserted literally — String.replace treats
+    // "$&", "$1", … in a string replacement specially.
+    const message = messageTemplate
+      .replace(/\[\[leader_name\]\]/g, () => assignedLeader.displayName)
+      .replace(/\[\[member_name\]\]/g, () => memberName)
+      .replace(/\[\[group_name\]\]/g, () => group.name)
+      .replace(/\[\[community_name\]\]/g, () => communityName);
+
+    return {
+      skipped: false,
+      assignedLeaderId: assignedLeader.userId,
+      targetChannelSlug: (configData.targetChannelSlug as string) || "leaders",
+      message,
+    };
+  },
+});
+
+/**
+ * Assign a leader to follow up with a newly-joined member.
+ *
+ * Called by the scheduler when a new member joins a group (event-triggered,
+ * mirrors the Welcome Bot). The leader is resolved — and the round-robin
+ * pointer advanced — atomically by prepareFollowupAssignment; this action then
+ * notifies the assigned leader via an @mention in the target channel, which
+ * fans out to push/email like any other mention.
+ */
+export const assignNewMemberFollowup = internalAction({
+  args: {
+    groupId: v.id("groups"),
+    userId: v.id("users"),
+  },
+  handler: async (
+    ctx,
+    { groupId, userId },
+  ): Promise<
+    | { skipped: true; reason: string }
+    | { success: true; assignedLeaderId: Id<"users">; message: string }
+    | { success: false; error: string }
+  > => {
+    const assignment = await ctx.runMutation(
+      internal.functions.scheduledJobs.prepareFollowupAssignment,
+      { groupId, userId },
+    );
+
+    if (assignment.skipped) {
+      return { skipped: true, reason: assignment.reason };
+    }
+
+    try {
+      await ctx.runAction(internal.functions.scheduledJobs.sendBotMessage, {
+        groupId,
+        message: assignment.message,
+        targetChannelSlug: assignment.targetChannelSlug,
+        botType: "followup",
+        mentionedUserIds: [assignment.assignedLeaderId],
+      });
+    } catch (error) {
+      console.error(`[FollowupBot] Error sending assignment:`, error);
+      return { success: false, error: String(error) };
+    }
+
+    return {
+      success: true,
+      assignedLeaderId: assignment.assignedLeaderId,
+      message: assignment.message,
+    };
+  },
+});
+
+// ============================================================================
 // COMMUNICATION BOT
 // ============================================================================
 
@@ -2185,7 +2486,11 @@ export const processCommunicationBotBucket = internalAction({
                   resolvedMessage = await ctx.runAction(
                     internal.functions.pcoServices.actions
                       .resolvePositionPlaceholdersInternal,
-                    { communityId: config.communityId, message: msg.message },
+                    {
+                      communityId: config.communityId,
+                      message: msg.message,
+                      groupId: config.groupId,
+                    },
                   );
                 } catch (error) {
                   console.warn(
@@ -2206,6 +2511,16 @@ export const processCommunicationBotBucket = internalAction({
                 );
 
                 if (sendResult.success) {
+                  results.push({
+                    groupId: config.groupId,
+                    messageId: msg.id,
+                    success: true,
+                  });
+                } else if ("skipped" in sendResult) {
+                  // Target channel inactive (e.g. General disabled) — silent no-op.
+                  console.info(
+                    `[CommunicationBot] Skipped message ${msg.id}: ${sendResult.reason}`,
+                  );
                   results.push({
                     groupId: config.groupId,
                     messageId: msg.id,
@@ -2255,7 +2570,11 @@ export const processCommunicationBotBucket = internalAction({
               resolvedMessage = await ctx.runAction(
                 internal.functions.pcoServices.actions
                   .resolvePositionPlaceholdersInternal,
-                { communityId: config.communityId, message },
+                {
+                  communityId: config.communityId,
+                  message,
+                  groupId: config.groupId,
+                },
               );
             } catch (error) {
               console.warn(

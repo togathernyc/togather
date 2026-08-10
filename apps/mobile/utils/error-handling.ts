@@ -24,6 +24,30 @@ export function showAlert(title: string, message: string): void {
 }
 
 /**
+ * Extract a readable message from a ConvexError (or plain Error).
+ *
+ * ConvexError carries its payload on `.data`; production `.message` is a
+ * generic "[CONVEX M(...)] [Request ID: ...] Server Error" string, which reads
+ * to a user as a backend crash.
+ *
+ * The payload comes in both shapes across this codebase — `ConvexError("text")`
+ * puts a bare string on `.data`, while `ConvexError({ code, message })` puts an
+ * object there. Handle both: checking only `.data.message` silently falls
+ * through to the opaque `.message` for every string-payload error, which is
+ * most of them.
+ */
+export function errorMessage(error: unknown, fallback: string): string {
+  const data = (error as { data?: unknown } | null)?.data;
+  if (typeof data === 'string' && data.trim()) return data;
+  const message = (data as { message?: unknown } | null | undefined)?.message;
+  if (typeof message === 'string' && message.trim()) return message;
+  if (error instanceof Error && error.message && !error.message.includes('[CONVEX')) {
+    return error.message;
+  }
+  return fallback;
+}
+
+/**
  * Map of known error messages to user-friendly versions
  * Add entries here to customize error messages shown to users
  */
@@ -32,7 +56,10 @@ const USER_FRIENDLY_ERRORS: Record<string, string> = {
   "Only group leaders can update group": "You don't have permission to edit this group.",
   "You don't have permission to edit this group": "You don't have permission to edit this group.",
   "Community admin role required": "You don't have permission to perform this action.",
-  "Primary Admin role required": "Only the primary admin can perform this action.",
+  // A community can have more than one primary admin, so the copy says "a",
+  // not "the" — telling someone "only THE primary admin" when they know two
+  // people hold the role reads as a bug.
+  "Primary Admin role required": "Only a primary admin can perform this action.",
 
   // Authentication errors
   "Authentication required": "Please sign in to continue.",

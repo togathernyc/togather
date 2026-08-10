@@ -27,6 +27,12 @@ jest.mock("@hooks/useCommunityTheme", () => ({
   useCommunityTheme: () => ({ primaryColor: "#007AFF" }),
 }));
 
+// Flag off = the behavior this suite asserts; the real hook would reach
+// PostHog + a Convex query that the partial api mock below doesn't provide.
+jest.mock("@hooks/useWhatsappShell", () => ({
+  useWhatsappShell: () => false,
+}));
+
 jest.mock("@hooks/useTheme", () => ({
   useTheme: () => ({
     colors: {
@@ -255,7 +261,7 @@ describe("ChannelsSection (redesigned)", () => {
   });
 
   describe("Navigation", () => {
-    it("navigates to General chat (not info) on tap", () => {
+    it("navigates to General /info on tap (where Active state lives)", () => {
       const { getByText } = render(
         <ChannelsSection groupId="test-group" userRole="member" />
       );
@@ -264,7 +270,7 @@ describe("ChannelsSection (redesigned)", () => {
         fireEvent.press(getByText("General").parent!.parent!.parent!);
       });
 
-      expect(mockPush).toHaveBeenCalledWith("/inbox/test-group/general");
+      expect(mockPush).toHaveBeenCalledWith("/inbox/test-group/general/info");
     });
 
     it("navigates to Leaders /info on tap", () => {
@@ -371,6 +377,239 @@ describe("ChannelsSection (redesigned)", () => {
 
       expect(getByText("Leaders")).toBeTruthy();
       expect(getByText("Disabled")).toBeTruthy();
+    });
+  });
+
+  describe("Archived channels fold into one collapsible section", () => {
+    const disabledCustomChannel = {
+      _id: "channel-custom-archived",
+      slug: "old-team",
+      channelType: "custom",
+      name: "Old Team",
+      memberCount: 0,
+      isArchived: false,
+      isMember: false,
+      unreadCount: 0,
+      isPinned: false,
+      isEnabled: false, // leader hid it → "Hidden — visible to leaders"
+    };
+
+    it("hides archived/disabled channels behind a single 'Archived' toggle for leaders", () => {
+      mockChannelsData = [
+        mockMainChannel,
+        mockLeadersChannel,
+        ...mockCustomChannels,
+        disabledCustomChannel,
+      ];
+
+      const { getByText, queryByText } = render(
+        <ChannelsSection groupId="test-group" userRole="leader" />
+      );
+
+      // The disabled channel is folded away — not shown directly…
+      expect(queryByText("Old Team")).toBeNull();
+      // …but a single Archived toggle summarizes it.
+      expect(getByText("Archived")).toBeTruthy();
+      expect(getByText(/1 channel/)).toBeTruthy();
+    });
+
+    it("expands the archived channel when the toggle is pressed", () => {
+      mockChannelsData = [
+        mockMainChannel,
+        mockLeadersChannel,
+        disabledCustomChannel,
+      ];
+
+      const { getByText, queryByText } = render(
+        <ChannelsSection groupId="test-group" userRole="leader" />
+      );
+
+      expect(queryByText("Old Team")).toBeNull();
+
+      act(() => {
+        fireEvent.press(getByText("Archived").parent!.parent!);
+      });
+
+      expect(getByText("Old Team")).toBeTruthy();
+    });
+
+    it("does not show an Archived toggle when there are no archived channels", () => {
+      mockChannelsData = [mockMainChannel, mockLeadersChannel];
+
+      const { queryByText } = render(
+        <ChannelsSection groupId="test-group" userRole="leader" />
+      );
+
+      expect(queryByText("Archived")).toBeNull();
+    });
+
+    it("folds a General channel hidden via isEnabled=false (not just isArchived)", () => {
+      // Regression: a disabled General (isEnabled: false, isArchived: false)
+      // must read as Disabled and fold under Archived, not show as active
+      // "All members".
+      mockChannelsData = [
+        { ...mockMainChannel, isEnabled: false, isArchived: false },
+        mockLeadersChannel,
+      ];
+
+      const { getByText, queryByText } = render(
+        <ChannelsSection groupId="test-group" userRole="leader" />
+      );
+
+      expect(queryByText("All members")).toBeNull();
+      expect(getByText("Archived")).toBeTruthy();
+
+      act(() => {
+        fireEvent.press(getByText("Archived").parent!.parent!);
+      });
+
+      expect(getByText("General")).toBeTruthy();
+    });
+
+    it("does not show an Archived toggle to members (they never receive disabled channels)", () => {
+      // Members are filtered to enabled channels before rows are built, so
+      // there is nothing to fold and no toggle appears.
+      mockChannelsData = [mockMainChannel, ...mockCustomChannels];
+
+      const { queryByText } = render(
+        <ChannelsSection groupId="test-group" userRole="member" />
+      );
+
+      expect(queryByText("Archived")).toBeNull();
+    });
+  });
+
+  describe("Announcements", () => {
+    const ownAnnouncementsChannel = {
+      _id: "channel-announcements-own",
+      slug: "announcements",
+      channelType: "announcements",
+      name: "Announcements",
+      memberCount: 12,
+      isArchived: false,
+      isMember: true,
+      unreadCount: 0,
+      isPinned: false,
+      isEnabled: true,
+    };
+
+    // Another group's announcements channel shared INTO this group — same
+    // slug as the own channel, disambiguated by sharedFromGroupName/_id.
+    const sharedInAnnouncementsChannel = {
+      _id: "channel-announcements-shared",
+      slug: "announcements",
+      channelType: "announcements",
+      name: "Announcements",
+      memberCount: 40,
+      isArchived: false,
+      isMember: true,
+      unreadCount: 3,
+      isPinned: false,
+      isEnabled: true,
+      sharedFromGroupId: "owner-group",
+      sharedFromGroupName: "Owner Group",
+    };
+
+    it("renders the own channel with member count and passes the channel id on tap", () => {
+      mockChannelsData = [mockMainChannel, ownAnnouncementsChannel];
+
+      const { getByText } = render(
+        <ChannelsSection groupId="test-group" userRole="leader" />
+      );
+
+      expect(getByText("Announcements")).toBeTruthy();
+      expect(getByText("12 members · Leaders post")).toBeTruthy();
+
+      act(() => {
+        fireEvent.press(getByText("Announcements").parent!.parent!.parent!);
+      });
+
+      expect(mockPush).toHaveBeenCalledWith({
+        pathname: "/inbox/test-group/announcements/info",
+        params: { channelId: "channel-announcements-own" },
+      });
+    });
+
+    it("shows the owner-side shared count on the own channel", () => {
+      mockChannelsData = [
+        mockMainChannel,
+        { ...ownAnnouncementsChannel, sharedGroupCount: 2 },
+      ];
+
+      const { getByText } = render(
+        <ChannelsSection groupId="test-group" userRole="leader" />
+      );
+
+      expect(getByText("12 members · Shared with 2 groups")).toBeTruthy();
+    });
+
+    it("renders ONE row from the shared-in channel and hides the own disabled channel", () => {
+      mockChannelsData = [
+        mockMainChannel,
+        // Own channel is disabled while receiving the share.
+        { ...ownAnnouncementsChannel, isEnabled: false },
+        sharedInAnnouncementsChannel,
+      ];
+
+      const { getByText, getAllByText, queryByText } = render(
+        <ChannelsSection groupId="test-group" userRole="leader" />
+      );
+
+      expect(getAllByText("Announcements")).toHaveLength(1);
+      expect(
+        getByText("Shared — announcements come from Owner Group")
+      ).toBeTruthy();
+      // The disabled own channel neither renders as a second row nor folds
+      // under Archived.
+      expect(queryByText("Archived")).toBeNull();
+      // Unread badge comes from the shared-in channel.
+      expect(getByText("3")).toBeTruthy();
+    });
+
+    it("navigates to the SHARED channel (by id) when the shared-in row is tapped", () => {
+      mockChannelsData = [
+        mockMainChannel,
+        { ...ownAnnouncementsChannel, isEnabled: false },
+        sharedInAnnouncementsChannel,
+      ];
+
+      const { getByText } = render(
+        <ChannelsSection groupId="test-group" userRole="leader" />
+      );
+
+      act(() => {
+        fireEvent.press(getByText("Announcements").parent!.parent!.parent!);
+      });
+
+      expect(mockPush).toHaveBeenCalledWith({
+        pathname: "/inbox/test-group/announcements/info",
+        params: { channelId: "channel-announcements-shared" },
+      });
+    });
+
+    it("members with a shared-in channel see the shared subtitle too", () => {
+      // Members never receive the own disabled channel from the query.
+      mockChannelsData = [mockMainChannel, sharedInAnnouncementsChannel];
+
+      const { getByText } = render(
+        <ChannelsSection groupId="test-group" userRole="member" />
+      );
+
+      expect(
+        getByText("Shared — announcements come from Owner Group")
+      ).toBeTruthy();
+    });
+
+    it("shows the enable CTA for leaders when no announcements channel exists", () => {
+      mockChannelsData = [mockMainChannel];
+
+      const { getByText } = render(
+        <ChannelsSection groupId="test-group" userRole="leader" />
+      );
+
+      expect(
+        getByText("Tap to enable — leaders post, members read")
+      ).toBeTruthy();
     });
   });
 });

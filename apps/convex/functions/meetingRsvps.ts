@@ -13,8 +13,18 @@ import { query, mutation } from "../_generated/server";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { now, getMediaUrl } from "../lib/utils";
+import {
+  audienceOf,
+  audienceDenialMessage,
+  canAccessMeeting,
+} from "../lib/meetingAudience";
 import { requireAuth, getOptionalAuth } from "../lib/auth";
-import { PAST_EVENT_BUFFER_MS } from "../lib/meetingConfig";
+import {
+  PAST_EVENT_BUFFER_MS,
+  isNotifiedRsvpOptionId,
+  GOING_RSVP_OPTION_ID,
+} from "../lib/meetingConfig";
+import { canEditMeeting } from "../lib/meetingPermissions";
 import {
   getMaxGuestsForMeeting,
   isGoingOption,
@@ -243,6 +253,66 @@ export const list = query({
 });
 
 /**
+ * Full "Going" roster for a meeting — for event managers taking attendance.
+ *
+ * Unlike `list`, which returns a capped 10-per-option *preview* to anyone who
+ * hasn't RSVPed (a cosmetic cap for a view-only guest list), this returns
+ * EVERY user who RSVPed "Going". The check-in screen is an interactive door
+ * list: the manager must be able to act on — and count — every attendee, not
+ * just the first ten. Gated by `canEditMeeting` (event host / group leaders /
+ * community admins), the same rule the attendance mutations enforce, so the
+ * full roster is only exposed to people already authorized to manage it.
+ */
+export const goingRoster = query({
+  args: {
+    token: v.string(),
+    meetingId: v.id("meetings"),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+
+    const meeting = await ctx.db.get(args.meetingId);
+    if (!meeting) {
+      throw new Error("Meeting not found");
+    }
+
+    if (!(await canEditMeeting(ctx, userId, meeting))) {
+      throw new Error(
+        "Only the event creator, group leaders, or community admins can view the check-in roster"
+      );
+    }
+
+    // All "Going" RSVPs for this meeting (safety limit matches list()).
+    const rsvps = await ctx.db
+      .query("meetingRsvps")
+      .withIndex("by_meeting", (q) => q.eq("meetingId", args.meetingId))
+      .take(500);
+
+    const goingRsvps = rsvps.filter(
+      (r) => r.rsvpOptionId === GOING_RSVP_OPTION_ID
+    );
+
+    // Batch-fetch user docs for O(1) mapping.
+    const userIds = goingRsvps.map((r) => r.userId);
+    const users = await Promise.all(userIds.map((id) => ctx.db.get(id)));
+
+    return goingRsvps
+      .map((rsvp, i) => {
+        const user = users[i];
+        if (!user) return null;
+        return {
+          id: user._id,
+          firstName: user.firstName || "",
+          lastName: user.lastName || "",
+          profileImage: getMediaUrl(user.profilePhoto),
+          guestCount: rsvp.guestCount ?? 0,
+        };
+      })
+      .filter((u): u is NonNullable<typeof u> => u !== null);
+  },
+});
+
+/**
  * Get meetings the current user has RSVP'd to
  *
  * Returns meetings with the user's RSVP and group info.
@@ -408,45 +478,10 @@ export const submit = mutation({
       throw new Error("Cannot RSVP to past event");
     }
 
-    // Check visibility-based membership
-    const visibility = meeting.visibility || "group";
-
-    if (visibility === "group") {
-      // For group-only events, user must be an active member of the group
-      const groupMembership = await ctx.db
-        .query("groupMembers")
-        .withIndex("by_group_user", (q) =>
-          q.eq("groupId", meeting.groupId).eq("userId", userId)
-        )
-        .first();
-
-      if (
-        !groupMembership ||
-        groupMembership.leftAt ||
-        (groupMembership.requestStatus &&
-          groupMembership.requestStatus !== "accepted")
-      ) {
-        throw new Error("You must be a group member to RSVP to this event");
-      }
-    } else if (visibility === "community") {
-      // For community-wide events, user must be a member of the community
-      const group = await ctx.db.get(meeting.groupId);
-      if (!group) {
-        throw new Error("Group not found");
-      }
-
-      const communityMembership = await ctx.db
-        .query("userCommunities")
-        .withIndex("by_user_community", (q) =>
-          q.eq("userId", userId).eq("communityId", group.communityId)
-        )
-        .first();
-
-      if (!communityMembership) {
-        throw new Error("You must be a community member to RSVP to this event");
-      }
+    // Audience gate — identical rule to what the event lists render.
+    if (!(await canAccessMeeting(ctx, audienceOf(meeting), userId))) {
+      throw new Error(audienceDenialMessage(meeting, "RSVP to"));
     }
-    // For public events, anyone authenticated can RSVP (no additional check needed)
 
     // Validate the option exists and is enabled
     const rsvpOptions = (meeting.rsvpOptions as RsvpOption[] | null) || [];
@@ -516,13 +551,15 @@ export const submit = mutation({
       }
 
       // Sync event chat channel membership based on whether the final
-      // option is enabled. Runs inline (same transaction) so the RSVP
-      // write and the chat-member row stay consistent — fire-and-forget
-      // via the scheduler could leave the two rows out of sync if the
-      // scheduled mutation failed, with no reconciliation path. Channels
-      // are lazy-created, so these calls are no-ops if no channel exists
-      // yet.
-      if (selectedOption.enabled) {
+      // option counts as attending (Going/Maybe — see
+      // NOTIFIED_RSVP_OPTION_IDS). Going/Maybe RSVPers are seated so they
+      // receive event updates; "Can't Go" responders are removed. Runs
+      // inline (same transaction) so the RSVP write and the chat-member row
+      // stay consistent — fire-and-forget via the scheduler could leave the
+      // two rows out of sync if the scheduled mutation failed, with no
+      // reconciliation path. Channels are lazy-created, so these calls are
+      // no-ops if no channel exists yet (backfilled on channel creation).
+      if (isNotifiedRsvpOptionId(args.optionId)) {
         await ctx.runMutation(internal.functions.messaging.eventChat.addEventChannelMember, {
           meetingId: args.meetingId,
           userId,
@@ -558,14 +595,17 @@ export const submit = mutation({
       rsvpOptionLabel: selectedOption.label,
     });
 
-    // Sync event chat channel membership. Submit only allows enabled
-    // options (validated above), so new inserts always add. The channel
-    // is lazy-created, so this is a no-op if no channel exists yet.
-    // Runs inline so RSVP + chat membership stay consistent.
-    await ctx.runMutation(internal.functions.messaging.eventChat.addEventChannelMember, {
-      meetingId: args.meetingId,
-      userId,
-    });
+    // Sync event chat channel membership. Only Going/Maybe responders are
+    // seated (so they receive event updates); a brand-new "Can't Go" RSVP
+    // doesn't join the chat. The channel is lazy-created, so this is a no-op
+    // if no channel exists yet (backfilled on channel creation). Runs inline
+    // so RSVP + chat membership stay consistent.
+    if (isNotifiedRsvpOptionId(args.optionId)) {
+      await ctx.runMutation(internal.functions.messaging.eventChat.addEventChannelMember, {
+        meetingId: args.meetingId,
+        userId,
+      });
+    }
 
     return {
       success: true,
@@ -672,14 +712,22 @@ export const batchUpdate = mutation({
         });
       }
 
-      // Sync event chat channel membership. batchUpdate only allows
-      // enabled options (filtered via validOptionIds above), so we
-      // always add here. No-op if no channel exists yet. Runs inline so
-      // the RSVP writes and chat membership stay consistent.
-      await ctx.runMutation(internal.functions.messaging.eventChat.addEventChannelMember, {
-        meetingId: args.meetingId,
-        userId: rsvpUpdate.userId,
-      });
+      // Sync event chat channel membership. Going/Maybe responders are
+      // seated so they get event updates; others (e.g. "Can't Go") are
+      // removed. No-op if no channel exists yet (backfilled on channel
+      // creation). Runs inline so the RSVP writes and chat membership stay
+      // consistent.
+      if (isNotifiedRsvpOptionId(rsvpUpdate.optionId)) {
+        await ctx.runMutation(internal.functions.messaging.eventChat.addEventChannelMember, {
+          meetingId: args.meetingId,
+          userId: rsvpUpdate.userId,
+        });
+      } else {
+        await ctx.runMutation(internal.functions.messaging.eventChat.removeEventChannelMember, {
+          meetingId: args.meetingId,
+          userId: rsvpUpdate.userId,
+        });
+      }
     }
 
     return { success: true };

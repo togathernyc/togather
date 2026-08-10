@@ -22,6 +22,10 @@ import { isActiveMembership, isLeaderRole } from "../lib/helpers";
 import { VALID_CUSTOM_SLOTS } from "../lib/followupConstants";
 import { SYSTEM_SCORES, SYSTEM_VARIABLE_IDS } from "./systemScoring";
 import { getMediaUrl, safeSliceForJson } from "../lib/utils";
+import {
+  nativeServingHistory,
+  mergeServingHistory,
+} from "../lib/nativeServing";
 
 // ============================================================================
 // Auth Helpers
@@ -44,6 +48,12 @@ async function requireCommunityMember(
 
   if (!membership || membership.status !== 1) {
     throw new ConvexError("Not a community member");
+  }
+
+  // Archived (closed) communities are inaccessible even to members.
+  const community = await ctx.db.get(communityId);
+  if (community?.isArchived) {
+    throw new ConvexError("COMMUNITY_ARCHIVED");
   }
 
   return membership;
@@ -98,7 +108,10 @@ async function getLeaderGroupIdsInCommunity(
   for (const m of memberships) {
     if (!isActiveMembership(m) || !isLeaderRole(m.role)) continue;
     const group = await ctx.db.get(m.groupId);
-    if (group?.communityId === communityId) result.push(m.groupId);
+    // Skip archived groups — their people should not appear on the People page.
+    if (group?.communityId === communityId && !group.isArchived) {
+      result.push(m.groupId);
+    }
   }
   return result;
 }
@@ -175,6 +188,31 @@ const INDEX_MAP: Record<string, string> = {
 };
 
 // ============================================================================
+// Archived filtering
+// ============================================================================
+
+/**
+ * Controls whether archived (inactive) people appear in a listing:
+ * - omitted  → exclude archived (default; the people table hides them)
+ * - "include" → show active and archived together
+ * - "only"    → show only archived people
+ *
+ * A person is archived when `isActive === false`.
+ */
+export const archivedFilterValidator = v.optional(
+  v.union(v.literal("include"), v.literal("only")),
+);
+
+type ArchivedFilter = "include" | "only" | undefined;
+
+/** In-memory predicate matching the archived filter for a person record. */
+function matchesArchivedFilter(doc: any, archived: ArchivedFilter): boolean {
+  if (archived === "include") return true;
+  if (archived === "only") return doc.isActive === false;
+  return doc.isActive !== false; // default: exclude archived
+}
+
+// ============================================================================
 // Queries
 // ============================================================================
 
@@ -197,6 +235,7 @@ export const list = query({
     assigneeFilter: v.optional(v.string()),
     // When true, forces assigneeFilter to the requesting user's ID (server-enforced)
     requireSelfAssignee: v.optional(v.boolean()),
+    archived: archivedFilterValidator,
     paginationOpts: paginationOptsValidator,
   },
   handler: async (ctx, args) => {
@@ -248,11 +287,16 @@ export const list = query({
       | "score1"
       | "score2"
       | "score3";
+    // Archived people are hidden unless the caller opts in.
+    const excludeArchived = args.archived === undefined;
+    const onlyArchived = args.archived === "only";
     const hasFilters =
       args.statusFilter ||
       assigneeFilter ||
       args.scoreMax !== undefined ||
-      args.scoreMin !== undefined;
+      args.scoreMin !== undefined ||
+      excludeArchived ||
+      onlyArchived;
 
     if (hasFilters) {
       q = q.filter((fq) => {
@@ -265,6 +309,11 @@ export const list = query({
         }
         if (args.scoreMin !== undefined) {
           conds.push(fq.gt(fq.field(scoreFilterField), args.scoreMin));
+        }
+        if (excludeArchived) {
+          conds.push(fq.neq(fq.field("isActive"), false));
+        } else if (onlyArchived) {
+          conds.push(fq.eq(fq.field("isActive"), false));
         }
         if (conds.length === 0) return true;
         return conds.length === 1
@@ -291,6 +340,7 @@ export const list = query({
 
       // Apply status/score filters (same logic as the .filter() branch above)
       const filtered = validDocs.filter((d) => {
+        if (!matchesArchivedFilter(d, args.archived)) return false;
         if (args.statusFilter && d.status !== args.statusFilter) return false;
         if (
           args.scoreMax !== undefined &&
@@ -378,6 +428,7 @@ const csvExportArgs = {
   scoreMax: v.optional(v.number()),
   assigneeFilter: v.optional(v.string()),
   requireSelfAssignee: v.optional(v.boolean()),
+  archived: archivedFilterValidator,
 };
 
 /**
@@ -425,6 +476,7 @@ export const _csvExportPage = internalQuery({
       );
 
       const filtered = validDocs.filter((d) => {
+        if (!matchesArchivedFilter(d, args.archived)) return false;
         if (args.statusFilter && d.status !== args.statusFilter) return false;
         if (
           args.scoreMax !== undefined &&
@@ -471,10 +523,14 @@ export const _csvExportPage = internalQuery({
       .withIndex(indexName as any, (fq: any) => fq.eq("groupId", args.groupId))
       .order(direction);
 
+    const excludeArchived = args.archived === undefined;
+    const onlyArchived = args.archived === "only";
     const hasFilters =
       args.statusFilter ||
       args.scoreMax !== undefined ||
-      args.scoreMin !== undefined;
+      args.scoreMin !== undefined ||
+      excludeArchived ||
+      onlyArchived;
 
     if (hasFilters) {
       q = q.filter((fq) => {
@@ -487,6 +543,11 @@ export const _csvExportPage = internalQuery({
         }
         if (args.scoreMin !== undefined) {
           conds.push(fq.gt(fq.field(scoreFilterField), args.scoreMin));
+        }
+        if (excludeArchived) {
+          conds.push(fq.neq(fq.field("isActive"), false));
+        } else if (onlyArchived) {
+          conds.push(fq.eq(fq.field("isActive"), false));
         }
         if (conds.length === 0) return true;
         return conds.length === 1
@@ -543,6 +604,7 @@ export const listAllForCsvExport = action({
           scoreMin: args.scoreMin,
           scoreMax: args.scoreMax,
           assigneeFilter: resolvedAssignee,
+          archived: args.archived,
           userId,
           skip,
         },
@@ -576,6 +638,7 @@ export const listAllForCsvExport = action({
           scoreMin: args.scoreMin,
           scoreMax: args.scoreMax,
           assigneeFilter: resolvedAssignee,
+          archived: args.archived,
           userId,
           skip,
         },
@@ -609,16 +672,16 @@ export const listAllForCsvExport = action({
 
     const customFields = csvData.customFields as Array<{ slot: string; name: string; type: string }>;
 
-    // Build column keys and labels
-    const SCORE_COLUMNS = [
-      { slot: "score1", name: "Service" },
-      { slot: "score2", name: "Attendance" },
-      { slot: "score3", name: "Connection" },
-    ];
+    // Build column keys and labels. Source score names from SYSTEM_SCORES so the
+    // CSV headers stay in sync with the canonical labels (e.g. "Serving").
+    const SCORE_COLUMNS = SYSTEM_SCORES.map((s) => ({
+      slot: s.slot,
+      name: s.name,
+    }));
     const columnKeys = [
       "addedAt", "firstName", "lastName", "email", "phone", "zipCode", "dateOfBirth",
       ...SCORE_COLUMNS.map((s) => s.slot),
-      "assignee", "notes", "tasks", "status", "lastAttendedAt", "lastFollowupAt", "lastActiveAt", "alerts",
+      "assignee", "notes", "tasks", "status", "lastAttendedAt", "lastFollowupAt", "lastActiveAt", "alerts", "archived",
       ...customFields.map((cf) => cf.slot),
     ];
     const columnLabelMap: Record<string, string> = {
@@ -626,7 +689,7 @@ export const listAllForCsvExport = action({
       email: "Email", phone: "Phone", zipCode: "ZIP Code", dateOfBirth: "Birthday",
       assignee: "Assignees", notes: "Notes", tasks: "Tasks", status: "Status",
       lastAttendedAt: "Last Attended", lastFollowupAt: "Last Contact",
-      lastActiveAt: "Date Active", alerts: "Alerts",
+      lastActiveAt: "Date Active", alerts: "Alerts", archived: "Archived",
     };
     for (const sc of SCORE_COLUMNS) columnLabelMap[sc.slot] = sc.name;
     for (const cf of customFields) columnLabelMap[cf.slot] = cf.name;
@@ -668,6 +731,7 @@ export const listAllForCsvExport = action({
           case "lastFollowupAt": return formatTs(m.lastFollowupAt);
           case "lastActiveAt": return formatTs(m.lastActiveAt);
           case "alerts": return (m.alerts ?? []).join("; ");
+          case "archived": return m.isActive === false ? "Archived" : "Active";
           default: {
             if (key.startsWith("custom")) {
               const raw = m[key];
@@ -802,6 +866,7 @@ export const search = query({
     addedAtMax: v.optional(v.number()),
     // When true, forces assigneeFilter to the requesting user's ID (server-enforced)
     requireSelfAssignee: v.optional(v.boolean()),
+    archived: archivedFilterValidator,
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token ?? "");
@@ -910,6 +975,10 @@ export const search = query({
           !excludedIdSets.some((set) => set.has(doc._id.toString())),
       );
     }
+    // Archived people are hidden unless the caller opts in.
+    filtered = filtered.filter((doc: any) =>
+      matchesArchivedFilter(doc, args.archived),
+    );
 
     const sliced = filtered.slice(0, 200);
     return leaderUserIds
@@ -960,6 +1029,8 @@ export const listForMap = query({
       .order("desc")) {
       if (!record.zipCode) break;
       if (results.length >= MAX_RESULTS) break;
+      // Archived people are hidden from the map.
+      if (record.isActive === false) continue;
       results.push({
         _id: record._id,
         firstName: record.firstName ?? "",
@@ -1019,6 +1090,7 @@ export const listAssignedToMe = query({
     addedAtMin: v.optional(v.number()),
     addedAtMax: v.optional(v.number()),
     groupFilter: v.optional(v.id("groups")),
+    archived: archivedFilterValidator,
     paginationOpts: paginationOptsValidator,
   },
   handler: async (ctx, args) => {
@@ -1034,6 +1106,13 @@ export const listAssignedToMe = query({
       return { page: [], isDone: true, continueCursor: "" };
     }
     const leaderGroupIdSet = new Set(leaderGroupIds.map((id) => id.toString()));
+
+    // An explicit groupFilter must reference one of the caller's active
+    // (non-archived) leader groups. A stale/deep-linked or archived group id
+    // must not surface its people, so short-circuit to an empty page.
+    if (args.groupFilter && !leaderGroupIdSet.has(args.groupFilter.toString())) {
+      return { page: [], isDone: true, continueCursor: "" };
+    }
 
     const assigneeId = args.assigneeFilter ?? userId;
     const scoreFilterField = (args.scoreField ?? "score1") as
@@ -1059,6 +1138,10 @@ export const listAssignedToMe = query({
           : leaderGroupIdSet.has(doc.groupId.toString())),
     );
 
+    // Archived people are hidden unless the caller opts in.
+    filtered = filtered.filter((d: any) =>
+      matchesArchivedFilter(d, args.archived),
+    );
     if (args.statusFilter)
       filtered = filtered.filter((d: any) => d.status === args.statusFilter);
     if (args.excludedAssigneeFilters?.length)
@@ -1141,6 +1224,7 @@ export const searchAssignedToMe = query({
     addedAtMin: v.optional(v.number()),
     addedAtMax: v.optional(v.number()),
     groupFilter: v.optional(v.id("groups")),
+    archived: archivedFilterValidator,
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token ?? "");
@@ -1153,6 +1237,12 @@ export const searchAssignedToMe = query({
     );
     if (leaderGroupIds.length === 0) return [];
     const leaderGroupIdSet = new Set(leaderGroupIds.map((id) => id.toString()));
+
+    // An explicit groupFilter must reference one of the caller's active
+    // (non-archived) leader groups; otherwise return nothing.
+    if (args.groupFilter && !leaderGroupIdSet.has(args.groupFilter.toString())) {
+      return [];
+    }
 
     const assigneeId = args.assigneeFilter ?? userId;
 
@@ -1223,6 +1313,10 @@ export const searchAssignedToMe = query({
             args.excludedAssigneeFilters!.includes(id),
           ),
       );
+    // Archived people are hidden unless the caller opts in.
+    filtered = filtered.filter((d: any) =>
+      matchesArchivedFilter(d, args.archived),
+    );
 
     const groupNameCache = new Map<string, string>();
     return Promise.all(
@@ -1260,6 +1354,12 @@ export const countAssignedToMe = query({
     );
     if (leaderGroupIds.length === 0) return 0;
     const leaderGroupIdSet = new Set(leaderGroupIds.map((id) => id.toString()));
+
+    // An explicit groupFilter must reference one of the caller's active
+    // (non-archived) leader groups; otherwise count nothing.
+    if (args.groupFilter && !leaderGroupIdSet.has(args.groupFilter.toString())) {
+      return 0;
+    }
 
     const assigneeId = args.assigneeFilter ?? userId;
 
@@ -1481,6 +1581,53 @@ export const setStatus = mutation({
 });
 
 /**
+ * Archive (set inactive) or unarchive (reactivate) a community person.
+ *
+ * Archived people are hidden from the people table by default. A manual archive
+ * sticks — the daily score job won't resurrect it — until the person opens the
+ * app again, at which point they're reactivated. `archivedAt` records when the
+ * archive happened so the job can detect a later app open.
+ *
+ * A manual unarchive records `reactivatedAt` so the person stays active for the
+ * full inactivity window measured from the unarchive — they won't be re-archived
+ * on the next daily run just because their last real activity is already stale.
+ * See computePersonActiveState in communityScoreComputation.ts.
+ */
+export const setActive = mutation({
+  args: {
+    token: v.string(),
+    communityPeopleId: v.id("communityPeople"),
+    isActive: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+
+    const cpRecord = await ctx.db.get(args.communityPeopleId);
+    if (!cpRecord) {
+      throw new ConvexError("Community person record not found");
+    }
+
+    await requireCommunityLeader(ctx, cpRecord.communityId, userId);
+
+    const now = Date.now();
+    const patchFields = {
+      isActive: args.isActive,
+      archivedAt: args.isActive ? undefined : now,
+      reactivatedAt: args.isActive ? now : undefined,
+    };
+    await ctx.db.patch(args.communityPeopleId, {
+      ...patchFields,
+      updatedAt: Date.now(),
+    });
+
+    // Archiving applies to the person across all their groups in the community.
+    await syncToSiblingRecords(ctx, cpRecord, patchFields);
+
+    return { success: true };
+  },
+});
+
+/**
  * Set or clear the zipCode on a community person.
  * Syncs the value to sibling communityPeople records and to the users table.
  */
@@ -1540,6 +1687,13 @@ export const setAssignees = mutation({
 
     await requireCommunityLeader(ctx, cpRecord.communityId, userId);
 
+    const previousAssigneeIds = new Set(
+      (cpRecord.assigneeIds ?? []).map((id) => id.toString()),
+    );
+    const newlyAddedAssigneeIds = args.assigneeIds.filter(
+      (id) => !previousAssigneeIds.has(id.toString()),
+    );
+
     const normalizedIds =
       args.assigneeIds.length > 0 ? args.assigneeIds : undefined;
     const assigneeSortKey = await buildAssigneeSortKey(ctx, normalizedIds as string[] | undefined);
@@ -1583,6 +1737,32 @@ export const setAssignees = mutation({
       );
     }
 
+    // Notify newly-added assignees once per community. Uses the cpRecord's
+    // group as the context so the push deep-links to the group the
+    // assignment was made from.
+    if (newlyAddedAssigneeIds.length > 0) {
+      const groupMember = await ctx.db
+        .query("groupMembers")
+        .withIndex("by_group_user", (q) =>
+          q.eq("groupId", cpRecord.groupId).eq("userId", cpRecord.userId),
+        )
+        .filter((q) => q.eq(q.field("leftAt"), undefined))
+        .first();
+      if (groupMember) {
+        for (const newAssigneeId of newlyAddedAssigneeIds) {
+          await ctx.scheduler.runAfter(
+            0,
+            internal.functions.notifications.senders.notifyFollowupAssigned,
+            {
+              assigneeId: newAssigneeId,
+              groupId: cpRecord.groupId,
+              groupMemberId: groupMember._id,
+            },
+          );
+        }
+      }
+    }
+
     return { success: true };
   },
 });
@@ -1599,6 +1779,7 @@ export const count = query({
   args: {
     groupId: v.id("groups"),
     token: v.optional(v.string()),
+    archived: archivedFilterValidator,
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token ?? "");
@@ -1609,9 +1790,11 @@ export const count = query({
     await requireCommunityMember(ctx, group.communityId, userId);
 
     let count = 0;
-    for await (const _cp of ctx.db
+    for await (const cp of ctx.db
       .query("communityPeople")
       .withIndex("by_group", (q: any) => q.eq("groupId", args.groupId))) {
+      // Match the listing's default: archived people aren't counted unless opted in.
+      if (!matchesArchivedFilter(cp, args.archived)) continue;
       count++;
     }
     return count;
@@ -1863,6 +2046,10 @@ export const history = query({
           } else if (v.variableId === "attended_weeks_in_window" || v.variableId === "total_weeks_in_window" || v.variableId === "meeting_weeks_in_window") {
             // For week counts, normalize relative to max window (approx 9 weeks in 60 days)
             normalizedValue = Math.min(100, Math.round((raw / 9) * 100));
+          } else if (v.variableId === "consecutive_missed") {
+            // Mirror the attendance-portion formula: 0 misses → 100%, 7+ → 0%.
+            // Bar fills from the "good" end, so more misses = shorter bar.
+            normalizedValue = Math.max(0, Math.round(100 - raw * (100 / 7)));
           }
           return {
             id: v.variableId,
@@ -1875,31 +2062,35 @@ export const history = query({
         }) ?? [],
     }));
 
-    // Serving history from announcement group's PCO data
-    const servingHistory: Array<{
+    // Serving history combines BOTH sources: native-origin rows from
+    // roleAssignments AND the cached PCO servingDetails on the announcement
+    // group doc, merged newest-first and deduped.
+    const nativeRows = await nativeServingHistory(
+      ctx,
+      cpRecord.userId,
+      cpRecord.communityId,
+      15,
+    );
+    const pcoRows: Array<{
       date: string;
       serviceTypeName: string;
       teamName: string;
       position: string | null;
     }> = [];
-
     if (announcementGroup) {
       const allDetails =
         (announcementGroup as any)?.pcoServingCounts?.servingDetails ?? [];
-      const userDetails = allDetails
-        .filter((d: any) => d.userId.toString() === cpRecord.userId.toString())
-        .sort((a: any, b: any) => b.date.localeCompare(a.date));
-
-      for (const d of userDetails) {
-        servingHistory.push({
+      for (const d of allDetails) {
+        if (d.userId.toString() !== cpRecord.userId.toString()) continue;
+        pcoRows.push({
           date: d.date,
           serviceTypeName: d.serviceTypeName,
           teamName: d.teamName,
           position: d.position ?? null,
         });
-        if (servingHistory.length >= 15) break;
       }
     }
+    const servingHistory = mergeServingHistory(nativeRows, pcoRows, 15);
 
     // Get profile image URL
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1918,6 +2109,7 @@ export const history = query({
         phone: u.phone || cpRecord.phone,
         profileImage,
         joinedAt: cpRecord.addedAt,
+        isActive: cpRecord.isActive !== false,
       },
       attendanceHistory:
         crossGroupAttendance.length > 0
@@ -2099,10 +2291,24 @@ export const addFollowup = mutation({
       v.literal("followed_up"),
     ),
     content: v.optional(v.string()),
+    // Optional back-dated timestamp for logging past contact. Must be in the past
+    // and not earlier than 1 year ago.
+    occurredAt: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
-    const timestamp = Date.now();
+    const now = Date.now();
+    let timestamp = now;
+    if (args.occurredAt !== undefined) {
+      const oneYearAgo = now - 365 * 24 * 60 * 60 * 1000;
+      if (args.occurredAt > now) {
+        throw new ConvexError("Past contact date cannot be in the future");
+      }
+      if (args.occurredAt < oneYearAgo) {
+        throw new ConvexError("Past contact date cannot be more than a year ago");
+      }
+      timestamp = args.occurredAt;
+    }
 
     const cpRecord = await ctx.db.get(args.communityPeopleId);
     if (!cpRecord) {
@@ -2111,14 +2317,22 @@ export const addFollowup = mutation({
 
     await requireCommunityLeader(ctx, cpRecord.communityId, userId);
 
-    // Update lastFollowupAt and latestNote on communityPeople when adding a note
+    // Update lastFollowupAt and latestNote on communityPeople when adding a note.
+    // For back-dated entries, only advance lastFollowupAt if it's actually newer
+    // than the existing one — a logged-past call shouldn't overwrite a fresh note.
     const patchFields: Record<string, any> = {
-      lastFollowupAt: timestamp,
-      updatedAt: timestamp,
+      updatedAt: now,
     };
+    const existingLastFollowupAt = (cpRecord as any).lastFollowupAt ?? 0;
+    if (timestamp > existingLastFollowupAt) {
+      patchFields.lastFollowupAt = timestamp;
+    }
     if (args.type === "note" && args.content) {
-      patchFields.latestNote = safeSliceForJson(args.content, 200);
-      patchFields.latestNoteAt = timestamp;
+      const existingLatestNoteAt = (cpRecord as any).latestNoteAt ?? 0;
+      if (timestamp >= existingLatestNoteAt) {
+        patchFields.latestNote = safeSliceForJson(args.content, 200);
+        patchFields.latestNoteAt = timestamp;
+      }
     }
     await ctx.db.patch(args.communityPeopleId, patchFields);
 
@@ -2151,6 +2365,37 @@ export const addFollowup = mutation({
           content: args.content,
           createdAt: timestamp,
         });
+
+        // Recompute scores so the new (or back-dated) contact reflects
+        // immediately on the People view. Without this, score3 (Connection)
+        // stays stale until the next batch run.
+        //
+        // Skip recompute for `note` because:
+        //  1. The Connection-score formula doesn't read `daysSinceLastNote` —
+        //     only call/text/followed_up factor in — so notes can't change
+        //     the score.
+        //  2. We just patched `lastFollowupAt` to the note timestamp above;
+        //     `computeCommunityScoresBatch` re-derives that field from only
+        //     contact-type rows, which would clobber the just-set note time
+        //     and visually erase the note from the People table.
+        if (args.type !== "note") {
+          await ctx.scheduler.runAfter(
+            0,
+            internal.functions.followupScoreComputation.computeSingleMemberScore,
+            {
+              groupId: announcementGroup._id,
+              groupMemberId: groupMember._id,
+            },
+          );
+          await ctx.scheduler.runAfter(
+            0,
+            internal.functions.communityScoreComputation.recomputeForGroupMember,
+            {
+              groupId: announcementGroup._id,
+              userId: cpRecord.userId,
+            },
+          );
+        }
       }
     }
 
@@ -2298,6 +2543,11 @@ export const upsertFromSubmission = internalMutation({
   args: {
     communityId: v.id("communities"),
     userId: v.id("users"),
+    // Only the public form-submission caller sets this. It reactivates the
+    // person (clears archive + restarts the auto-archive clock). The generic
+    // denormalization callers (CSV import, quick-add) leave it off so a routine
+    // import never resurrects an archived member. See computePersonActiveState.
+    reactivate: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const nowTs = Date.now();
@@ -2403,6 +2653,15 @@ export const upsertFromSubmission = internalMutation({
       updatedAt: nowTs,
     };
 
+    // A form submission is fresh engagement: reactivate the person across all
+    // their groups and restart the auto-archive clock from now. `reactivatedAt`
+    // keeps them active until the full inactivity window passes, surviving the
+    // daily score refresh (see computePersonActiveState). Leave archive state
+    // untouched for generic denormalization callers (CSV import, quick-add).
+    const reactivationFields = args.reactivate
+      ? { isActive: true, archivedAt: undefined, reactivatedAt: nowTs }
+      : {};
+
     // 6. Find all active group memberships for this user in this community
     const allMemberships = await ctx.db
       .query("groupMembers")
@@ -2417,6 +2676,41 @@ export const upsertFromSubmission = internalMutation({
         communityGroupIds.push(group._id);
       }
     }
+    const communityGroupIdSet = new Set(
+      communityGroupIds.map((id) => id.toString()),
+    );
+
+    // Archiving is community-wide, so a new per-group row for an already-archived
+    // person must start archived too — otherwise a generic upsert (CSV import /
+    // quick-add) into a group that lacks a row would make them reappear there.
+    // Snapshot the existing archive state once; only relevant when NOT
+    // reactivating (a real submission clears the archive everywhere instead).
+    //
+    // Only rows for groups the user is STILL an active member of are
+    // authoritative: a left-group row stays archived until the daily prune even
+    // after a reactivation, and must not re-archive the user's current rows.
+    let inheritedArchiveFields: {
+      isActive: boolean;
+      archivedAt: number | undefined;
+    } | null = null;
+    if (!args.reactivate) {
+      const archivedSiblings = await ctx.db
+        .query("communityPeople")
+        .withIndex("by_community_user", (q: any) =>
+          q.eq("communityId", args.communityId).eq("userId", args.userId),
+        )
+        .filter((q: any) => q.eq(q.field("isActive"), false))
+        .collect();
+      const authoritative = archivedSiblings.find((row) =>
+        communityGroupIdSet.has((row as any).groupId.toString()),
+      );
+      if (authoritative) {
+        inheritedArchiveFields = {
+          isActive: false,
+          archivedAt: (authoritative as any).archivedAt ?? nowTs,
+        };
+      }
+    }
 
     // 7. Upsert communityPeople record for each group + sync junction
     for (const groupId of communityGroupIds) {
@@ -2428,12 +2722,24 @@ export const upsertFromSubmission = internalMutation({
         .first();
 
       let cpId: Id<"communityPeople">;
+      // Inherit the person's community-wide archive state on both branches
+      // (no-op when reactivating, since the archive is being cleared). On
+      // inserts this archives brand-new rows; on patches it archives active
+      // placeholders — e.g. a quick-add row created just before this runs — so
+      // an archived person never reappears in another group's People table.
       if (existing) {
-        await ctx.db.patch(existing._id, { ...canonicalFields, groupId });
+        await ctx.db.patch(existing._id, {
+          ...canonicalFields,
+          ...reactivationFields,
+          ...(inheritedArchiveFields ?? {}),
+          groupId,
+        });
         cpId = existing._id;
       } else {
         cpId = await ctx.db.insert("communityPeople", {
           ...canonicalFields,
+          ...reactivationFields,
+          ...(inheritedArchiveFields ?? {}),
           groupId,
           createdAt: nowTs,
         });

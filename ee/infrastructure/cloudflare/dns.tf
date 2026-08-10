@@ -102,6 +102,42 @@ resource "cloudflare_record" "wildcard" {
 }
 
 # -----------------------------------------------------------------------------
+# API Subdomain - Convex HTTP Actions (production: artful-echidna-883)
+# -----------------------------------------------------------------------------
+# Serves the routes in apps/convex/http.ts (public REST API /api/v1/*, webhooks,
+# link-preview metadata) from a branded URL. The default
+# artful-echidna-883.convex.site URL keeps working - this is purely additive.
+#
+# proxied MUST stay false (DNS only):
+#   1. Convex provisions and serves the TLS certificate itself; a proxied
+#      record breaks certificate issuance/verification.
+#   2. The link-preview Worker has a *.togather.nyc/* route
+#      (apps/link-preview/wrangler.toml). Proxying api.togather.nyc would send
+#      every API request through that Worker, which would misroute it as a
+#      community subdomain. DNS-only records bypass Workers entirely.
+# This explicit record takes precedence over the proxied wildcard (*) above.
+
+resource "cloudflare_record" "api" {
+  zone_id         = local.zone_id
+  name            = "api"
+  type            = "CNAME"
+  content         = "convex.domains"
+  proxied         = false
+  comment         = "Convex HTTP Actions custom domain (production) - must stay DNS-only"
+  allow_overwrite = true
+}
+
+# Convex domain-ownership verification for api.togather.nyc
+resource "cloudflare_record" "api_convex_verification" {
+  zone_id         = local.zone_id
+  name            = "_convex_domains.api"
+  type            = "TXT"
+  content         = "artful-echidna-883"
+  comment         = "Convex custom domain verification for api.togather.nyc"
+  allow_overwrite = true
+}
+
+# -----------------------------------------------------------------------------
 # Email Records (if using Resend or other email service)
 # -----------------------------------------------------------------------------
 # Uncomment and configure if you have email sending set up

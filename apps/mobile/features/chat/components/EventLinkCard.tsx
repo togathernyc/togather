@@ -16,7 +16,7 @@ import type { Id } from '@services/api/convex';
 import { useRouter } from 'expo-router';
 import { ImageViewerManager } from '@/providers/ImageViewerProvider';
 import type { RsvpOption } from '../types';
-import { handleImageLongPress, handleEventLongPress } from '../utils/imageActions';
+import { handleImageLongPress, handleEventLongPress, copyEventLink } from '../utils/imageActions';
 import { getRsvpStatsForOption, hasPrefetchedRsvpOptions } from '../utils/rsvpStats';
 import { DEFAULT_PRIMARY_COLOR } from '@utils/styles';
 import { useTheme } from '@hooks/useTheme';
@@ -24,8 +24,38 @@ import type { PrefetchedEventData } from '../context/ChatPrefetchContext';
 import {
   DEFAULT_MAX_GUESTS_PER_RSVP,
   GuestStepper,
-  isGoingOptionLabel,
+  isGoingRsvpOption,
 } from '@/features/events/components/EventRsvpSection';
+import {
+  WA_CARD_COVER_ASPECT,
+  WA_CARD_PADDING,
+  WA_CARD_PILL_FILL_DARK,
+  WA_CARD_PILL_FILL_LIGHT,
+  WA_CARD_PILL_HEIGHT,
+  WA_CARD_PILL_RADIUS,
+  WA_CARD_PILL_SELECTED_ALPHA,
+  WA_CARD_SHADOW_WEB,
+  WA_BUBBLE_SHADOW,
+} from '../waChatChrome';
+import { hexToRgb } from '@utils/waPalette';
+
+/**
+ * WhatsApp-shell dressing for the card, supplied by `MessageItem` **only when
+ * `whatsappShellEnabled` is true** — the same "parent owns the flag, child
+ * owns the anatomy" split `ReplyQuoteBlock` uses. Its presence *is* the flag:
+ * when it's absent every branch below renders exactly the pre-WhatsApp card.
+ *
+ * The two colors can't be derived in here: `bubbleFill` depends on the
+ * community's brand tint (outgoing) vs. the theme's incoming white, both of
+ * which `MessageItem` has already computed for the message's own bubble, and
+ * reusing them is what makes the card read as *that same bubble*.
+ */
+export interface WaEventCardTheme {
+  /** §1.3 dark-mode-adjusted brand accent: pill ink, footer links. */
+  accent: string;
+  /** §1.6 bubble fill for this message's direction (mint out / white in). */
+  bubbleFill: string;
+}
 
 interface EventLinkCardProps {
   shortId: string;
@@ -34,6 +64,15 @@ interface EventLinkCardProps {
   embedded?: boolean;
   /** Prefetched event data (optional) - skips network fetch if provided */
   prefetchedData?: PrefetchedEventData | null;
+  /** WhatsApp-shell dressing; omitted (flag-off) renders the legacy card. */
+  wa?: WaEventCardTheme | null;
+}
+
+/** Pale accent wash for the §1.6 selected RSVP pill. */
+function waSelectedPillFill(accent: string): string {
+  const rgb = hexToRgb(accent);
+  if (!rgb) return WA_CARD_PILL_FILL_LIGHT;
+  return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${WA_CARD_PILL_SELECTED_ALPHA})`;
 }
 
 interface RsvpUser {
@@ -50,9 +89,20 @@ const EMOJI_MAP: Record<string, string> = {
   'Not Going': '😢',
 };
 
-export function EventLinkCard({ shortId, isMyMessage = true, embedded = false, prefetchedData }: EventLinkCardProps) {
+export function EventLinkCard({ shortId, isMyMessage = true, embedded = false, prefetchedData, wa }: EventLinkCardProps) {
   const router = useRouter();
   const { colors, isDark } = useTheme();
+  // §7: flag-on, the card *is* a bubble — it takes the message's own fill and
+  // the brand accent for its interactive ink. Flag-off, `wa` is undefined and
+  // every `waShell &&` below collapses to the original tree.
+  const waShell = !!wa;
+  const waAccent = wa?.accent ?? DEFAULT_PRIMARY_COLOR;
+  const waCardFill = wa?.bubbleFill;
+  const waPillFill = isDark ? WA_CARD_PILL_FILL_DARK : WA_CARD_PILL_FILL_LIGHT;
+  const waPillSelectedFill = waSelectedPillFill(waAccent);
+  // Flag-off keeps the pale-blue tinted panel; flag-on takes the bubble fill
+  // so the card is indistinguishable from the message bubbles around it.
+  const cardFill = waCardFill ?? (isDark ? colors.surface : '#DCEEFF');
   const [loadingOptionId, setLoadingOptionId] = useState<number | null>(null);
   const token = useStoredAuthToken();
 
@@ -255,12 +305,27 @@ export function EventLinkCard({ shortId, isMyMessage = true, embedded = false, p
     }
   };
 
+  const [linkCopied, setLinkCopied] = useState(false);
+  const handleCopyLink = async () => {
+    const eventShortId = event?.shortId || shortId;
+    if (!eventShortId) {
+      Alert.alert('Error', 'This event is missing a share link.');
+      return;
+    }
+    await copyEventLink(eventShortId);
+    setLinkCopied(true);
+    setTimeout(() => setLinkCopied(false), 2000);
+  };
+
   // Format date
   const formatEventDate = (dateString: string | undefined): string => {
     if (!dateString) return '';
     try {
       const date = parseISO(dateString);
-      return format(date, "EEE, MMM d 'at' h:mm a");
+      // Flag-on uses WhatsApp's middot separator on the preview's meta line
+      // ("Fri, Jul 31 · 12:31 AM") — shorter, and it matches the middot the
+      // rest of the WA surfaces already use to join metadata.
+      return format(date, waShell ? 'EEE, MMM d · h:mm a' : "EEE, MMM d 'at' h:mm a");
     } catch {
       return dateString;
     }
@@ -394,20 +459,74 @@ export function EventLinkCard({ shortId, isMyMessage = true, embedded = false, p
     );
   };
 
+  /**
+   * §7 flag-on RSVP affordance: the three options collapse from three
+   * full-height radio rows (radio + label + avatar stack + progress bar,
+   * ~46pt each) into ONE 32pt chips row. Same `handlePress` semantics as
+   * `RsvpOptionRow` — including the "re-tapping the selected option keeps my
+   * guests" rule — so the mutation behaviour is untouched; only the anatomy
+   * changes. Counts ride inline in the label when non-zero, which is what
+   * buys back the avatar stack's vertical space.
+   */
+  const WaRsvpPill = ({ option }: { option: RsvpOption }) => {
+    if (!option.enabled) return null;
+
+    const stats = getRsvpStats(option.id);
+    const isSelected = myRsvp?.optionId === option.id;
+    const isOptionLoading = loadingOptionId === option.id;
+    const emoji = EMOJI_MAP[option.label] || '';
+    const showCount = !countIsHidden && stats.count > 0;
+
+    const handlePress = () => {
+      if (myRsvp === undefined) return;
+      handleRsvp(option.id, isSelected ? displayedGuestCount : 0);
+    };
+
+    return (
+      <TouchableOpacity
+        style={[
+          styles.waRsvpPill,
+          { backgroundColor: isSelected ? waPillSelectedFill : waPillFill },
+        ]}
+        onPress={handlePress}
+        accessibilityRole="button"
+        accessibilityState={{ selected: isSelected }}
+        testID={`wa-rsvp-pill-${option.id}`}
+      >
+        {isOptionLoading ? (
+          <ActivityIndicator size="small" color={waAccent} />
+        ) : (
+          <Text
+            numberOfLines={1}
+            style={[
+              styles.waRsvpPillLabel,
+              // §1.6 selected chip: pale tint + accent ink, never accent-filled.
+              { color: isSelected ? waAccent : colors.text },
+            ]}
+          >
+            {option.label}
+            {emoji ? ` ${emoji}` : ''}
+            {showCount ? ` ${stats.count}` : ''}
+          </Text>
+        )}
+      </TouchableOpacity>
+    );
+  };
+
   // Loading state - show skeleton with fixed dimensions to prevent layout jumps
   if (isLoading) {
     return (
       <View style={[styles.bubbleContainer, !isMyMessage && styles.bubbleContainerLeft, embedded && styles.bubbleContainerEmbedded]}>
-        <View style={[styles.container, { backgroundColor: isDark ? colors.surface : '#DCEEFF' }]}>
+        <View style={[styles.container, waShell && styles.waContainer, { backgroundColor: cardFill }]}>
           {/* Skeleton cover image */}
-          <View style={[styles.skeletonCoverImage, { backgroundColor: isDark ? colors.surfaceSecondary : '#E5E5E5' }]} />
+          <View style={[styles.skeletonCoverImage, waShell && styles.waCoverImage, { backgroundColor: isDark ? colors.surfaceSecondary : '#E5E5E5' }]} />
           {/* Skeleton event info */}
-          <View style={[styles.skeletonEventInfo, { borderBottomColor: colors.borderLight }]}>
+          <View style={[styles.skeletonEventInfo, waShell && styles.waEventInfo, { borderBottomColor: colors.borderLight }]}>
             <View style={[styles.skeletonTitle, { backgroundColor: isDark ? colors.surfaceSecondary : '#E5E5E5' }]} />
             <View style={[styles.skeletonDate, { backgroundColor: isDark ? colors.surfaceSecondary : '#E5E5E5' }]} />
           </View>
           {/* Skeleton button */}
-          <View style={[styles.skeletonButton, { borderTopColor: colors.borderLight }]}>
+          <View style={[styles.skeletonButton, waShell && styles.waFooterRow, { borderTopColor: colors.borderLight }]}>
             <View style={[styles.skeletonButtonText, { backgroundColor: isDark ? colors.surfaceSecondary : '#E5E5E5' }]} />
           </View>
         </View>
@@ -428,7 +547,7 @@ export function EventLinkCard({ shortId, isMyMessage = true, embedded = false, p
         onLongPress={handleCardLongPress}
         delayLongPress={300}
       >
-        <View style={[styles.container, { backgroundColor: isDark ? colors.surface : '#DCEEFF' }]}>
+        <View style={[styles.container, waShell && styles.waContainer, { backgroundColor: cardFill }]}>
           {/* Cover Image */}
           {event.displayCoverImage ? (
             <TouchableOpacity
@@ -438,43 +557,60 @@ export function EventLinkCard({ shortId, isMyMessage = true, embedded = false, p
             >
               <AppImage
                 source={event.coverImage}
-                style={[styles.coverImage, { backgroundColor: colors.surfaceSecondary, aspectRatio: coverAspectRatio }]}
+                style={[styles.coverImage, { backgroundColor: colors.surfaceSecondary, aspectRatio: waShell ? WA_CARD_COVER_ASPECT : coverAspectRatio }]}
                 resizeMode="cover"
                 placeholder={{ type: 'icon', icon: 'calendar-outline', iconSize: 48, iconColor: colors.iconSecondary }}
               />
             </TouchableOpacity>
           ) : (
-            <View style={[styles.coverImagePlaceholder, { backgroundColor: colors.surfaceSecondary }]}>
+            <View style={[styles.coverImagePlaceholder, waShell && styles.waCoverImage, { backgroundColor: colors.surfaceSecondary }]}>
               <Ionicons name="calendar" size={48} color={colors.iconSecondary} />
             </View>
           )}
 
           {/* Limited Event Info */}
-          <View style={[styles.eventInfo, { borderBottomColor: colors.borderLight }]}>
-            <Text style={[styles.eventTitle, { color: colors.text }]} numberOfLines={2}>
+          <View style={[styles.eventInfo, waShell && styles.waEventInfo, { borderBottomColor: colors.borderLight }]}>
+            <Text style={[styles.eventTitle, waShell && styles.waEventTitle, { color: colors.text }]} numberOfLines={2}>
               {event.title || 'Event'}
             </Text>
-            <Text style={[styles.eventDate, { color: colors.textSecondary }]}>
+            <Text style={[styles.eventDate, waShell && styles.waEventMeta, { color: colors.textSecondary }]}>
               {formatEventDate(event.scheduledAt)}
             </Text>
-            <Text style={[styles.eventGroup, { color: colors.textSecondary }]}>
+            <Text style={[styles.eventGroup, waShell && styles.waEventMeta, { color: colors.textSecondary }]}>
               {event.groupName}{event.communityName ? ` · ${event.communityName}` : ''}
             </Text>
           </View>
 
           {/* Access Prompt */}
-          <View style={[styles.accessPromptSection, { backgroundColor: isDark ? colors.surfaceSecondary : '#F8F4FF', borderBottomColor: colors.borderLight }]}>
-            <Ionicons name="lock-closed" size={20} color={DEFAULT_PRIMARY_COLOR} />
-            <Text style={styles.accessPromptText}>{event.accessPrompt.message}</Text>
+          <View style={[styles.accessPromptSection, waShell && styles.waAccessPromptSection, { backgroundColor: isDark ? colors.surfaceSecondary : '#F8F4FF', borderBottomColor: colors.borderLight }]}>
+            <Ionicons name="lock-closed" size={20} color={waShell ? waAccent : DEFAULT_PRIMARY_COLOR} />
+            <Text style={[styles.accessPromptText, waShell && styles.waAccessPromptText, waShell && { color: waAccent }]}>{event.accessPrompt.message}</Text>
           </View>
 
-          {/* View Details Button */}
-          <TouchableOpacity
-            style={[styles.viewDetailsButton, { borderTopColor: colors.borderLight }]}
-            onPress={handleViewDetails}
-          >
-            <Text style={styles.viewDetailsText}>View Details</Text>
-          </TouchableOpacity>
+          {/* Footer: Copy link + View Details */}
+          <View style={[styles.footerRow, waShell && styles.waFooterRow, { borderTopColor: colors.borderLight }]}>
+            <TouchableOpacity
+              style={styles.copyLinkButton}
+              onPress={handleCopyLink}
+              hitSlop={8}
+            >
+              {!waShell && (
+                <Ionicons
+                  name={linkCopied ? 'checkmark' : 'link-outline'}
+                  size={16}
+                  color={DEFAULT_PRIMARY_COLOR}
+                />
+              )}
+              <Text style={[styles.viewDetailsText, waShell && { color: waAccent }]}>
+                {linkCopied ? 'Copied' : 'Copy link'}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={handleViewDetails} hitSlop={8}>
+              <Text style={[styles.viewDetailsText, waShell && { color: waAccent }]}>
+                {waShell ? 'View details' : 'View Details'}
+              </Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </Pressable>
     );
@@ -486,9 +622,7 @@ export function EventLinkCard({ shortId, isMyMessage = true, embedded = false, p
   // Identify the currently-selected option (if any) to conditionally show
   // the plus-ones stepper underneath the RSVP list.
   const selectedOption = rsvpOptions.find((o) => o.id === myRsvp?.optionId) ?? null;
-  const selectedIsGoing = selectedOption
-    ? isGoingOptionLabel(selectedOption.label)
-    : false;
+  const selectedIsGoing = isGoingRsvpOption(selectedOption);
   const maxGuests =
     ((eventData as any)?.maxGuestsPerRsvp as number | undefined) ??
     DEFAULT_MAX_GUESTS_PER_RSVP;
@@ -511,7 +645,7 @@ export function EventLinkCard({ shortId, isMyMessage = true, embedded = false, p
       onLongPress={handleCardLongPress}
       delayLongPress={300}
     >
-      <View style={[styles.container, { backgroundColor: isDark ? colors.surface : '#DCEEFF' }]}>
+      <View style={[styles.container, waShell && styles.waContainer, { backgroundColor: cardFill }]}>
         {/* Cover Image */}
         {event.displayCoverImage ? (
           <TouchableOpacity
@@ -521,23 +655,26 @@ export function EventLinkCard({ shortId, isMyMessage = true, embedded = false, p
           >
             <AppImage
               source={event.coverImage}
-              style={[styles.coverImage, { backgroundColor: colors.surfaceSecondary, aspectRatio: coverAspectRatio }]}
+              // §7 flag-on: a wide banner across the bubble top, not a
+              // full-bleed poster in the image's own (often square/portrait)
+              // ratio — that single change is most of the height saving.
+              style={[styles.coverImage, { backgroundColor: colors.surfaceSecondary, aspectRatio: waShell ? WA_CARD_COVER_ASPECT : coverAspectRatio }]}
               resizeMode="cover"
               placeholder={{ type: 'icon', icon: 'calendar-outline', iconSize: 48, iconColor: colors.iconSecondary }}
             />
           </TouchableOpacity>
         ) : (
-          <View style={[styles.coverImagePlaceholder, { backgroundColor: colors.surfaceSecondary }]}>
+          <View style={[styles.coverImagePlaceholder, waShell && styles.waCoverImage, { backgroundColor: colors.surfaceSecondary }]}>
             <Ionicons name="calendar" size={48} color={colors.iconSecondary} />
           </View>
         )}
 
         {/* Event Info */}
-        <View style={[styles.eventInfo, { borderBottomColor: colors.borderLight }]}>
-          <Text style={[styles.eventTitle, { color: colors.text }, isCancelled && { textDecorationLine: 'line-through', color: colors.textTertiary }]} numberOfLines={2}>
+        <View style={[styles.eventInfo, waShell && styles.waEventInfo, { borderBottomColor: colors.borderLight }]}>
+          <Text style={[styles.eventTitle, waShell && styles.waEventTitle, { color: colors.text }, isCancelled && { textDecorationLine: 'line-through', color: colors.textTertiary }]} numberOfLines={2}>
             {event.title || 'Event'}
           </Text>
-          <Text style={[styles.eventDate, { color: colors.textSecondary }]}>
+          <Text style={[styles.eventDate, waShell && styles.waEventMeta, { color: colors.textSecondary }]}>
             {formatEventDate(event.scheduledAt)}
           </Text>
           {isPastEvent && !isCancelled && (
@@ -547,7 +684,7 @@ export function EventLinkCard({ shortId, isMyMessage = true, embedded = false, p
             </View>
           )}
           {location && (
-            <Text style={[styles.eventLocation, { color: colors.textSecondary }]}>
+            <Text style={[styles.eventLocation, waShell && styles.waEventMeta, { color: colors.textSecondary }]} numberOfLines={waShell ? 1 : undefined}>
               {location.icon} {location.text}
             </Text>
           )}
@@ -555,7 +692,7 @@ export function EventLinkCard({ shortId, isMyMessage = true, embedded = false, p
 
         {/* RSVP Options - hide when cancelled or past */}
         {!isCancelled && !isPastEvent && event.rsvpEnabled && rsvpOptions.length > 0 && (
-          <View style={styles.rsvpSection}>
+          <View style={[styles.rsvpSection, waShell && styles.waRsvpSection]}>
             {showLeaderBadge && (
               <View style={[styles.leaderBadge, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
                 <Ionicons name="eye-outline" size={12} color={colors.textSecondary} />
@@ -571,11 +708,19 @@ export function EventLinkCard({ shortId, isMyMessage = true, embedded = false, p
               </View>
             ) : (
               <>
-                {rsvpOptions.map((option) => (
-                  <RsvpOptionRow key={option.id} option={option} />
-                ))}
+                {waShell ? (
+                  <View style={styles.waRsvpPillRow}>
+                    {rsvpOptions.map((option) => (
+                      <WaRsvpPill key={option.id} option={option} />
+                    ))}
+                  </View>
+                ) : (
+                  rsvpOptions.map((option) => (
+                    <RsvpOptionRow key={option.id} option={option} />
+                  ))
+                )}
                 {selectedIsGoing && (
-                  <View style={[styles.guestStepperRow, { borderTopColor: colors.borderLight }]}>
+                  <View style={[styles.guestStepperRow, waShell && styles.waGuestStepperRow, { borderTopColor: colors.borderLight }]}>
                     <GuestStepper
                       value={displayedGuestCount}
                       onChange={handleGuestCountChange}
@@ -590,13 +735,30 @@ export function EventLinkCard({ shortId, isMyMessage = true, embedded = false, p
           </View>
         )}
 
-        {/* View Details Button */}
-        <TouchableOpacity
-          style={[styles.viewDetailsButton, { borderTopColor: colors.borderLight }]}
-          onPress={handleViewDetails}
-        >
-          <Text style={styles.viewDetailsText}>View Details</Text>
-        </TouchableOpacity>
+        {/* Footer: Copy link + View Details */}
+        <View style={[styles.footerRow, waShell && styles.waFooterRow, { borderTopColor: colors.borderLight }]}>
+          <TouchableOpacity
+            style={styles.copyLinkButton}
+            onPress={handleCopyLink}
+            hitSlop={8}
+          >
+            {!waShell && (
+              <Ionicons
+                name={linkCopied ? 'checkmark' : 'link-outline'}
+                size={16}
+                color={DEFAULT_PRIMARY_COLOR}
+              />
+            )}
+            <Text style={[styles.viewDetailsText, waShell && { color: waAccent }]}>
+              {linkCopied ? 'Copied' : 'Copy link'}
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={handleViewDetails} hitSlop={8}>
+            <Text style={[styles.viewDetailsText, waShell && { color: waAccent }]}>
+              {waShell ? 'View details' : 'View Details'}
+            </Text>
+          </TouchableOpacity>
+        </View>
 
         {/* Cancelled Overlay */}
         {isCancelled && <CancelledOverlay />}
@@ -795,10 +957,18 @@ const styles = StyleSheet.create({
     backgroundColor: DEFAULT_PRIMARY_COLOR,
     borderRadius: 3,
   },
-  viewDetailsButton: {
-    padding: 16,
-    borderTopWidth: 1,
+  footerRow: {
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderTopWidth: 1,
+  },
+  copyLinkButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
   },
   viewDetailsText: {
     fontSize: 15,
@@ -869,5 +1039,85 @@ const styles = StyleSheet.create({
     height: 16,
     width: 100,
     borderRadius: 4,
+  },
+
+  /* --- WhatsApp shell (§7 "event cards inside chat -> bubble-shaped cards")
+   * Every style below is applied only when `wa` is supplied; flag-off render
+   * never reaches them. They deliberately *override* the legacy style they're
+   * paired with rather than replacing it, so the diff stays readable and the
+   * flag-off tree is provably untouched. --- */
+
+  /** §7: a bubble, not an elevated "feature card" — the legacy 8pt/elevation-3
+   *  drop shadow becomes the §1.6 1px bubble shadow. */
+  waContainer: {
+    ...WA_BUBBLE_SHADOW,
+    // On web `styles.container`'s raw `boxShadow` isn't overridden by the
+    // shadow* props above, so restate it at the bubble's weight.
+    ...Platform.select({ web: { boxShadow: WA_CARD_SHADOW_WEB } }),
+  },
+  /** Wide banner instead of the poster-sized natural/1:1 crop. */
+  waCoverImage: {
+    aspectRatio: WA_CARD_COVER_ASPECT,
+  },
+  /** Bubble gutter, and no hairline carving the bubble into sections. */
+  waEventInfo: {
+    padding: WA_CARD_PADDING,
+    paddingBottom: 6,
+    borderBottomWidth: 0,
+  },
+  waEventTitle: {
+    fontSize: 15,
+    lineHeight: 20,
+    marginBottom: 2,
+  },
+  waEventMeta: {
+    fontSize: 13,
+    lineHeight: 17,
+    marginTop: 0,
+    marginBottom: 0,
+  },
+  waRsvpSection: {
+    paddingHorizontal: WA_CARD_PADDING,
+    paddingTop: 0,
+    paddingBottom: 6,
+    gap: 6,
+  },
+  /** §7 RSVP pill row "docked at the bubble's bottom edge". */
+  waRsvpPillRow: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  waRsvpPill: {
+    // Equal thirds: the row keeps its geometry when a label swaps for the
+    // in-flight spinner, so tapping never reflows the bubble.
+    flex: 1,
+    height: WA_CARD_PILL_HEIGHT,
+    borderRadius: WA_CARD_PILL_RADIUS,
+    paddingHorizontal: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  waRsvpPillLabel: {
+    fontSize: 13,
+    fontWeight: '500',
+  },
+  waGuestStepperRow: {
+    paddingTop: 6,
+    borderTopWidth: 0,
+  },
+  /** Footer links sit on the bubble fill, left-aligned, no divider. */
+  waFooterRow: {
+    paddingVertical: 8,
+    paddingHorizontal: WA_CARD_PADDING,
+    borderTopWidth: 0,
+    justifyContent: 'flex-start',
+    gap: 20,
+  },
+  waAccessPromptSection: {
+    padding: WA_CARD_PADDING,
+    borderBottomWidth: 0,
+  },
+  waAccessPromptText: {
+    fontSize: 13,
   },
 });
