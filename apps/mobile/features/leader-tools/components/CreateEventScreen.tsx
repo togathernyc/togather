@@ -40,11 +40,11 @@ import { ConfirmModal } from "@components/ui/ConfirmModal";
 import { getGroupCoordinates, geocodeAddressAsync } from "../../groups/utils/geocodeLocation";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useAuth } from "@providers/AuthProvider";
-import { formatError, showAlert } from "@/utils/error-handling";
+import { formatError, showAlert, showConfirm } from "@/utils/error-handling";
 import { useGroupTypes } from "../../admin/hooks/useGroupTypes";
 import { DragHandle } from "@components/ui/DragHandle";
 import { useTheme } from "@hooks/useTheme";
-import { showEditScopePrompt, type EditScope } from "@components/ui/EditScopeModal";
+import { EditScopeModal, type EditScope } from "@components/ui/EditScopeModal";
 import { SeriesBadge } from "@components/ui/SeriesBadge";
 import { HostsPicker } from "./HostsPicker";
 
@@ -210,6 +210,16 @@ export function CreateEventScreen() {
 
   // Past date confirmation modal state (for admins only)
   const [showPastDateModal, setShowPastDateModal] = useState(false);
+  // Which-events picker for series / community-wide edits and cancels. Held in
+  // state (rather than fired imperatively) so it renders in the React tree —
+  // see EditScopeModal for why the native action sheet could never be trusted
+  // from inside the `(user)` modal stack.
+  const [scopePrompt, setScopePrompt] = useState<{
+    actionLabel: string;
+    isCommunityWide: boolean;
+    isInSeries: boolean;
+    onSelect: (scope: EditScope) => void;
+  } | null>(null);
 
   // Location geocoding validation state
   const [locationCanBeGeocoded, setLocationCanBeGeocoded] = useState<boolean | null>(null);
@@ -652,7 +662,7 @@ export function CreateEventScreen() {
     }
 
     // Show scope selection for series/community-wide events
-    showEditScopePrompt({
+    setScopePrompt({
       isCommunityWide,
       isInSeries: hasSeries,
       actionLabel: "Cancel",
@@ -703,7 +713,8 @@ export function CreateEventScreen() {
     });
   };
 
-  const validateForm = (): boolean => {
+  /** Returns the blocking error messages — empty means the form is valid. */
+  const validateForm = (): string[] => {
     const newErrors: { scheduledAt?: string; hostingGroup?: string; groupType?: string; seriesName?: string } = {};
 
     if (isSeriesMode) {
@@ -738,7 +749,10 @@ export function CreateEventScreen() {
     }
 
     setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
+    // Return the messages, not just a boolean: every field this can reject
+    // lives near the top of a long form, so a caller that silently bails
+    // shows nothing at all to someone scrolled down at the Save button.
+    return Object.values(newErrors).filter(Boolean) as string[];
   };
 
   // Check if the scheduled date is in the past
@@ -976,7 +990,7 @@ export function CreateEventScreen() {
         if (isCweAdminEdit && isCommunityWide) {
           performUpdate("this_date_all_groups");
         } else if (hasSeries || isCommunityWide) {
-          showEditScopePrompt({
+          setScopePrompt({
             isCommunityWide,
             isInSeries: hasSeries,
             actionLabel: "Edit",
@@ -1093,7 +1107,13 @@ export function CreateEventScreen() {
 
   // Main submit handler - validates and shows confirmation modal for past dates
   const handleSubmit = async () => {
-    if (!validateForm()) return;
+    const validationErrors = validateForm();
+    if (validationErrors.length > 0) {
+      // The inline error renders next to its field, which is off-screen when
+      // you're at the Save button — without this the button just looks dead.
+      showAlert("Can't save yet", validationErrors.join("\n"));
+      return;
+    }
 
     // For admins creating NEW events in the past, show confirmation modal
     // Skip if editing an existing event that already had a past date
@@ -1135,49 +1155,34 @@ export function CreateEventScreen() {
       if (locationChanged) changeDescriptions.push("location");
       const changeText = changeDescriptions.join(" and ");
 
-      Alert.alert(
-        "Notify Guests?",
-        `You changed the ${changeText}. Would you like to notify ${goingCount} guest${goingCount > 1 ? 's' : ''} who RSVP'd 'Going'?`,
-        [
-          {
-            text: "No",
-            style: "cancel",
-            onPress: () => {
-              // Update without notification
-              updateMeeting.mutate({ meetingId: eventMeetingId, ...data });
-            },
-          },
-          {
-            text: "Yes, Notify",
-            onPress: () => {
-              // Update WITH notification
-              updateMeeting.mutate({ meetingId: eventMeetingId, ...data, notifyGuests: true });
-            },
-          },
-        ]
-      );
+      // `showConfirm`, not `Alert.alert`: the alert is a no-op on React Native
+      // Web, and this sits between the user pressing Save and the write ever
+      // happening — a prompt that never appears loses the edit silently.
+      const notify = await showConfirm({
+        title: "Notify Guests?",
+        message: `You changed the ${changeText}. Would you like to notify ${goingCount} guest${goingCount > 1 ? 's' : ''} who RSVP'd 'Going'?`,
+        confirmLabel: "Yes, Notify",
+        cancelLabel: "No",
+      });
+      updateMeeting.mutate({
+        meetingId: eventMeetingId,
+        ...data,
+        ...(notify ? { notifyGuests: true } : {}),
+      });
     } catch (error) {
       console.error("Failed to check RSVPs:", error);
-      // Fall back to showing prompt anyway
-      Alert.alert(
-        "Notify Guests?",
-        "Would you like to notify guests who RSVP'd 'Going' about this change?",
-        [
-          {
-            text: "No",
-            style: "cancel",
-            onPress: () => {
-              updateMeeting.mutate({ meetingId: eventMeetingId, ...data });
-            },
-          },
-          {
-            text: "Yes, Notify",
-            onPress: () => {
-              updateMeeting.mutate({ meetingId: eventMeetingId, ...data, notifyGuests: true });
-            },
-          },
-        ]
-      );
+      // Fall back to prompting anyway — the edit still has to land either way.
+      const notify = await showConfirm({
+        title: "Notify Guests?",
+        message: "Would you like to notify guests who RSVP'd 'Going' about this change?",
+        confirmLabel: "Yes, Notify",
+        cancelLabel: "No",
+      });
+      updateMeeting.mutate({
+        meetingId: eventMeetingId,
+        ...data,
+        ...(notify ? { notifyGuests: true } : {}),
+      });
     }
   };
 
@@ -2224,6 +2229,20 @@ export function CreateEventScreen() {
             // (undefined would be interpreted as "no change").
             setPosterId(sel.posterId ?? null);
           }}
+        />
+
+        {/* Which-events picker for series / community-wide edits and cancels */}
+        <EditScopeModal
+          visible={!!scopePrompt}
+          isCommunityWide={scopePrompt?.isCommunityWide ?? false}
+          isInSeries={scopePrompt?.isInSeries ?? false}
+          actionLabel={scopePrompt?.actionLabel}
+          onSelect={(scope) => {
+            const pending = scopePrompt;
+            setScopePrompt(null);
+            pending?.onSelect(scope);
+          }}
+          onCancel={() => setScopePrompt(null)}
         />
 
         {/* Past Date Confirmation Modal (for admins only) */}
