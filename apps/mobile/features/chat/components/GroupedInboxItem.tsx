@@ -869,6 +869,13 @@ function GroupedInboxItemInner({
         <Pressable
           key={channel._id}
           onPress={() => handleChannelPress(channel)}
+          // The expand/collapse sheet is GROUP-scoped, so a nested channel row
+          // opens the same sheet as its cluster header — long-pressing anywhere
+          // in the cluster behaves identically (issue #781).
+          onLongPress={handleLongPress}
+          delayLongPress={300}
+          // @ts-expect-error - onContextMenu is a web-only prop
+          onContextMenu={handleContextMenu}
           style={({ pressed }) => [
             styles.waRow,
             { backgroundColor: colors.surface },
@@ -1135,6 +1142,11 @@ function GroupedInboxItemInner({
             {/* Sub-channel card */}
             <Pressable
               onPress={() => handleChannelPress(channel)}
+              // Same group-scoped sheet as the main row above (issue #781).
+              onLongPress={handleLongPress}
+              delayLongPress={300}
+              // @ts-expect-error - onContextMenu is a web-only prop
+              onContextMenu={handleContextMenu}
               style={({ pressed }) => [
                 styles.subChannelCard,
                 { backgroundColor: colors.surfaceSecondary, borderColor: "transparent" },
