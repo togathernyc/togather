@@ -30,6 +30,7 @@ import { FloatingRsvpButtons } from "./FloatingRsvpButtons";
 import { FloatingRsvpCard } from "./FloatingRsvpCard";
 import { GuestListSection } from "./GuestListSection";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
+import { showAlert, showConfirm, formatError } from "@utils/error-handling";
 import { DOMAIN_CONFIG } from "@togather/shared";
 import * as Clipboard from "expo-clipboard";
 import { DragHandle } from "@components/ui/DragHandle";
@@ -258,33 +259,33 @@ export function EventDetails({
   // `isOverridden` latch excludes it from every admin cascade — so an admin
   // fixing the parent sees "saved" while this copy keeps its old date. This is
   // the only way back in sync.
-  const handleResetToCommunityDefault = () => {
-    Alert.alert(
-      "Reset to community version?",
-      "This group's customizations to this event — including its date — will be replaced with the community-wide version. Their own location is kept.",
-      [
-        { text: "Keep customizations", style: "cancel" },
-        {
-          text: "Reset",
-          style: "destructive",
-          onPress: async () => {
-            setIsResettingToCommunityDefault(true);
-            try {
-              await resetToCommunityDefaultMutation({
-                meetingId: meetingId as Id<"meetings">,
-              });
-            } catch {
-              Alert.alert(
-                "Error",
-                "Failed to reset this event to the community version."
-              );
-            } finally {
-              setIsResettingToCommunityDefault(false);
-            }
-          },
-        },
-      ]
-    );
+  const handleResetToCommunityDefault = async () => {
+    const confirmed = await showConfirm({
+      title: "Reset to community version?",
+      message:
+        "This group's customizations to this event — including its date — will be replaced with the community-wide version. Their own location is kept.",
+      confirmLabel: "Reset",
+      cancelLabel: "Keep customizations",
+      destructive: true,
+    });
+    if (!confirmed) return;
+
+    setIsResettingToCommunityDefault(true);
+    try {
+      await resetToCommunityDefaultMutation({
+        meetingId: meetingId as Id<"meetings">,
+      });
+    } catch (error) {
+      showAlert(
+        "Error",
+        formatError(
+          error,
+          "Failed to reset this event to the community version."
+        )
+      );
+    } finally {
+      setIsResettingToCommunityDefault(false);
+    }
   };
 
   const handleEdit = () => {

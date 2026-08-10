@@ -375,6 +375,70 @@ describe("communityWideEvents.update — skipped children are reported", () => {
     expect(result.skippedGroupNames).toEqual(["Group Alpha"]);
   });
 
+  test("counts overridden children on future occurrences under all_in_series", async () => {
+    // The cascade reaches future occurrences too, so an override living only
+    // on a later date is skipped just the same. Reporting 0 here would hand
+    // the admin the exact silent success this change exists to remove.
+    const t = convexTest(schema, modules);
+    const s = await setupTestData(t);
+
+    const laterDate = FUTURE_DATE + 7 * 24 * 60 * 60 * 1000;
+    await t.mutation(api.functions.communityWideEvents.createSeries, {
+      token: s.adminToken,
+      communityId: s.communityId,
+      groupTypeId: s.groupTypeId,
+      seriesName: "Weekly Dinner",
+      dates: [FUTURE_DATE, laterDate],
+      title: "Weekly Dinner",
+      meetingType: 1,
+    });
+
+    // Alpha customizes only the LATER occurrence; the anchor's children are
+    // all untouched.
+    const laterAlpha = await childMeeting(t, s.groupId1, laterDate);
+    await t.mutation(api.functions.meetings.index.update, {
+      token: s.leaderToken,
+      meetingId: laterAlpha._id,
+      note: "Alpha does its own thing",
+    });
+
+    const anchorParent = await parentFor(t, FUTURE_DATE);
+    const result = await t.mutation(api.functions.communityWideEvents.update, {
+      token: s.adminToken,
+      communityWideEventId: anchorParent._id,
+      title: "Renamed Dinner",
+      scope: "all_in_series",
+    });
+
+    expect(result.meetingsSkipped).toBe(1);
+    expect(result.skippedGroupNames).toEqual(["Group Alpha"]);
+    // And the skip is real — Alpha's later copy keeps its old title.
+    expect((await getMeeting(t, laterAlpha._id))?.title).toBe("Weekly Dinner");
+  });
+
+  test("does not report the anchor's overrides when the anchor is out of scope", async () => {
+    // A past anchor under all_in_series contributes no meetings to the
+    // cascade, so its overridden children were never in scope to skip.
+    const t = convexTest(schema, modules);
+    const s = await setupTestData(t);
+    await createSeries(t, s);
+
+    const pastAlpha = await childMeeting(t, s.groupId1, PAST_DATE);
+    await t.run(async (ctx) => {
+      await ctx.db.patch(pastAlpha._id, { isOverridden: true });
+    });
+
+    const pastParent = await parentFor(t, PAST_DATE);
+    const result = await t.mutation(api.functions.communityWideEvents.update, {
+      token: s.adminToken,
+      communityWideEventId: pastParent._id,
+      title: "Renamed Dinner",
+      scope: "all_in_series",
+    });
+
+    expect(result.meetingsSkipped).toBe(0);
+  });
+
   test("reports nothing skipped when no child is overridden", async () => {
     const t = convexTest(schema, modules);
     const s = await setupTestData(t);

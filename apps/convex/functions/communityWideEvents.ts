@@ -319,19 +319,24 @@ export const update = mutation({
       (m) => m.isOverridden !== true && m.status !== "cancelled"
     );
 
-    // Children this edit deliberately leaves alone because a leader customized
+    // Meetings this edit deliberately leaves alone because a leader customized
     // them. Reported back so the admin UI can say so — a silent skip reads as
     // "the save didn't work", which is exactly how an admin discovers too late
     // that a corrupt child is unreachable.
-    const skippedChildren = allDirectChildren.filter(
-      (m) => m.isOverridden === true && m.status !== "cancelled"
-    );
-    const skippedGroupNames: string[] = [];
-    for (const m of skippedChildren) {
-      const group = await ctx.db.get(m.groupId);
-      if (group) skippedGroupNames.push(group.name);
+    //
+    // Keyed by _id and scoped to the meetings this edit would otherwise have
+    // touched: a past all_in_series anchor contributes nothing (its children
+    // aren't in scope at all), and an all_in_series edit must also account for
+    // overrides on the *future* occurrences it cascades to — counting only the
+    // anchor's children would report 0 while silently skipping a later one.
+    const skippedById = new Map<Id<"meetings">, Doc<"meetings">>();
+    if (includeAnchor) {
+      for (const m of allDirectChildren) {
+        if (m.isOverridden === true && m.status !== "cancelled") {
+          skippedById.set(m._id, m);
+        }
+      }
     }
-    skippedGroupNames.sort();
 
     // Meetings that receive non-date field edits.
     let cascadeMeetings: typeof directChildren = directChildren;
@@ -380,11 +385,17 @@ export const update = mutation({
           for (const m of directChildren) byId.set(m._id, m);
         }
         for (const m of seriesMeetings) {
-          if (m.isOverridden === true || m.status === "cancelled") continue;
+          if (m.status === "cancelled") continue;
           if (!m.communityWideEventId) continue;
           const parent = parentById.get(m.communityWideEventId);
           if (!parent || parent.status === "cancelled") continue;
           if (parent.scheduledAt < timestamp) continue;
+          // Overridden check comes *after* the in-scope checks so the skip
+          // report only names meetings this edit would really have changed.
+          if (m.isOverridden === true) {
+            skippedById.set(m._id, m);
+            continue;
+          }
           byId.set(m._id, m);
         }
         cascadeMeetings = [...byId.values()];
@@ -397,6 +408,17 @@ export const update = mutation({
         );
       }
     }
+
+    // Resolve the skipped groups now that the full cascade scope is known.
+    // Deduplicated by name: one group with two customized occurrences is still
+    // one group for the admin to go and reset.
+    const skippedChildren = [...skippedById.values()];
+    const skippedNameSet = new Set<string>();
+    for (const m of skippedChildren) {
+      const group = await ctx.db.get(m.groupId);
+      if (group) skippedNameSet.add(group.name);
+    }
+    const skippedGroupNames = [...skippedNameSet].sort();
 
     // Non-date field updates — cascade to the scoped set.
     const cascadeUpdates: Record<string, unknown> = {};
