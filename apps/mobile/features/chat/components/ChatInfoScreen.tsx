@@ -10,10 +10,10 @@
  *     `searchUsersInSharedCommunities`
  *   - "Leave chat" destructive action
  *
- * The screen sources its member list from `getDirectInbox`'s row for this
- * channel — that endpoint already returns the member set the client is
- * authorised to see (excludes blocked / left rows). We pair it with
- * `getChannel` for canonical metadata (channelType, name, isAdHoc).
+ * The screen sources its member list from `getAdHocChannelMembers` — that
+ * endpoint already returns the member set the client is authorised to see
+ * (excludes blocked / left rows). We pair it with `getChannel` for canonical
+ * metadata (channelType, name, isAdHoc).
  */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -47,6 +47,7 @@ import {
 import type { Id } from "@services/api/convex";
 import { StackedMemberAvatars } from "./StackedMemberAvatars";
 import { useAdHocChannelManagement } from "../hooks/useAdHocChannelManagement";
+import { adHocDisplayMembers } from "../utils/adHocDisplayMembers";
 
 type Props = {
   channelId: Id<"chatChannels">;
@@ -106,8 +107,17 @@ export function ChatInfoScreen({ channelId }: Props) {
       channelName: channelMembers.channelName,
       memberCount: channelMembers.memberCount,
       otherMembers: channelMembers.otherMembers,
+      formerMember: channelMembers.formerMember,
     };
   }, [channelMembers, channelId]);
+
+  // Names/avatars only. A 1:1 counterpart who left (e.g. an expired request)
+  // is NOT in `otherMembers`, so the member list below still excludes them —
+  // they must not look like someone you can message or remove.
+  const displayMembers = useMemo(
+    () => adHocDisplayMembers(inboxRow?.otherMembers ?? [], inboxRow?.formerMember),
+    [inboxRow],
+  );
 
   const isGroupDm = channel?.channelType === "group_dm";
   const isAdHoc = channel?.isAdHoc === true;
@@ -153,27 +163,27 @@ export function ChatInfoScreen({ channelId }: Props) {
 
   const otherAvatars = useMemo(
     () =>
-      (inboxRow?.otherMembers ?? []).map((m) => ({
+      displayMembers.map((m) => ({
         name: m.displayName,
         imageUrl: m.profilePhoto,
       })),
-    [inboxRow],
+    [displayMembers],
   );
 
   const channelName = useMemo(() => {
     if (!channel) return "";
     if (channel.channelType === "dm") {
-      return inboxRow?.otherMembers[0]?.displayName ?? "Conversation";
+      return displayMembers[0]?.displayName ?? "Conversation";
     }
     if (channel.name && channel.name.trim().length > 0) return channel.name;
     return (
-      (inboxRow?.otherMembers ?? [])
+      displayMembers
         .slice(0, 3)
         .map((m) => m.displayName.split(" ")[0])
         .filter(Boolean)
         .join(", ") || "Chat"
     );
-  }, [channel, inboxRow]);
+  }, [channel, displayMembers]);
 
   // ---- UI state ----
   const [renameVisible, setRenameVisible] = useState(false);

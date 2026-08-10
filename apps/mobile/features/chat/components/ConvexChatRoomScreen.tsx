@@ -60,6 +60,7 @@ import { useTypingIndicators } from "../hooks/useTypingIndicators";
 import { useSendMessage } from "../hooks/useConvexSendMessage";
 import { useParentMessage } from "../hooks/useParentMessage";
 import { isOptimisticMessageId, resolveReplyPreview } from "../utils/replyPreview";
+import { adHocDisplayMembers } from "../utils/adHocDisplayMembers";
 import { BlockedUsersProvider, useBlockedUsersContext } from "../context/BlockedUsersContext";
 import { useMutation, useAction } from "@services/api/convex";
 import { useGroupCache } from "@/stores/groupCache";
@@ -1136,12 +1137,18 @@ const ConvexChatRoomScreenInner: React.FC = () => {
   // object on every Convex push, but if the underlying data hasn't changed,
   // downstream consumers (StackedMemberAvatars, ChatRoomHeader) shouldn't
   // see a new prop reference. Key on the userId+photo+name tuple.
-  const adHocOtherMembersKey = (adHocChannelMembers?.otherMembers ?? [])
+  // `formerMember` keeps a 1:1 header named after its counterpart once they've
+  // left (e.g. an expired request) instead of a blank "Conversation".
+  const adHocDisplayedMembers = adHocDisplayMembers(
+    adHocChannelMembers?.otherMembers ?? [],
+    adHocChannelMembers?.formerMember,
+  );
+  const adHocOtherMembersKey = adHocDisplayedMembers
     .map((m) => `${m.userId}|${m.profilePhoto ?? ""}|${m.displayName}`)
     .join("\n");
   const adHocOtherMembers = useMemo(
     () =>
-      (adHocChannelMembers?.otherMembers ?? []).map((m) => ({
+      adHocDisplayedMembers.map((m) => ({
         name: m.displayName,
         imageUrl: m.profilePhoto,
       })),

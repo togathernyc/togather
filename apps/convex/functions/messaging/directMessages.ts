@@ -1345,6 +1345,56 @@ export const listCommunityMembersForNewChat = query({
   },
 });
 
+/** Display-only identity of a 1:1 DM counterpart who is no longer a member. */
+type FormerDirectMember = {
+  userId: Id<"users">;
+  displayName: string;
+  profilePhoto: string | null;
+};
+
+/**
+ * Resolve the name/photo of the other participant in a 1:1 `dm` whose
+ * membership has ended — most commonly because the 30-day `expireOldChatRequests`
+ * cron silently marked their never-answered request `declined` + `leftAt`.
+ *
+ * WHY: the sender's thread stays in their inbox, but every active-member lookup
+ * filters on `leftAt === undefined`, so the row lost its name and rendered as a
+ * blank "Conversation" (issue #426).
+ *
+ * DISPLAY ONLY. Callers must keep this OUT of `otherMembers` and any member
+ * list, count, or fan-out — the person really did leave, and must not be
+ * treated as active anywhere. Only call this for `channelType === "dm"` and
+ * only when there is no active other member.
+ */
+async function resolveFormerDirectMember(
+  ctx: QueryCtx,
+  channelId: Id<"chatChannels">,
+  callerId: Id<"users">,
+): Promise<FormerDirectMember | null> {
+  const rows = await ctx.db
+    .query("chatChannelMembers")
+    .withIndex("by_channel", (q) => q.eq("channelId", channelId))
+    .collect();
+  const departed = rows
+    .filter((m) => m.userId !== callerId && m.leftAt !== undefined)
+    .sort((a, b) => (b.leftAt ?? 0) - (a.leftAt ?? 0))[0];
+  if (!departed) return null;
+
+  // Prefer the live user doc — the denormalized row values go stale when the
+  // user edits their profile — and fall back to the row for a deleted user.
+  const user = await ctx.db.get(departed.userId);
+  const displayName =
+    (user ? getDisplayName(user.firstName, user.lastName) : "") ||
+    departed.displayName ||
+    "Member";
+  return {
+    userId: departed.userId,
+    displayName,
+    profilePhoto:
+      getMediaUrl(user?.profilePhoto ?? departed.profilePhoto) ?? null,
+  };
+}
+
 /**
  * List the caller's accepted ad-hoc channels (DMs and group_dms) within a
  * specific community. Powers the "Direct messages" section of the inbox.
@@ -1383,6 +1433,8 @@ export const getAdHocChannelMembers = query({
       profilePhoto: string | null;
       notificationsDisabled: boolean;
     }>;
+    /** See `resolveFormerDirectMember` — 1:1 display fallback, never a member. */
+    formerMember: FormerDirectMember | null;
   } | null> => {
     const userId = await requireAuth(ctx, args.token);
     const channel = await ctx.db.get(args.channelId);
@@ -1438,11 +1490,18 @@ export const getAdHocChannelMembers = query({
       })
       .filter((x): x is NonNullable<typeof x> => x !== null);
 
+    const channelType = channel.channelType as "dm" | "group_dm";
+    const formerMember =
+      channelType === "dm" && otherMembers.length === 0
+        ? await resolveFormerDirectMember(ctx, args.channelId, userId)
+        : null;
+
     return {
-      channelType: channel.channelType as "dm" | "group_dm",
+      channelType,
       channelName: channel.name ?? "",
       memberCount: memberRows.length,
       otherMembers,
+      formerMember,
     };
   },
 });
@@ -1473,6 +1532,8 @@ export const getDirectInbox = query({
         profilePhoto: string | null;
         notificationsDisabled: boolean;
       }>;
+      /** See `resolveFormerDirectMember` — 1:1 display fallback, never a member. */
+      formerMember: FormerDirectMember | null;
       lastMessageAt: number | null;
       lastMessagePreview: string | null;
       lastMessageSenderName: string | null;
@@ -1541,6 +1602,14 @@ export const getDirectInbox = query({
           notificationsDisabled: rowNotifsDisabled.has(m.userId),
         }));
 
+      // A 1:1 whose counterpart left (expired request, decline, block) has no
+      // active other member — keep their name/photo for the row's display so
+      // it doesn't degrade into a nameless "Conversation".
+      const formerMember =
+        channelType === "dm" && otherMembers.length === 0
+          ? await resolveFormerDirectMember(ctx, channel._id, userId)
+          : null;
+
       // Read state → unread count.
       const readState = await ctx.db
         .query("chatReadState")
@@ -1556,6 +1625,7 @@ export const getDirectInbox = query({
         channelName: channel.name,
         memberCount: channel.memberCount,
         otherMembers,
+        formerMember,
         lastMessageAt: channel.lastMessageAt ?? null,
         lastMessagePreview: channel.lastMessagePreview ?? null,
         lastMessageSenderName: channel.lastMessageSenderName ?? null,

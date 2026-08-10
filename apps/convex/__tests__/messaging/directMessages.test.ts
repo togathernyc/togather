@@ -1066,6 +1066,190 @@ describe("getDirectInbox", () => {
 });
 
 // ============================================================================
+// Former-member display name (issue #426)
+// ============================================================================
+
+/**
+ * Backdate a member row past the 30-day pending TTL and run the expiry cron,
+ * which marks it `declined` + `leftAt` — the state that used to blank out the
+ * sender's inbox row.
+ */
+async function expirePendingRequest(
+  t: ReturnType<typeof convexTest>,
+  channelId: Id<"chatChannels">,
+  userId: Id<"users">,
+) {
+  const row = await getMember(t, channelId, userId);
+  const rowId = row!._id;
+  await t.run(async (ctx) => {
+    await ctx.db.patch(rowId, {
+      joinedAt: Date.now() - 31 * 24 * 60 * 60 * 1000,
+    });
+  });
+  await t.mutation(
+    internal.functions.messaging.directMessages.expireOldChatRequests,
+    {},
+  );
+}
+
+describe("former member display (expired 1:1 DM requests)", () => {
+  test("getDirectInbox keeps the recipient's name after their request expires", async () => {
+    const t = convexTest(schema, modules);
+    const communityId = await createCommunity(t, "Former Member Inbox");
+    const { accessToken: aToken } = await createUserInCommunity(t, communityId, {
+      firstName: "Alice",
+      lastName: "Anderson",
+    });
+    const { userId: bId } = await createUserInCommunity(t, communityId, {
+      firstName: "David",
+      lastName: "Walker",
+    });
+
+    const { channelId } = await t.mutation(
+      api.functions.messaging.directMessages.createOrGetDirectChannel,
+      { token: aToken, communityId, recipientUserId: bId },
+    );
+    await t.mutation(api.functions.messaging.messages.sendMessage, {
+      token: aToken,
+      channelId,
+      content: "yo",
+    });
+    await t.finishInProgressScheduledFunctions();
+
+    await expirePendingRequest(t, channelId, bId);
+
+    const inbox = await t.query(
+      api.functions.messaging.directMessages.getDirectInbox,
+      { token: aToken, communityId },
+    );
+    expect(inbox).toHaveLength(1);
+    // The recipient left, so they are NOT an active member...
+    expect(inbox[0].otherMembers).toHaveLength(0);
+    // ...but their identity is still available for display.
+    expect(inbox[0].formerMember).not.toBeNull();
+    expect(inbox[0].formerMember?.userId).toBe(bId);
+    expect(inbox[0].formerMember?.displayName).toBe("David Walker");
+
+    await t.finishInProgressScheduledFunctions();
+  });
+
+  test("getDirectInbox leaves formerMember null while the recipient is still pending", async () => {
+    const t = convexTest(schema, modules);
+    const communityId = await createCommunity(t, "Pending Member Inbox");
+    const { accessToken: aToken } = await createUserInCommunity(t, communityId, {
+      firstName: "Alice",
+    });
+    const { userId: bId } = await createUserInCommunity(t, communityId, {
+      firstName: "David",
+      lastName: "Walker",
+    });
+
+    const { channelId } = await t.mutation(
+      api.functions.messaging.directMessages.createOrGetDirectChannel,
+      { token: aToken, communityId, recipientUserId: bId },
+    );
+    await t.mutation(api.functions.messaging.messages.sendMessage, {
+      token: aToken,
+      channelId,
+      content: "yo",
+    });
+    await t.finishInProgressScheduledFunctions();
+
+    const inbox = await t.query(
+      api.functions.messaging.directMessages.getDirectInbox,
+      { token: aToken, communityId },
+    );
+    expect(inbox).toHaveLength(1);
+    expect(inbox[0].otherMembers.map((m) => m.userId)).toEqual([bId]);
+    expect(inbox[0].formerMember).toBeNull();
+
+    await t.finishInProgressScheduledFunctions();
+  });
+
+  test("getDirectInbox does not resolve former members for group_dm rows", async () => {
+    const t = convexTest(schema, modules);
+    const communityId = await createCommunity(t, "Former Member Group");
+    const { accessToken: aToken } = await createUserInCommunity(t, communityId, {
+      firstName: "Alice",
+    });
+    const { userId: bId } = await createUserInCommunity(t, communityId, {
+      firstName: "David",
+      lastName: "Walker",
+    });
+    const { userId: cId } = await createUserInCommunity(t, communityId, {
+      firstName: "Carol",
+    });
+
+    const { channelId } = await t.mutation(
+      api.functions.messaging.directMessages.createGroupChat,
+      {
+        token: aToken,
+        communityId,
+        recipientUserIds: [bId, cId],
+        name: "Planning",
+      },
+    );
+    await t.mutation(api.functions.messaging.messages.sendMessage, {
+      token: aToken,
+      channelId,
+      content: "hi all",
+    });
+    await t.finishInProgressScheduledFunctions();
+
+    await expirePendingRequest(t, channelId, bId);
+
+    const inbox = await t.query(
+      api.functions.messaging.directMessages.getDirectInbox,
+      { token: aToken, communityId },
+    );
+    expect(inbox).toHaveLength(1);
+    expect(inbox[0].channelType).toBe("group_dm");
+    expect(inbox[0].otherMembers.map((m) => m.userId)).toEqual([cId]);
+    // "Someone left" is legitimately different in a group chat — no
+    // resurrection of departed members there.
+    expect(inbox[0].formerMember).toBeNull();
+
+    await t.finishInProgressScheduledFunctions();
+  });
+
+  test("getAdHocChannelMembers keeps the recipient's name after their request expires", async () => {
+    const t = convexTest(schema, modules);
+    const communityId = await createCommunity(t, "Former Member Header");
+    const { accessToken: aToken } = await createUserInCommunity(t, communityId, {
+      firstName: "Alice",
+    });
+    const { userId: bId } = await createUserInCommunity(t, communityId, {
+      firstName: "David",
+      lastName: "Walker",
+    });
+
+    const { channelId } = await t.mutation(
+      api.functions.messaging.directMessages.createOrGetDirectChannel,
+      { token: aToken, communityId, recipientUserId: bId },
+    );
+    await t.mutation(api.functions.messaging.messages.sendMessage, {
+      token: aToken,
+      channelId,
+      content: "yo",
+    });
+    await t.finishInProgressScheduledFunctions();
+
+    await expirePendingRequest(t, channelId, bId);
+
+    const members = await t.query(
+      api.functions.messaging.directMessages.getAdHocChannelMembers,
+      { token: aToken, channelId },
+    );
+    expect(members).not.toBeNull();
+    expect(members!.otherMembers).toHaveLength(0);
+    expect(members!.formerMember?.userId).toBe(bId);
+    expect(members!.formerMember?.displayName).toBe("David Walker");
+
+    await t.finishInProgressScheduledFunctions();
+  });
+});
+
+// ============================================================================
 // expireOldChatRequests cron
 // ============================================================================
 
