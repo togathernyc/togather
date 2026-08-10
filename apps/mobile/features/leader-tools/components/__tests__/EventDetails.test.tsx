@@ -75,6 +75,10 @@ jest.mock("@services/api/convex", () => ({
         list: "api.functions.eventBlasts.list",
         initiate: "api.functions.eventBlasts.initiate",
       },
+      communityWideEvents: {
+        resetChildToCommunityDefault:
+          "api.functions.communityWideEvents.resetChildToCommunityDefault",
+      },
     },
   },
   useQuery: (...args: any[]) => mockUseQuery(...args),

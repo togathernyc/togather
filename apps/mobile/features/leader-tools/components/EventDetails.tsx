@@ -146,6 +146,13 @@ export function EventDetails({
   // Toggle RSVP leader notifications mutation
   const toggleRsvpNotifyMutation = useAuthenticatedMutation(api.functions.meetings.index.toggleRsvpLeaderNotifications);
 
+  // Admin escape hatch for a customized community-wide copy — see handler below
+  const resetToCommunityDefaultMutation = useAuthenticatedMutation(
+    api.functions.communityWideEvents.resetChildToCommunityDefault
+  );
+  const [isResettingToCommunityDefault, setIsResettingToCommunityDefault] =
+    useState(false);
+
   // Wrapper for submitRsvp mutation
   const submitRsvp = {
     mutate: async (data: { meetingId: string; optionId: number }) => {
@@ -245,6 +252,39 @@ export function EventDetails({
   // Toggle expanded option to show users
   const toggleExpandOption = (optionId: number) => {
     setExpandedOption(expandedOption === optionId ? null : optionId);
+  };
+
+  // Once a leader customizes their group's copy of a community-wide event, the
+  // `isOverridden` latch excludes it from every admin cascade — so an admin
+  // fixing the parent sees "saved" while this copy keeps its old date. This is
+  // the only way back in sync.
+  const handleResetToCommunityDefault = () => {
+    Alert.alert(
+      "Reset to community version?",
+      "This group's customizations to this event — including its date — will be replaced with the community-wide version. Their own location is kept.",
+      [
+        { text: "Keep customizations", style: "cancel" },
+        {
+          text: "Reset",
+          style: "destructive",
+          onPress: async () => {
+            setIsResettingToCommunityDefault(true);
+            try {
+              await resetToCommunityDefaultMutation({
+                meetingId: meetingId as Id<"meetings">,
+              });
+            } catch {
+              Alert.alert(
+                "Error",
+                "Failed to reset this event to the community version."
+              );
+            } finally {
+              setIsResettingToCommunityDefault(false);
+            }
+          },
+        },
+      ]
+    );
   };
 
   const handleEdit = () => {
@@ -514,6 +554,38 @@ export function EventDetails({
                   isOverridden={meeting.isOverridden}
                   showOverrideNote={isLeader}
                 />
+                {/* Admin-only: a customized copy is invisible to every
+                    community-wide cascade until it's reset. */}
+                {isCommunityAdmin && meeting.isOverridden && (
+                  <TouchableOpacity
+                    style={[
+                      styles.resetToCommunityButton,
+                      { borderColor: colors.border },
+                    ]}
+                    onPress={handleResetToCommunityDefault}
+                    disabled={isResettingToCommunityDefault}
+                  >
+                    {isResettingToCommunityDefault ? (
+                      <ActivityIndicator size="small" color={colors.textSecondary} />
+                    ) : (
+                      <>
+                        <Ionicons
+                          name="refresh"
+                          size={16}
+                          color={colors.textSecondary}
+                        />
+                        <Text
+                          style={[
+                            styles.resetToCommunityText,
+                            { color: colors.textSecondary },
+                          ]}
+                        >
+                          Reset to community version
+                        </Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                )}
               </View>
             )}
 
@@ -1040,6 +1112,21 @@ const styles = StyleSheet.create({
   },
   communityWideBadgeContainer: {
     marginBottom: 16,
+  },
+  resetToCommunityButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    marginTop: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderRadius: 8,
+  },
+  resetToCommunityText: {
+    fontSize: 13,
+    fontWeight: "500",
   },
   detailCard: {
     borderRadius: 12,
