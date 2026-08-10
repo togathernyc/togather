@@ -129,7 +129,23 @@ export async function canAccessEventChannel(
  * channel and no history is destroyed — re-enabling the option silently
  * restores delivery, which a destructive reconcile-on-edit could not do.
  *
- * Non-event channels pass through untouched.
+ * COST — read honestly before reusing this on another hot path. Non-event
+ * channels pass through with zero extra reads. An event channel costs one
+ * meeting read plus a full `meetingRsvps`-by-meeting scan on *every* message:
+ * proportional to the event's RSVP count (not the recipient count), inside the
+ * sender's transaction. A community-wide event with thousands of RSVPs
+ * therefore adds thousands of document reads per message, against Convex's
+ * per-transaction read budget, on the busiest channels there are.
+ *
+ * The obvious escape — "if every option is enabled nothing can be hidden, so
+ * skip the scan" — is NOT sound: the filter also drops seats whose RSVP is
+ * "Can't Go" or missing entirely, and the `reconcileEventChannelAdmins`
+ * demotion above creates exactly such a seat with every option enabled. The
+ * "leader demoted after hosts are set" test fails if you add it. Per-member
+ * point reads are worse for typical events (N reads vs. one scan). If this
+ * ever becomes a real budget problem, the fix is to make seating cheap to
+ * re-derive — e.g. denormalize the RSVP option onto `chatChannelMembers` —
+ * not to skip the check.
  */
 export async function filterMembersWithEventChannelAccess<
   T extends { userId: Id<"users">; role?: string },
