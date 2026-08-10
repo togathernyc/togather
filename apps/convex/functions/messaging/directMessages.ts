@@ -15,7 +15,7 @@
 import { v, ConvexError } from "convex/values";
 import { query, mutation, internalMutation } from "../../_generated/server";
 import type { QueryCtx } from "../../_generated/server";
-import type { Id } from "../../_generated/dataModel";
+import type { Doc, Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
 import { checkRateLimit } from "../../lib/rateLimit";
 import { getDisplayName, getMediaUrl, normalizePhone } from "../../lib/utils";
@@ -1345,6 +1345,69 @@ export const listCommunityMembersForNewChat = query({
   },
 });
 
+/** Display-only identity of a 1:1 DM counterpart who is no longer a member. */
+type FormerDirectMember = {
+  userId: Id<"users">;
+  displayName: string;
+  profilePhoto: string | null;
+};
+
+/**
+ * Resolve the name/photo of the other participant in a 1:1 `dm` whose
+ * membership has ended — most commonly because the 30-day `expireOldChatRequests`
+ * cron silently marked their never-answered request `declined` + `leftAt`.
+ *
+ * WHY: the sender's thread stays in their inbox, but every active-member lookup
+ * filters on `leftAt === undefined`, so the row lost its name and rendered as a
+ * blank "Conversation" (issue #426).
+ *
+ * DISPLAY ONLY. Callers must keep this OUT of `otherMembers` and any member
+ * list, count, or fan-out — the person really did leave, and must not be
+ * treated as active anywhere. Only call this for `channelType === "dm"` and
+ * only when there is no active other member.
+ *
+ * Returns null when either party has blocked the other: "Block & Report"
+ * (`respondToChatRequest` with `response: "block"`) also ends the membership,
+ * so without this guard the blocker's identity would be handed straight back
+ * to the person they blocked.
+ *
+ * `memberRows` is the channel's FULL member list, departed rows included —
+ * callers already hold it, so it is passed in rather than re-queried.
+ */
+async function resolveFormerDirectMember(
+  ctx: QueryCtx,
+  memberRows: Array<Doc<"chatChannelMembers">>,
+  callerId: Id<"users">,
+): Promise<FormerDirectMember | null> {
+  const departed = memberRows
+    .filter((m) => m.userId !== callerId && m.leftAt !== undefined)
+    .sort((a, b) => (b.leftAt ?? 0) - (a.leftAt ?? 0))[0];
+  if (!departed) return null;
+
+  // A block hides each party from the other everywhere else in this file —
+  // channel creation refuses with a generic error rather than leak who
+  // (`isBlockedEitherDirection` above), and both the new-chat member list and
+  // user search filter blocked users out. A declined-by-block membership looks
+  // exactly like an expired one, so this display fallback has to make the same
+  // check or it becomes the one place the blocker's name (and live photo)
+  // reaches the sender they blocked.
+  if (await isBlockedEitherDirection(ctx, callerId, departed.userId)) {
+    return null;
+  }
+
+  // Read the denormalized member row, NOT the live user doc. Active members in
+  // `getDirectInbox` are rendered from the row too, so resolving a departed
+  // person from their user doc would give someone who left a *fresher* identity
+  // than someone still in the thread. It also keeps this a snapshot of who they
+  // were while the thread was live: profile edits they make afterwards stop
+  // propagating to a counterpart they no longer share a channel with.
+  return {
+    userId: departed.userId,
+    displayName: departed.displayName || "Member",
+    profilePhoto: getMediaUrl(departed.profilePhoto) ?? null,
+  };
+}
+
 /**
  * List the caller's accepted ad-hoc channels (DMs and group_dms) within a
  * specific community. Powers the "Direct messages" section of the inbox.
@@ -1383,6 +1446,8 @@ export const getAdHocChannelMembers = query({
       profilePhoto: string | null;
       notificationsDisabled: boolean;
     }>;
+    /** See `resolveFormerDirectMember` — 1:1 display fallback, never a member. */
+    formerMember: FormerDirectMember | null;
   } | null> => {
     const userId = await requireAuth(ctx, args.token);
     const channel = await ctx.db.get(args.channelId);
@@ -1404,11 +1469,13 @@ export const getAdHocChannelMembers = query({
       return null;
     }
 
-    const memberRows = await ctx.db
+    // Collected unfiltered so `resolveFormerDirectMember` can reuse the rows;
+    // active members are filtered out of it in memory.
+    const allMemberRows = await ctx.db
       .query("chatChannelMembers")
       .withIndex("by_channel", (q) => q.eq("channelId", args.channelId))
-      .filter((q) => q.eq(q.field("leftAt"), undefined))
       .collect();
+    const memberRows = allMemberRows.filter((m) => m.leftAt === undefined);
 
     const others = memberRows.filter((m) => m.userId !== userId);
     // Resolve profilePhoto + displayName from each user doc — denormalized
@@ -1438,11 +1505,18 @@ export const getAdHocChannelMembers = query({
       })
       .filter((x): x is NonNullable<typeof x> => x !== null);
 
+    const channelType = channel.channelType as "dm" | "group_dm";
+    const formerMember =
+      channelType === "dm" && otherMembers.length === 0
+        ? await resolveFormerDirectMember(ctx, allMemberRows, userId)
+        : null;
+
     return {
-      channelType: channel.channelType as "dm" | "group_dm",
+      channelType,
       channelName: channel.name ?? "",
       memberCount: memberRows.length,
       otherMembers,
+      formerMember,
     };
   },
 });
@@ -1473,6 +1547,8 @@ export const getDirectInbox = query({
         profilePhoto: string | null;
         notificationsDisabled: boolean;
       }>;
+      /** See `resolveFormerDirectMember` — 1:1 display fallback, never a member. */
+      formerMember: FormerDirectMember | null;
       lastMessageAt: number | null;
       lastMessagePreview: string | null;
       lastMessageSenderName: string | null;
@@ -1516,11 +1592,16 @@ export const getDirectInbox = query({
       // surfacing the chat to a recipient who hasn't responded — that recipient
       // shows in the member list with their pending state, but for inbox
       // display we only need name+photo).
-      const otherMemberRows = await ctx.db
+      //
+      // Collected unfiltered so `resolveFormerDirectMember` can reuse the rows;
+      // active members are filtered out of it in memory.
+      const allMemberRows = await ctx.db
         .query("chatChannelMembers")
         .withIndex("by_channel", (q) => q.eq("channelId", channel._id))
-        .filter((q) => q.eq(q.field("leftAt"), undefined))
         .collect();
+      const otherMemberRows = allMemberRows.filter(
+        (m) => m.leftAt === undefined,
+      );
       const otherMemberIds = otherMemberRows
         .filter((m) => m.userId !== userId)
         .map((m) => m.userId);
@@ -1541,6 +1622,14 @@ export const getDirectInbox = query({
           notificationsDisabled: rowNotifsDisabled.has(m.userId),
         }));
 
+      // A 1:1 whose counterpart left (expired request, decline, block) has no
+      // active other member — keep their name/photo for the row's display so
+      // it doesn't degrade into a nameless "Conversation".
+      const formerMember =
+        channelType === "dm" && otherMembers.length === 0
+          ? await resolveFormerDirectMember(ctx, allMemberRows, userId)
+          : null;
+
       // Read state → unread count.
       const readState = await ctx.db
         .query("chatReadState")
@@ -1556,6 +1645,7 @@ export const getDirectInbox = query({
         channelName: channel.name,
         memberCount: channel.memberCount,
         otherMembers,
+        formerMember,
         lastMessageAt: channel.lastMessageAt ?? null,
         lastMessagePreview: channel.lastMessagePreview ?? null,
         lastMessageSenderName: channel.lastMessageSenderName ?? null,

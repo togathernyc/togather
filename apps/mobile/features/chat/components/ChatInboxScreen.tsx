@@ -45,6 +45,7 @@ import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useTheme } from "@hooks/useTheme";
 import { GroupedInboxItem } from "./GroupedInboxItem";
 import { selectMainChannel } from "../utils/selectMainChannel";
+import { adHocDisplayMembers } from "../utils/adHocDisplayMembers";
 import { useExpandedGroups } from "../hooks/useExpandedGroups";
 import { useInboxGroupCollapse } from "../../../stores/inboxGroupCollapse";
 import { useInboxCache } from "../../../stores/inboxCache";
@@ -2311,6 +2312,12 @@ type DirectInboxRowData = {
     profilePhoto: string | null;
     notificationsDisabled: boolean;
   }>;
+  /** 1:1 counterpart who left (e.g. expired request) — display only. */
+  formerMember: {
+    userId: Id<"users">;
+    displayName: string;
+    profilePhoto: string | null;
+  } | null;
   lastMessageAt: number | null;
   lastMessagePreview: string | null;
   lastMessageSenderName: string | null;
@@ -2340,7 +2347,8 @@ interface DirectMessageRowProps {
 }
 
 
-function DirectMessageRow({ row, primaryColor, colors, whatsappShellEnabled }: DirectMessageRowProps) {
+/** Exported for direct rendering in tests; the screen renders it internally. */
+export function DirectMessageRow({ row, primaryColor, colors, whatsappShellEnabled }: DirectMessageRowProps) {
   const router = useRouter();
 
   // Display name: for 1:1, the other member; for group_dm, the channel name
@@ -2350,11 +2358,14 @@ function DirectMessageRow({ row, primaryColor, colors, whatsappShellEnabled }: D
   // the product surface drops "group" language; multi-recipient threads are
   // just chats with more people.
   const isOneOnOne = row.channelType === "dm";
+  // A 1:1 whose counterpart left (expired request) has no active other member;
+  // fall back to their stored identity so the row keeps its name and photo.
+  const displayMembers = adHocDisplayMembers(row.otherMembers, row.formerMember);
   const headerName = isOneOnOne
-    ? row.otherMembers[0]?.displayName ?? "Conversation"
+    ? displayMembers[0]?.displayName ?? "Conversation"
     : row.channelName.trim().length > 0
       ? row.channelName
-      : row.otherMembers
+      : displayMembers
           .slice(0, 3)
           .map((m) => m.displayName.split(" ")[0])
           .filter(Boolean)
@@ -2362,8 +2373,8 @@ function DirectMessageRow({ row, primaryColor, colors, whatsappShellEnabled }: D
 
   // Stack avatars when this is a true multi-member group_dm with at least two
   // visible others. The cluster scales 2/3/4+ — see `StackedMemberAvatars`.
-  const useStackedAvatars = !isOneOnOne && row.otherMembers.length >= 2;
-  const primaryAvatar = row.otherMembers[0];
+  const useStackedAvatars = !isOneOnOne && displayMembers.length >= 2;
+  const primaryAvatar = displayMembers[0];
 
   // Compose preview line.
   const preview = row.lastMessagePreview ?? "No messages yet";
@@ -2393,7 +2404,7 @@ function DirectMessageRow({ row, primaryColor, colors, whatsappShellEnabled }: D
         <View style={styles.waAvatarSlot}>
           {useStackedAvatars ? (
             <StackedMemberAvatars
-              members={row.otherMembers.map((m) => ({
+              members={displayMembers.map((m) => ({
                 name: m.displayName,
                 imageUrl: m.profilePhoto,
               }))}
@@ -2445,7 +2456,7 @@ function DirectMessageRow({ row, primaryColor, colors, whatsappShellEnabled }: D
     <Pressable onPress={onPress} style={styles.dmRow}>
       {useStackedAvatars ? (
         <StackedMemberAvatars
-          members={row.otherMembers.map((m) => ({
+          members={displayMembers.map((m) => ({
             name: m.displayName,
             imageUrl: m.profilePhoto,
           }))}
