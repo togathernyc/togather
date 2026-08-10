@@ -151,7 +151,13 @@ Only two features queue writes offline; everything else fails.
   offline and regaining signal.
 - **Last-write-wins**, keyed by a stable `completionId`, storing the *desired*
   `completed` boolean per task.
-- Flushed on reconnect by `ServingTasksScreen`.
+- Flushed **app-wide** by `apps/mobile/providers/ServingTaskQueueSync.tsx`, a
+  headless component mounted at the app root: it replays the queue when
+  connectivity returns and when the app is foregrounded, so completions sync
+  regardless of which screen is mounted (issue #557). A single re-entrancy guard
+  keeps the two triggers from overlapping; an entry only leaves the queue once
+  its mutation succeeds AND its desired state hasn't been superseded, so a
+  failed send is retried on the next trigger rather than lost or double-applied.
 - Safe to replay because the three backing mutations —
   `toggleTaskCompletion`, `togglePersonalTask`, `toggleSharedTeamTask` in
   `apps/convex/functions/scheduling/eventTasks.ts` — each take an **explicit

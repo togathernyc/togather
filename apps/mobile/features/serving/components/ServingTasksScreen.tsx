@@ -36,7 +36,7 @@
  * in place, without leaving serving mode for the rostering grid. See the
  * "Author" section comment below for the offline decision (online-only).
  */
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -277,8 +277,8 @@ type EligiblePlan = {
 /**
  * Parent for the Tasks tab. Owns nothing plan-specific: it resolves the list of
  * plans the user is serving (`getServingEligibility`) and renders one
- * `ServingTasksPlanSection` per plan, plus the SINGLE global offline flush loop
- * (see below). All per-plan data/handlers live in the child section.
+ * `ServingTasksPlanSection` per plan. All per-plan data/handlers live in the
+ * child section.
  */
 export function ServingTasksScreen() {
   const { colors } = useTheme();
@@ -303,79 +303,11 @@ export function ServingTasksScreen() {
   // Today's plans, or the single upcoming plan opened early for preview.
   const plans = useServingPlans(eligibility);
 
-  // --- Global offline flush loop ---------------------------------------------
-  // Replays queued (offline) completions when back online. The queue is GLOBAL
-  // across every plan, so this must run exactly once — it lives here in the
-  // parent rather than in each per-plan section, which would race to drain the
-  // same queue. The per-plan RECONCILE (dropping entries the plan's live server
-  // data already reflects) stays in the child, scoped to that plan's data.
-  const { isEffectivelyOffline } = useConnectionStatus();
-  const queuePending = useServingTaskQueue((s) => s.pending);
-  const dequeueCompletion = useServingTaskQueue((s) => s.dequeue);
-  const toggleSharedTeamTask = useAuthenticatedMutation(
-    api.functions.scheduling.eventTasks.toggleSharedTeamTask,
-  );
-  const toggleTaskCompletion = useAuthenticatedMutation(
-    api.functions.scheduling.eventTasks.toggleTaskCompletion,
-  );
-  const togglePersonalTask = useAuthenticatedMutation(
-    api.functions.scheduling.eventTasks.togglePersonalTask,
-  );
-
-  // Replay queued completions when back online. All three toggle mutations take
-  // an explicit `completed` and are idempotent, so replay is always safe.
-  const flushingRef = useRef(false);
-  const flushQueue = useCallback(async () => {
-    if (flushingRef.current) return;
-    flushingRef.current = true;
-    try {
-      for (const op of useServingTaskQueue.getState().all()) {
-        try {
-          if (op.kind === "personal") {
-            await togglePersonalTask({
-              taskId: op.taskId as Id<"personalServingTasks">,
-              completed: op.completed,
-            });
-          } else if (op.kind === "template") {
-            await toggleTaskCompletion({
-              taskId: op.taskId as Id<"eventTasks">,
-              timeLabel: op.timeLabel,
-              completed: op.completed,
-            });
-          } else {
-            await toggleSharedTeamTask({
-              planId: op.planId as Id<"eventPlans">,
-              taskId: op.taskId as Id<"eventTasks">,
-              completed: op.completed,
-            });
-          }
-          // Only drop it if the desired state hasn't changed since we
-          // snapshotted `all()` — the user may have gone offline mid-flush and
-          // re-toggled this task, in which case `enqueue` replaced the entry and
-          // we must keep the newer intent for the next flush.
-          const current = useServingTaskQueue.getState().pending[op.id];
-          if (current && current.completed === op.completed) {
-            dequeueCompletion(op.id);
-          }
-        } catch {
-          // Leave it queued; the next reconnect (or screen mount) retries.
-        }
-      }
-    } finally {
-      flushingRef.current = false;
-    }
-  }, [
-    togglePersonalTask,
-    toggleTaskCompletion,
-    toggleSharedTeamTask,
-    dequeueCompletion,
-  ]);
-
-  useEffect(() => {
-    if (isEffectivelyOffline) return;
-    if (Object.keys(queuePending).length === 0) return;
-    void flushQueue();
-  }, [isEffectivelyOffline, queuePending, flushQueue]);
+  // Draining the offline completion queue is NOT this screen's job — it runs
+  // app-wide in `providers/ServingTaskQueueSync.tsx`, so a volunteer who ticks
+  // tasks offline and walks away syncs the moment signal returns (issue #557).
+  // The per-plan RECONCILE (dropping entries the plan's live server data
+  // already reflects) does stay in the child, scoped to that plan's data.
 
   if (!isServingMode) {
     return (
@@ -436,8 +368,8 @@ export function ServingTasksScreen() {
  * / Crew / All-teams section switcher, and all the per-plan data, offline cache,
  * mutations and handlers. Every hook here is scoped to `plan.planId`, so
  * completing a task offline enqueues under the CORRECT plan. Rendered once per
- * eligible plan by `ServingTasksScreen`; the global offline flush loop lives in
- * the parent — only the per-plan reconcile lives here.
+ * eligible plan by `ServingTasksScreen`; the offline flush loop lives app-wide
+ * in `providers/ServingTaskQueueSync.tsx` — only the per-plan reconcile is here.
  */
 function ServingTasksPlanSection({ plan, wa }: { plan: EligiblePlan; wa: boolean }) {
   const { colors, isDark } = useTheme();
