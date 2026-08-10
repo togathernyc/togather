@@ -1418,7 +1418,11 @@ describe("demo v4: native Serve Day card, giving link, roster, member health", (
 
     expect(resource?.title).toBe("Partner with us");
     expect(resource?.showInInbox).toBe(true);
-    expect(resource?.linkUrl).toContain("pushpay.com");
+    // The placeholder must be a live Togather-owned page that explains it's a
+    // placeholder — never a third-party giving URL that can 404 (#780).
+    expect(resource?.linkUrl).toBe(
+      "https://togather.nyc/guides/create-your-community#giving",
+    );
     expect(resource?.isDemoSeed).toBe(true);
   });
 

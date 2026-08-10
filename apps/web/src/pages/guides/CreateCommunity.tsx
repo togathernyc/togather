@@ -17,6 +17,7 @@ import { appLinks } from "../../guides/appLinks";
 const toc: TocItem[] = [
   { id: "switcher", label: "Open the community switcher" },
   { id: "demo", label: "Start in demo mode" },
+  { id: "giving", label: "The giving link is a placeholder" },
   { id: "team", label: "Explore it with your team" },
   { id: "go-live", label: "Go live: $1 per active member" },
   { id: "self-host", label: "Prefer to run it yourself?" },
@@ -123,6 +124,28 @@ export function CreateCommunity() {
           they're ready for the real thing.
         </Callout>
         <DeepLink href={appLinks.demo}>Create your community</DeepLink>
+      </Section>
+
+      {/* The seeded "Partner with us" chip links straight to this section —
+          see DEMO_GIVING_URL in apps/convex/functions/demo.ts. */}
+      <Section id="giving" title="The giving link is a placeholder">
+        <P>
+          Your demo seeds a <Term>Partner with us</Term> giving link on the
+          announcements group — the chip at the top of Chats. It points at this
+          guide on purpose: it's a placeholder, because we don't yet know where
+          your church receives gifts.
+        </P>
+        <P>
+          Make it yours from the announcements group → <Term>ⓘ Info</Term> →{" "}
+          <Term>Toolbar Settings</Term>, and point it at your giving page.
+          That's one of the Getting Started missions tracked on the Go Live
+          screen.
+        </P>
+        <Callout tone="note" title="Leave it and it disappears">
+          If you never edit the link, we delete it when you go live rather than
+          leave a placeholder in your community. Edit it and it's yours to
+          keep.
+        </Callout>
       </Section>
 
       <Section id="team" title="Explore it with your team">
