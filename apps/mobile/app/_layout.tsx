@@ -23,6 +23,7 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { AuthProvider } from "@providers/AuthProvider";
 import { AuthErrorBoundary } from "@providers/AuthErrorBoundary";
 import { KnicksModeSync } from "@providers/KnicksModeSync";
+import { ServingTaskQueueSync } from "@providers/ServingTaskQueueSync";
 import { EnvironmentProvider, useEnvironment } from "@providers/EnvironmentProvider";
 import { ImageViewerProvider } from "@providers/ImageViewerProvider";
 import { NotificationProvider } from "@providers/NotificationProvider";
@@ -237,6 +238,9 @@ function AppLayout() {
         <AuthProvider>
           <AuthErrorBoundary>
           <KnicksModeSync />
+          {/* Drains the persisted offline serving-task queue on reconnect /
+              foreground, regardless of which screen is mounted. */}
+          <ServingTaskQueueSync />
           <PostHogProvider>
             <ImageViewerProvider>
             <ChatPrefetchProvider>
