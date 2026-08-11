@@ -41,15 +41,15 @@ type MemberModalType = "active" | "new" | null;
  * attendance queries. The backend buckets these days in the community's
  * timezone, so we must send the day the user actually picked.
  *
- * On web the DatePicker stores the value as UTC-midnight of the picked day
- * (its `<input type="date">` round-trips through `toISOString().slice(0,10)`),
- * so the UTC date is the picked day. On native the Date is in local time, so
- * we read local calendar components instead.
+ * Read local calendar components on EVERY platform. The shared DatePicker
+ * builds its web value from local parts too (`new Date(y, mo - 1, d)` in
+ * `fromLocalInputValue`), so a picked day is local midnight everywhere — and
+ * `toISOString()` on local midnight lands on the PREVIOUS day at any positive
+ * UTC offset. This function used to branch on `Platform.OS === "web"` back
+ * when the picker really did round-trip through UTC; that stopped being true
+ * and the branch silently became an off-by-one for non-US timezones.
  */
 function toDayString(date: Date): string {
-  if (Platform.OS === "web") {
-    return date.toISOString().slice(0, 10);
-  }
   const y = date.getFullYear();
   const m = String(date.getMonth() + 1).padStart(2, "0");
   const d = String(date.getDate()).padStart(2, "0");
