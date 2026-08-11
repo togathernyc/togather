@@ -1017,7 +1017,7 @@ export const updateMemberProfile = mutation({
     // (seven-digit phones, addresses with no public TLD), and validating a
     // value that has not actually changed would take an unrelated name edit
     // down with it. Comparison is on canonical forms, so `(202) 555-0123` and
-    // `+12025550123` — or `Rafael@Test.com` and `rafael@test.com` — are the
+    // `+12025550123` — or `Member@Example.com` and `member@example.com` — are the
     // same value and produce no change, no audit row and no blocker.
 
     let phoneChanged = false;

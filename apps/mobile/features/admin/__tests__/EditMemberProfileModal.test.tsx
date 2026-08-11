@@ -14,9 +14,9 @@ import {
  */
 
 const MEMBER: EditableMemberProfile = {
-  firstName: "Rafel",
-  lastName: "Ortiz",
-  email: "rafael@test.com",
+  firstName: "Jorden",
+  lastName: "Reyes",
+  email: "jordan@test.com",
   phone: "+12025550123",
   dateOfBirth: Date.UTC(1990, 3, 12),
 };
@@ -41,9 +41,9 @@ describe("EditMemberProfileModal", () => {
   it("pre-fills every field from the member record", () => {
     render(<EditMemberProfileModal {...props()} />);
 
-    expect(screen.getByDisplayValue("Rafel")).toBeTruthy();
-    expect(screen.getByDisplayValue("Ortiz")).toBeTruthy();
-    expect(screen.getByDisplayValue("rafael@test.com")).toBeTruthy();
+    expect(screen.getByDisplayValue("Jorden")).toBeTruthy();
+    expect(screen.getByDisplayValue("Reyes")).toBeTruthy();
+    expect(screen.getByDisplayValue("jordan@test.com")).toBeTruthy();
     expect(screen.getByDisplayValue("+12025550123")).toBeTruthy();
   });
 
@@ -51,14 +51,14 @@ describe("EditMemberProfileModal", () => {
     const onSave = jest.fn().mockResolvedValue(undefined);
     render(<EditMemberProfileModal {...props({ onSave })} />);
 
-    fireEvent.changeText(screen.getByDisplayValue("Rafel"), "Rafael");
+    fireEvent.changeText(screen.getByDisplayValue("Jorden"), "Jordan");
     fireEvent.press(screen.getByText("Save Changes"));
 
     await waitFor(() => expect(onSave).toHaveBeenCalled());
     // Crucially: no `lastName`, `email`, `phone` or `dateOfBirth` keys at all.
     // Sending them would let this stale form revert a concurrent edit by
     // another admin, and the audit trail would record that as deliberate.
-    expect(onSave).toHaveBeenCalledWith({ firstName: "Rafael" });
+    expect(onSave).toHaveBeenCalledWith({ firstName: "Jordan" });
   });
 
   it("cannot be saved when nothing was touched", () => {
@@ -87,7 +87,7 @@ describe("EditMemberProfileModal", () => {
       <EditMemberProfileModal {...props({ onSave })} />,
     );
 
-    fireEvent.changeText(screen.getByDisplayValue("Rafel"), "Rafael");
+    fireEvent.changeText(screen.getByDisplayValue("Jorden"), "Jordan");
 
     // A rerender with an equal-but-not-identical member object is guaranteed
     // the moment saving starts. If the reset effect depended on `member`
@@ -100,19 +100,19 @@ describe("EditMemberProfileModal", () => {
       />,
     );
 
-    expect(screen.getByDisplayValue("Rafael")).toBeTruthy();
-    expect(screen.queryByDisplayValue("Rafel")).toBeNull();
+    expect(screen.getByDisplayValue("Jordan")).toBeTruthy();
+    expect(screen.queryByDisplayValue("Jorden")).toBeNull();
   });
 
   it("re-prefills when reopened after being closed", () => {
     const { rerender } = render(<EditMemberProfileModal {...props()} />);
 
-    fireEvent.changeText(screen.getByDisplayValue("Rafel"), "Typo");
+    fireEvent.changeText(screen.getByDisplayValue("Jorden"), "Typo");
     rerender(<EditMemberProfileModal {...props({ visible: false })} />);
     rerender(<EditMemberProfileModal {...props()} />);
 
     // Reopening is a fresh edit, so the stored value comes back.
-    expect(screen.getByDisplayValue("Rafel")).toBeTruthy();
+    expect(screen.getByDisplayValue("Jorden")).toBeTruthy();
   });
 
   describe("locked contact fields", () => {
@@ -127,7 +127,7 @@ describe("EditMemberProfileModal", () => {
 
     it("makes the contact inputs read-only", () => {
       render(<EditMemberProfileModal {...props(locked)} />);
-      expect(screen.getByDisplayValue("rafael@test.com").props.editable).toBe(
+      expect(screen.getByDisplayValue("jordan@test.com").props.editable).toBe(
         false,
       );
       expect(screen.getByDisplayValue("+12025550123").props.editable).toBe(
@@ -139,13 +139,13 @@ describe("EditMemberProfileModal", () => {
       const onSave = jest.fn().mockResolvedValue(undefined);
       render(<EditMemberProfileModal {...props({ ...locked, onSave })} />);
 
-      fireEvent.changeText(screen.getByDisplayValue("Rafel"), "Rafael");
+      fireEvent.changeText(screen.getByDisplayValue("Jorden"), "Jordan");
       fireEvent.press(screen.getByText("Save Changes"));
 
       await waitFor(() => expect(onSave).toHaveBeenCalled());
       // A legacy-format or today-invalid stored value is never resubmitted, so
       // it cannot trip a guard meant for real contact edits.
-      expect(onSave).toHaveBeenCalledWith({ firstName: "Rafael" });
+      expect(onSave).toHaveBeenCalledWith({ firstName: "Jordan" });
     });
   });
 
@@ -159,10 +159,10 @@ describe("EditMemberProfileModal", () => {
         />,
       );
 
-      fireEvent.changeText(screen.getByDisplayValue("Rafel"), "Rafael");
+      fireEvent.changeText(screen.getByDisplayValue("Jorden"), "Jordan");
       fireEvent.press(screen.getByText("Save Changes"));
 
-      await waitFor(() => expect(onSave).toHaveBeenCalledWith({ firstName: "Rafael" }));
+      await waitFor(() => expect(onSave).toHaveBeenCalledWith({ firstName: "Jordan" }));
     });
 
     it("refuses to submit removal of an existing phone", () => {

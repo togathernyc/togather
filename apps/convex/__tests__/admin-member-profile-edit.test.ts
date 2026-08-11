@@ -58,9 +58,9 @@ async function seed(t: ReturnType<typeof convexTest>): Promise<TestSetup> {
     });
 
     const memberId = await ctx.db.insert("users", {
-      firstName: "Rafel",
-      lastName: "Ortiz",
-      email: "rafael@test.com",
+      firstName: "Jorden",
+      lastName: "Reyes",
+      email: "jordan@test.com",
       phone: "+12025550123",
       isActive: true,
       createdAt: ts,
@@ -167,7 +167,7 @@ describe("updateMemberProfile — editing", () => {
         token: s.adminToken,
         communityId: s.communityId,
         targetUserId: s.memberId,
-        firstName: "Rafael",
+        firstName: "Jordan",
         reason: "Corrected from Gold Card",
       },
     );
@@ -176,12 +176,12 @@ describe("updateMemberProfile — editing", () => {
     expect(result.changedFields).toEqual(["firstName"]);
 
     const user = await readMember(t, s.memberId);
-    expect(user?.firstName).toBe("Rafael");
+    expect(user?.firstName).toBe("Jordan");
 
     const audits = await listAudits(t, s);
     expect(audits.page).toHaveLength(1);
     expect(audits.page[0].changes).toEqual([
-      { field: "firstName", previousValue: "Rafel", newValue: "Rafael" },
+      { field: "firstName", previousValue: "Jorden", newValue: "Jordan" },
     ]);
     expect(audits.page[0].reason).toBe("Corrected from Gold Card");
     expect(audits.page[0].actor?.id).toBe(s.adminId);
@@ -195,7 +195,7 @@ describe("updateMemberProfile — editing", () => {
       token: s.adminToken,
       communityId: s.communityId,
       targetUserId: s.memberId,
-      firstName: "Rafael",
+      firstName: "Jordan",
       phone: "+12025559999",
     });
 
@@ -215,11 +215,11 @@ describe("updateMemberProfile — editing", () => {
       token: s.adminToken,
       communityId: s.communityId,
       targetUserId: s.memberId,
-      firstName: "Rafael",
+      firstName: "Jordan",
     });
 
     const user = await readMember(t, s.memberId);
-    expect(user?.searchText).toContain("rafael");
+    expect(user?.searchText).toContain("jordan");
   });
 
   test("a no-op edit writes nothing at all — not even an audit row", async () => {
@@ -232,7 +232,7 @@ describe("updateMemberProfile — editing", () => {
         token: s.adminToken,
         communityId: s.communityId,
         targetUserId: s.memberId,
-        firstName: "Rafel",
+        firstName: "Jorden",
         reason: "a reason alone is not an edit",
       },
     );
@@ -251,7 +251,7 @@ describe("updateMemberProfile — editing", () => {
       token: s.adminToken,
       communityId: s.communityId,
       targetUserId: s.memberId,
-      firstName: "Rafael",
+      firstName: "Jordan",
     });
 
     // Second admin, working from a form opened BEFORE that fix, changes only
@@ -265,7 +265,7 @@ describe("updateMemberProfile — editing", () => {
     });
 
     const user = await readMember(t, s.memberId);
-    expect(user?.firstName).toBe("Rafael");
+    expect(user?.firstName).toBe("Jordan");
     expect(user?.phone).toBe("+12025559999");
   });
 
@@ -280,12 +280,12 @@ describe("updateMemberProfile — editing", () => {
       token: s.adminToken,
       communityId: s.communityId,
       targetUserId: s.memberId,
-      firstName: "Rafael",
+      firstName: "Jordan",
       phone: "",
     });
 
     const user = await readMember(t, s.memberId);
-    expect(user?.firstName).toBe("Rafael");
+    expect(user?.firstName).toBe("Jordan");
   });
 
   test("refuses to remove an existing phone, which is how the member signs in", async () => {
@@ -456,11 +456,11 @@ describe("contact edits — the claimed-account rule", () => {
       token: s.adminToken,
       communityId: s.communityId,
       targetUserId: s.memberId,
-      email: "rafael.ortiz@test.com",
+      email: "jordan.reyes@test.com",
     });
 
     expect((await readMember(t, s.memberId))?.email).toBe(
-      "rafael.ortiz@test.com",
+      "jordan.reyes@test.com",
     );
   });
 
@@ -490,7 +490,7 @@ describe("contact edits — the claimed-account rule", () => {
         }),
       ).rejects.toThrow(/cannot be changed here/i);
 
-      expect((await readMember(t, s.memberId))?.email).toBe("rafael@test.com");
+      expect((await readMember(t, s.memberId))?.email).toBe("jordan@test.com");
     });
   }
 
@@ -528,12 +528,12 @@ describe("contact edits — the claimed-account rule", () => {
       token: s.adminToken,
       communityId: s.communityId,
       targetUserId: s.memberId,
-      firstName: "Rafael",
+      firstName: "Jordan",
       dateOfBirth: "1990-04-12",
     });
 
     const user = await readMember(t, s.memberId);
-    expect(user?.firstName).toBe("Rafael");
+    expect(user?.firstName).toBe("Jordan");
     expect(user?.dateOfBirth).toBe(Date.UTC(1990, 3, 12));
   });
 });
@@ -562,9 +562,9 @@ describe("contact edits — the authority rule", () => {
       token: s.adminToken,
       communityId: s.communityId,
       targetUserId: s.memberId,
-      firstName: "Rafael",
+      firstName: "Jordan",
     });
-    expect((await readMember(t, s.memberId))?.firstName).toBe("Rafael");
+    expect((await readMember(t, s.memberId))?.firstName).toBe("Jordan");
   }
 
   test("a platform superuser flag locks contact details", async () => {
@@ -653,10 +653,10 @@ describe("contact edits — the authority rule", () => {
       token: s.adminToken,
       communityId: s.communityId,
       targetUserId: s.memberId,
-      email: "rafael.ortiz@test.com",
+      email: "jordan.reyes@test.com",
     });
     expect((await readMember(t, s.memberId))?.email).toBe(
-      "rafael.ortiz@test.com",
+      "jordan.reyes@test.com",
     );
   });
 
@@ -692,10 +692,10 @@ describe("contact edits — the authority rule", () => {
       token: s.adminToken,
       communityId: s.communityId,
       targetUserId: s.memberId,
-      email: "rafael.ortiz@test.com",
+      email: "jordan.reyes@test.com",
     });
     expect((await readMember(t, s.memberId))?.email).toBe(
-      "rafael.ortiz@test.com",
+      "jordan.reyes@test.com",
     );
   });
 
@@ -717,10 +717,10 @@ describe("contact edits — the authority rule", () => {
       token: s.adminToken,
       communityId: s.communityId,
       targetUserId: s.memberId,
-      email: "rafael.ortiz@test.com",
+      email: "jordan.reyes@test.com",
     });
     expect((await readMember(t, s.memberId))?.email).toBe(
-      "rafael.ortiz@test.com",
+      "jordan.reyes@test.com",
     );
   });
 
@@ -803,10 +803,10 @@ describe("contact edits — the authority rule", () => {
       token: s.adminToken,
       communityId: s.communityId,
       targetUserId: s.memberId,
-      email: "rafael.ortiz@test.com",
+      email: "jordan.reyes@test.com",
     });
     expect((await readMember(t, s.memberId))?.email).toBe(
-      "rafael.ortiz@test.com",
+      "jordan.reyes@test.com",
     );
   });
 
@@ -861,10 +861,10 @@ describe("contact edits — the authority rule", () => {
       token: s.adminToken,
       communityId: s.communityId,
       targetUserId: s.memberId,
-      email: "rafael.ortiz@test.com",
+      email: "jordan.reyes@test.com",
     });
     expect((await readMember(t, s.memberId))?.email).toBe(
-      "rafael.ortiz@test.com",
+      "jordan.reyes@test.com",
     );
   });
 
@@ -926,10 +926,10 @@ describe("contact edits — the authority rule", () => {
       token: s.adminToken,
       communityId: s.communityId,
       targetUserId: s.memberId,
-      email: "rafael.ortiz@test.com",
+      email: "jordan.reyes@test.com",
     });
     expect((await readMember(t, s.memberId))?.email).toBe(
-      "rafael.ortiz@test.com",
+      "jordan.reyes@test.com",
     );
   });
 
@@ -978,7 +978,7 @@ describe("membership status", () => {
           token: s.adminToken,
           communityId: s.communityId,
           targetUserId: s.memberId,
-          firstName: "Rafael",
+          firstName: "Jordan",
         }),
       ).rejects.toThrow(/not an active member/i);
 
@@ -1008,7 +1008,7 @@ describe("legacy values, validation and uniqueness", () => {
     await t.run(async (ctx) => {
       await ctx.db.patch(s.memberId, {
         phone: "(202) 555-9999",
-        email: "Rafael@Test.com",
+        email: "Jordan@Test.com",
         phoneVerified: true, // claimed, so contact edits are locked
       });
     });
@@ -1019,16 +1019,16 @@ describe("legacy values, validation and uniqueness", () => {
       token: s.adminToken,
       communityId: s.communityId,
       targetUserId: s.memberId,
-      firstName: "Rafael",
+      firstName: "Jordan",
       phone: "+12025559999",
-      email: "rafael@test.com",
+      email: "jordan@test.com",
     });
 
     const user = await readMember(t, s.memberId);
-    expect(user?.firstName).toBe("Rafael");
+    expect(user?.firstName).toBe("Jordan");
     // …and the stored values are left exactly as they were.
     expect(user?.phone).toBe("(202) 555-9999");
-    expect(user?.email).toBe("Rafael@Test.com");
+    expect(user?.email).toBe("Jordan@Test.com");
 
     const audits = await listAudits(t, s);
     expect(audits.page[0].changes.map((c: any) => c.field)).toEqual([
@@ -1045,7 +1045,7 @@ describe("legacy values, validation and uniqueness", () => {
       // unrelated name edit from going down with them.
       await ctx.db.patch(s.memberId, {
         phone: "5550123",
-        email: "rafael@localhost",
+        email: "jordan@localhost",
       });
     });
 
@@ -1053,12 +1053,12 @@ describe("legacy values, validation and uniqueness", () => {
       token: s.adminToken,
       communityId: s.communityId,
       targetUserId: s.memberId,
-      firstName: "Rafael",
+      firstName: "Jordan",
       phone: "5550123",
-      email: "rafael@localhost",
+      email: "jordan@localhost",
     });
 
-    expect((await readMember(t, s.memberId))?.firstName).toBe("Rafael");
+    expect((await readMember(t, s.memberId))?.firstName).toBe("Jordan");
   });
 
   test("rejects an invalid new phone number", async () => {
@@ -1126,7 +1126,7 @@ describe("legacy values, validation and uniqueness", () => {
         token: s.adminToken,
         communityId: s.communityId,
         targetUserId: s.memberId,
-        firstName: "Rafael",
+        firstName: "Jordan",
         reason: "x".repeat(501),
       }),
     ).rejects.toThrow(/500 characters/i);
@@ -1148,7 +1148,7 @@ describe("actor authorization", () => {
         token: memberTokens.accessToken,
         communityId: s.communityId,
         targetUserId: s.memberId,
-        firstName: "Rafael",
+        firstName: "Jordan",
       }),
     ).rejects.toThrow();
   });
@@ -1290,7 +1290,7 @@ describe("actor authorization", () => {
         token: tokens.accessToken,
         communityId: s.communityId,
         targetUserId: s.memberId,
-        firstName: "Rafael",
+        firstName: "Jordan",
       }),
     ).rejects.toThrow();
   });
@@ -1305,7 +1305,7 @@ describe("listMemberProfileAudits", () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
 
-    const names = ["Rafael", "Raphael", "Rafaél", "Rafa"];
+    const names = ["Jordan", "Jordyn", "Jordán", "Jord"];
     for (const name of names) {
       await editProfile(t, {
         token: s.adminToken,
@@ -1328,7 +1328,7 @@ describe("listMemberProfileAudits", () => {
     expect(firstPage.page).toHaveLength(2);
     expect(firstPage.isDone).toBe(false);
     // Newest first.
-    expect(firstPage.page[0].changes[0].newValue).toBe("Rafa");
+    expect(firstPage.page[0].changes[0].newValue).toBe("Jord");
 
     const secondPage = await t.query(
       api.functions.admin.members.listMemberProfileAudits,
@@ -1342,7 +1342,7 @@ describe("listMemberProfileAudits", () => {
 
     // Every entry stays reachable — no cap makes older rows disappear.
     expect(secondPage.page).toHaveLength(2);
-    expect(secondPage.page[1].changes[0].newValue).toBe("Rafael");
+    expect(secondPage.page[1].changes[0].newValue).toBe("Jordan");
   });
 
   test("a non-admin cannot read the audit trail", async () => {
@@ -1368,7 +1368,7 @@ describe("listMemberProfileAudits", () => {
       token: s.adminToken,
       communityId: s.communityId,
       targetUserId: s.memberId,
-      firstName: "Rafael",
+      firstName: "Jordan",
     });
 
     // Simulate the merge re-keying: rows must end up on the surviving primary,
@@ -1376,8 +1376,8 @@ describe("listMemberProfileAudits", () => {
     // targetUserId) can never reach them again.
     const primaryId = await t.run(async (ctx) => {
       const primaryId = await ctx.db.insert("users", {
-        firstName: "Rafael",
-        lastName: "Ortiz",
+        firstName: "Jordan",
+        lastName: "Reyes",
         phone: "+12025550123",
         isActive: true,
         createdAt: Date.now(),

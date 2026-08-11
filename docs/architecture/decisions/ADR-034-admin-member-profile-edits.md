@@ -30,7 +30,7 @@ naming:
    both live on the global `users` row while admin roles are per-community, the
    takeover reaches into communities the acting admin has no authority over.
 2. **Silent data drift.** Once several admins can change each other's members'
-   data, "who changed Rafael's number, and why?" becomes unanswerable.
+   data, "who changed this member's number, and why?" becomes unanswerable.
 
 ### Alternatives Considered
 
