@@ -1153,6 +1153,105 @@ describe("actor authorization", () => {
     ).rejects.toThrow();
   });
 
+  test("the detail query hides the edit button from a regular admin viewing a fellow admin", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+
+    // A second, non-primary admin — the actor.
+    const regularAdminId = await t.run(async (ctx) => {
+      const id = await ctx.db.insert("users", {
+        firstName: "Second",
+        lastName: "Admin",
+        email: "second@test.com",
+        isActive: true,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      await ctx.db.insert("userCommunities", {
+        userId: id,
+        communityId: s.communityId,
+        roles: COMMUNITY_ROLES.ADMIN,
+        status: 1,
+        createdAt: Date.now(),
+      });
+      // Promote the target to admin too.
+      const membership = await ctx.db
+        .query("userCommunities")
+        .withIndex("by_user", (q) => q.eq("userId", s.memberId))
+        .first();
+      await ctx.db.patch(membership!._id, { roles: COMMUNITY_ROLES.ADMIN });
+      return id;
+    });
+    const tokens = await generateTokens(regularAdminId, s.communityId);
+
+    // `canEditProfile` is actor-specific. If the query ignored the caller's
+    // rank, it would advertise an edit form here whose every save is rejected
+    // by the mutation.
+    const detail = await t.query(
+      api.functions.admin.members.getCommunityMemberById,
+      {
+        token: tokens.accessToken,
+        communityId: s.communityId,
+        targetUserId: s.memberId,
+      },
+    );
+    expect(detail?.canEditProfile).toBe(false);
+
+    // The primary admin still sees the button on the same record.
+    const asPrimary = await t.query(
+      api.functions.admin.members.getCommunityMemberById,
+      {
+        token: s.adminToken,
+        communityId: s.communityId,
+        targetUserId: s.memberId,
+      },
+    );
+    expect(asPrimary?.canEditProfile).toBe(true);
+  });
+
+  test("an admin can always edit their OWN record, even without Primary Admin", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+
+    const selfAdminId = await t.run(async (ctx) => {
+      const id = await ctx.db.insert("users", {
+        firstName: "Self",
+        lastName: "Admin",
+        email: "self@test.com",
+        isActive: true,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      await ctx.db.insert("userCommunities", {
+        userId: id,
+        communityId: s.communityId,
+        roles: COMMUNITY_ROLES.ADMIN,
+        status: 1,
+        createdAt: Date.now(),
+      });
+      return id;
+    });
+    const tokens = await generateTokens(selfAdminId, s.communityId);
+
+    const detail = await t.query(
+      api.functions.admin.members.getCommunityMemberById,
+      {
+        token: tokens.accessToken,
+        communityId: s.communityId,
+        targetUserId: selfAdminId,
+      },
+    );
+    expect(detail?.canEditProfile).toBe(true);
+
+    await editProfile(t, {
+      token: tokens.accessToken,
+      communityId: s.communityId,
+      targetUserId: selfAdminId,
+      firstName: "Selwyn",
+    });
+    expect((await readMember(t, selfAdminId))?.firstName).toBe("Selwyn");
+  });
+
   test("a regular admin cannot edit a fellow admin's record", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);

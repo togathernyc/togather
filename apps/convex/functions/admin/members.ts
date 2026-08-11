@@ -257,19 +257,35 @@ async function describeAccountAuthority(
 }
 
 /**
- * The single source of truth for "may this admin edit this member's profile,
+ * The single source of truth for "may THIS admin edit THIS member's profile,
  * and may they touch the contact fields?"
  *
  * Called by BOTH `updateMemberProfile` and `getCommunityMemberById`, so the
- * detail screen hides exactly the actions the mutation would reject. Keeping
+ * detail screen offers exactly the actions the mutation would accept. Keeping
  * these in one place is deliberate: when the query and the mutation disagree,
- * the UI offers buttons that always fail.
+ * the UI shows buttons whose every save fails.
+ *
+ * Note this takes the ACTOR as well as the target. An earlier version did not,
+ * which meant the rank rule below lived only in the mutation — so a regular
+ * admin viewing a fellow admin saw an edit form that always rejected them.
+ * Any rule the mutation enforces has to be decided here, or the two drift.
  */
 async function getProfileEditPermissions(
   ctx: QueryCtx | MutationCtx,
   communityId: Id<"communities">,
   targetUserId: Id<"users">,
-): Promise<{ canEditProfile: boolean; contactEditBlockedReason: string | null }> {
+  actorUserId: Id<"users">,
+): Promise<{
+  canEditProfile: boolean;
+  profileEditBlockedReason: string | null;
+  contactEditBlockedReason: string | null;
+}> {
+  const blocked = (reason: string) => ({
+    canEditProfile: false,
+    profileEditBlockedReason: reason,
+    contactEditBlockedReason: reason,
+  });
+
   const membership = await ctx.db
     .query("userCommunities")
     .withIndex("by_user_community", (q) =>
@@ -281,23 +297,59 @@ async function getProfileEditPermissions(
   // both are retained in People search, and a community that someone has left
   // has no business editing their global user record.
   if (!membership || membership.status !== 1) {
-    return {
-      canEditProfile: false,
-      contactEditBlockedReason: "this member is not active in this community",
-    };
+    return blocked(
+      "This member is not an active member of this community, so their profile cannot be edited here.",
+    );
+  }
+
+  // Editing a fellow admin's record requires Primary Admin, mirroring
+  // `updateMemberRole`. Editing your OWN is always allowed — self-service
+  // profile settings already permit it.
+  if (
+    actorUserId !== targetUserId &&
+    (membership.roles ?? 0) >= ADMIN_ROLE_THRESHOLD
+  ) {
+    const actorMembership = await ctx.db
+      .query("userCommunities")
+      .withIndex("by_user_community", (q) =>
+        q.eq("userId", actorUserId).eq("communityId", communityId),
+      )
+      .first();
+
+    const actorIsPrimaryAdmin =
+      actorMembership?.status === 1 &&
+      actorMembership.roles === COMMUNITY_ROLES.PRIMARY_ADMIN;
+
+    if (!actorIsPrimaryAdmin) {
+      return blocked(
+        "Only a Primary Admin can edit another admin's profile.",
+      );
+    }
   }
 
   const claimReason = await describeAccountClaim(ctx, targetUserId);
   if (claimReason) {
-    return { canEditProfile: true, contactEditBlockedReason: claimReason };
+    return {
+      canEditProfile: true,
+      profileEditBlockedReason: null,
+      contactEditBlockedReason: claimReason,
+    };
   }
 
   const authorityReason = await describeAccountAuthority(ctx, targetUserId);
   if (authorityReason) {
-    return { canEditProfile: true, contactEditBlockedReason: authorityReason };
+    return {
+      canEditProfile: true,
+      profileEditBlockedReason: null,
+      contactEditBlockedReason: authorityReason,
+    };
   }
 
-  return { canEditProfile: true, contactEditBlockedReason: null };
+  return {
+    canEditProfile: true,
+    profileEditBlockedReason: null,
+    contactEditBlockedReason: null,
+  };
 }
 
 // ============================================================================
@@ -583,8 +635,15 @@ export const getCommunityMemberById = query({
 
     // Reported here so the detail screen offers exactly the actions
     // `updateMemberProfile` would accept — see `getProfileEditPermissions`.
+    // `userId` is the CALLER, so this answer is actor-specific: a regular admin
+    // looking at a fellow admin correctly gets `canEditProfile: false`.
     const { canEditProfile, contactEditBlockedReason } =
-      await getProfileEditPermissions(ctx, args.communityId, args.targetUserId);
+      await getProfileEditPermissions(
+        ctx,
+        args.communityId,
+        args.targetUserId,
+        userId,
+      );
 
     return {
       id: user._id,
@@ -899,29 +958,16 @@ export const updateMemberProfile = mutation({
       throw new Error("User not found");
     }
 
-    const { canEditProfile, contactEditBlockedReason } =
-      await getProfileEditPermissions(ctx, args.communityId, args.targetUserId);
+    const { canEditProfile, profileEditBlockedReason, contactEditBlockedReason } =
+      await getProfileEditPermissions(
+        ctx,
+        args.communityId,
+        args.targetUserId,
+        actorUserId,
+      );
 
     if (!canEditProfile) {
-      throw new Error(
-        "This member is not an active member of this community, so their profile cannot be edited here.",
-      );
-    }
-
-    // Editing a fellow admin's record requires Primary Admin, mirroring
-    // `updateMemberRole`. Editing your OWN record is always allowed — you can
-    // already change all of it through self-service profile settings.
-    const isSelfEdit = actorUserId === args.targetUserId;
-    if (!isSelfEdit) {
-      const targetMembership = await ctx.db
-        .query("userCommunities")
-        .withIndex("by_user_community", (q) =>
-          q.eq("userId", args.targetUserId).eq("communityId", args.communityId),
-        )
-        .first();
-      if ((targetMembership?.roles ?? 0) >= ADMIN_ROLE_THRESHOLD) {
-        await requirePrimaryAdmin(ctx, args.communityId, actorUserId);
-      }
+      throw new Error(profileEditBlockedReason ?? "Profile cannot be edited");
     }
 
     if (args.reason !== undefined && args.reason.length > MAX_REASON_LENGTH) {
