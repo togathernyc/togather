@@ -32,6 +32,7 @@ export {
   getCommunityMemberById,
   updateMemberRole,
   updateMemberProfile,
+  getMemberProfileEditPermissions,
   listMemberProfileAudits,
   transferPrimaryAdmin,
   getUserGroupHistory,

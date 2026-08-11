@@ -220,10 +220,44 @@ deliberately out of scope here, and worth doing before the surface grows further
 - Members are not notified when an admin edits their profile. If that becomes
   desirable, the audit row is the natural trigger.
 
+### Two entry points
+
+The same mutation backs both:
+
+1. **Member detail screen** — an Edit Profile modal, with the Edit History
+   below it. Best when correcting several fields at once, or when you want to
+   record a reason.
+2. **The People grid** — inline cell editing, matching the ZIP code cell that
+   was already editable there. Best for the common case: you are looking at the
+   row, you can see the wrong digit, you fix it in place.
+
+The grid's four profile columns are **admin-only**, unlike ZIP code and the
+custom fields, which any community leader may edit (`requireCommunityLeader`).
+That asymmetry is deliberate — these columns write the global `users` row and
+two of them are sign-in credentials, so they follow the profile mutation's
+`requireCommunityAdmin` rather than the grid's looser default.
+
+Contact cells resolve their lock **per row, on demand**, when clicked. The
+alternative — returning `canEditProfile` with every row of the list query —
+would be simpler but costs several indexed reads per member, so a 50-row page
+would pay hundreds of extra reads on every load to support an edit that usually
+never happens. A cheap approximation (checking only the claim signals, which
+are already on the row) was rejected because it would reintroduce exactly the
+query/mutation disagreement this design exists to avoid: an unclaimed account
+that holds a role would show an editable cell whose save always fails.
+
 ### Side effects and adjacent fixes
 
 - `searchText` is rebuilt whenever a name, email or phone changes, so the member
   stays findable by their corrected details.
+- **`communityPeople` rows are re-synced.** That table mirrors `firstName`,
+  `lastName`, `email`, `phone` and its own `searchText` off the `users` doc so
+  the People grid can render and full-text search without a join, and those
+  copies are otherwise only rebuilt when a score recompute happens to run.
+  Without this, a correction would appear to do nothing on that screen and
+  searching for the corrected name would fail. Every community's rows are
+  updated, not just the one the edit was made from, because the edited fields
+  live on the global `users` row.
 - Renames schedule `syncUserProfileToChannels`, which refreshes the denormalized
   display name held in `chatChannelMembers`.
 - **`registerNewUser` now persists `phoneVerified`.** Its existing-user and
@@ -264,4 +298,5 @@ silently became an off-by-one (fixed alongside this work).
 | Backend tests | `apps/convex/__tests__/admin-member-profile-edit.test.ts` |
 | UI — edit form | `apps/mobile/features/admin/components/EditMemberProfileModal.tsx` |
 | UI — entry point and history | `apps/mobile/features/admin/components/PersonDetailScreen.tsx` |
+| UI — inline grid editing | `apps/mobile/features/leader-tools/components/FollowupDesktopTable.tsx` |
 | UI tests | `apps/mobile/features/admin/__tests__/EditMemberProfileModal.test.tsx` |

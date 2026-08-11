@@ -1162,19 +1162,24 @@ export const updateMemberProfile = mutation({
       (c) => c.field === "email" || c.field === "phone",
     );
 
+    // The merged post-edit values, used for both search indexes below.
+    const mergedFirstName =
+      (updates.firstName as string | undefined) ?? target.firstName;
+    const mergedLastName =
+      "lastName" in updates
+        ? (updates.lastName as string | undefined)
+        : target.lastName;
+    const mergedEmail =
+      "email" in updates ? (updates.email as string | undefined) : target.email;
+    const mergedPhone = (updates.phone as string | undefined) ?? target.phone;
+
     // Keep the member findable by their corrected details.
     if (nameChanged || contactChanged) {
       updates.searchText = buildSearchText({
-        firstName: (updates.firstName as string | undefined) ?? target.firstName,
-        lastName:
-          "lastName" in updates
-            ? (updates.lastName as string | undefined)
-            : target.lastName,
-        email:
-          "email" in updates
-            ? (updates.email as string | undefined)
-            : target.email,
-        phone: (updates.phone as string | undefined) ?? target.phone,
+        firstName: mergedFirstName,
+        lastName: mergedLastName,
+        email: mergedEmail,
+        phone: mergedPhone,
       });
     }
 
@@ -1182,6 +1187,53 @@ export const updateMemberProfile = mutation({
       ...updates,
       updatedAt: now(),
     });
+
+    // Refresh the denormalized copies the People grid reads.
+    //
+    // `communityPeople` mirrors these four fields off the `users` doc so the
+    // grid can render and full-text search without a join. They are rebuilt
+    // from `users` only when a score recompute happens to run, so without this
+    // an admin's correction would appear to do nothing on that screen — and
+    // searching for the corrected name would fail — until something unrelated
+    // triggered a recompute.
+    //
+    // Scoped by walking the user's memberships rather than a `by_user` index,
+    // which `communityPeople` does not have. The fields being corrected live on
+    // the global `users` row, so every community's rows go stale, not just the
+    // one the edit was made from.
+    if (nameChanged || contactChanged) {
+      const cpFields = {
+        firstName: mergedFirstName,
+        lastName: mergedLastName,
+        email: mergedEmail,
+        phone: mergedPhone,
+        // Matches the format built by the score-recompute upsert — a plain
+        // space-joined string, NOT the lowercased `users.searchText` shape.
+        searchText: [mergedFirstName, mergedLastName, mergedEmail, mergedPhone]
+          .filter(Boolean)
+          .join(" "),
+        updatedAt: now(),
+      };
+
+      const allMemberships = await ctx.db
+        .query("userCommunities")
+        .withIndex("by_user", (q) => q.eq("userId", args.targetUserId))
+        .collect();
+
+      for (const membership of allMemberships) {
+        const rows = await ctx.db
+          .query("communityPeople")
+          .withIndex("by_community_user", (q) =>
+            q
+              .eq("communityId", membership.communityId)
+              .eq("userId", args.targetUserId),
+          )
+          .collect();
+        for (const row of rows) {
+          await ctx.db.patch(row._id, cpFields);
+        }
+      }
+    }
 
     const timestamp = now();
     await ctx.db.insert("memberProfileAudits", {
@@ -1207,6 +1259,37 @@ export const updateMemberProfile = mutation({
       changed: true,
       changedFields: changes.map((c) => c.field),
     };
+  },
+});
+
+/**
+ * Whether the caller may edit one member's profile, and whether the contact
+ * fields are locked.
+ *
+ * Exists for the People grid, which renders many rows and must not pay for
+ * this on every one: `describeAccountAuthority` alone is several indexed reads
+ * per member, so folding it into the list query would cost hundreds of reads
+ * per page load to support an occasional edit. The grid instead calls this for
+ * a single row, on demand, when someone actually clicks into a contact cell.
+ *
+ * Same helper as the mutation and the member detail query, so all three agree.
+ */
+export const getMemberProfileEditPermissions = query({
+  args: {
+    token: v.string(),
+    communityId: v.id("communities"),
+    targetUserId: v.id("users"),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    await requireCommunityAdmin(ctx, args.communityId, userId);
+
+    return await getProfileEditPermissions(
+      ctx,
+      args.communityId,
+      args.targetUserId,
+      userId,
+    );
   },
 });
 
