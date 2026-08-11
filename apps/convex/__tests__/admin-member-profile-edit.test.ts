@@ -351,6 +351,186 @@ describe("updateMemberProfile — editing", () => {
 });
 
 // ============================================================================
+// communityPeople denormalization (the People grid)
+// ============================================================================
+
+describe("communityPeople denormalization", () => {
+  /** Seed a communityPeople row mirroring the member, as the grid would have. */
+  async function seedGridRow(
+    t: ReturnType<typeof convexTest>,
+    s: TestSetup,
+    communityId?: Id<"communities">,
+  ) {
+    return await t.run(async (ctx) => {
+      return await ctx.db.insert("communityPeople", {
+        communityId: communityId ?? s.communityId,
+        groupId: s.groupId,
+        userId: s.memberId,
+        firstName: "Jorden",
+        lastName: "Reyes",
+        email: "jordan@test.com",
+        phone: "+12025550123",
+        searchText: "Jorden Reyes jordan@test.com +12025550123",
+        addedAt: Date.now(),
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      } as any);
+    });
+  }
+
+  test("a name correction updates the grid's denormalized copy and its searchText", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const rowId = await seedGridRow(t, s);
+
+    await editProfile(t, {
+      token: s.adminToken,
+      communityId: s.communityId,
+      targetUserId: s.memberId,
+      firstName: "Jordan",
+    });
+
+    const row = await t.run(async (ctx) => await ctx.db.get(rowId));
+    expect((row as any)?.firstName).toBe("Jordan");
+    // Without this, searching the grid for the corrected name would fail.
+    expect((row as any)?.searchText).toContain("Jordan");
+    expect((row as any)?.searchText).not.toContain("Jorden");
+  });
+
+  test("a phone correction updates the grid's denormalized copy", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const rowId = await seedGridRow(t, s);
+
+    await editProfile(t, {
+      token: s.adminToken,
+      communityId: s.communityId,
+      targetUserId: s.memberId,
+      phone: "+12025559999",
+    });
+
+    const row = await t.run(async (ctx) => await ctx.db.get(rowId));
+    expect((row as any)?.phone).toBe("+12025559999");
+  });
+
+  test("rows in OTHER communities are updated too, since users fields are global", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+
+    const otherCommunityId = await t.run(async (ctx) => {
+      const id = await ctx.db.insert("communities", {
+        name: "Other",
+        slug: "other-grid",
+        isPublic: true,
+        timezone: "America/New_York",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      await ctx.db.insert("userCommunities", {
+        userId: s.memberId,
+        communityId: id,
+        roles: COMMUNITY_ROLES.MEMBER,
+        status: 1,
+        createdAt: Date.now(),
+      });
+      return id;
+    });
+
+    const hereRowId = await seedGridRow(t, s);
+    const thereRowId = await seedGridRow(t, s, otherCommunityId);
+
+    await editProfile(t, {
+      token: s.adminToken,
+      communityId: s.communityId,
+      targetUserId: s.memberId,
+      firstName: "Jordan",
+    });
+
+    const here = await t.run(async (ctx) => await ctx.db.get(hereRowId));
+    const there = await t.run(async (ctx) => await ctx.db.get(thereRowId));
+    expect((here as any)?.firstName).toBe("Jordan");
+    // The edited fields live on the global `users` row, so a row in a
+    // community the edit was NOT made from goes stale just the same.
+    expect((there as any)?.firstName).toBe("Jordan");
+  });
+
+  test("a date-of-birth-only edit leaves the grid rows untouched", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const rowId = await seedGridRow(t, s);
+    const before = await t.run(async (ctx) => await ctx.db.get(rowId));
+
+    await editProfile(t, {
+      token: s.adminToken,
+      communityId: s.communityId,
+      targetUserId: s.memberId,
+      dateOfBirth: "1990-04-12",
+    });
+
+    // dateOfBirth is not mirrored on communityPeople, so there is nothing to
+    // sync and the row should not be rewritten.
+    const after = await t.run(async (ctx) => await ctx.db.get(rowId));
+    expect((after as any)?.updatedAt).toBe((before as any)?.updatedAt);
+  });
+});
+
+// ============================================================================
+// Per-row edit permissions (used by the People grid)
+// ============================================================================
+
+describe("getMemberProfileEditPermissions", () => {
+  test("reports an unclaimed member as fully editable", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+
+    const perms = await t.query(
+      api.functions.admin.members.getMemberProfileEditPermissions,
+      {
+        token: s.adminToken,
+        communityId: s.communityId,
+        targetUserId: s.memberId,
+      },
+    );
+    expect(perms.canEditProfile).toBe(true);
+    expect(perms.contactEditBlockedReason).toBeNull();
+  });
+
+  test("reports the lock reason for a claimed member", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await t.run(async (ctx) => {
+      await ctx.db.patch(s.memberId, { phoneVerified: true });
+    });
+
+    const perms = await t.query(
+      api.functions.admin.members.getMemberProfileEditPermissions,
+      {
+        token: s.adminToken,
+        communityId: s.communityId,
+        targetUserId: s.memberId,
+      },
+    );
+    // Names stay editable; only the contact cells lock.
+    expect(perms.canEditProfile).toBe(true);
+    expect(perms.contactEditBlockedReason).toMatch(/verified their phone/i);
+  });
+
+  test("a non-admin cannot read edit permissions", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const memberTokens = await generateTokens(s.memberId, s.communityId);
+
+    await expect(
+      t.query(api.functions.admin.members.getMemberProfileEditPermissions, {
+        token: memberTokens.accessToken,
+        communityId: s.communityId,
+        targetUserId: s.memberId,
+      }),
+    ).rejects.toThrow();
+  });
+});
+
+// ============================================================================
 // Date of birth
 // ============================================================================
 

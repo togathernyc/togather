@@ -30,6 +30,7 @@ import {
 } from "@services/api/convex";
 import { Id } from "@services/api/convex";
 import { useAuth } from "@providers/AuthProvider";
+import { formatError } from "@/utils/error-handling";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { Avatar } from "@/components/ui/Avatar";
@@ -170,6 +171,25 @@ const BUILTIN_EDITABLE_COLUMNS = new Set([
   "archived",
 ]);
 
+/**
+ * Profile columns editable inline by community ADMINS only (ADR-034).
+ *
+ * Kept separate from BUILTIN_EDITABLE_COLUMNS because these write the global
+ * `users` row through `admin.members.updateMemberProfile`, which requires
+ * community admin — stricter than the `requireCommunityLeader` guarding
+ * zipCode and the custom fields. A leader who is not an admin still gets the
+ * rest of the grid; these four cells stay read-only for them.
+ */
+const ADMIN_EDITABLE_PROFILE_COLUMNS = new Set([
+  "firstName",
+  "lastName",
+  "email",
+  "phone",
+]);
+
+/** The subset that are sign-in credentials and need a per-row permission check. */
+const CONTACT_PROFILE_COLUMNS = new Set(["email", "phone"]);
+
 type DropdownPosition = {
   top: number;
   left: number;
@@ -285,6 +305,22 @@ export function FollowupDesktopTable({
     null,
   );
   const [inlineFieldValue, setInlineFieldValue] = useState("");
+
+  /**
+   * A contact cell (email/phone) the admin clicked, awaiting its permission
+   * check. Phone and email are sign-in credentials, so whether they are
+   * editable depends on the target account — see ADR-034.
+   *
+   * Checked per row ON DEMAND rather than returned by the list query:
+   * resolving it costs several indexed reads per member, so folding it into
+   * the grid's paginated query would mean hundreds of extra reads on every
+   * page load to support an edit that usually never happens.
+   */
+  const [pendingContactEdit, setPendingContactEdit] = useState<{
+    userId: string;
+    editKey: string;
+    currentValue: string;
+  } | null>(null);
 
   // Dropdowns — portal-based
   const [assigneeDropdownFor, setAssigneeDropdownFor] = useState<string | null>(
@@ -734,13 +770,18 @@ export function FollowupDesktopTable({
   }, [customFields]);
 
   // Editable columns (built-in + all custom field slots)
+  const canEditProfiles = user?.is_admin === true || user?.is_primary_admin === true;
+
   const editableColumns = useMemo(() => {
     const set = new Set(BUILTIN_EDITABLE_COLUMNS);
     for (const cf of customFields) {
       set.add(cf.slot);
     }
+    if (canEditProfiles) {
+      for (const key of ADMIN_EDITABLE_PROFILE_COLUMNS) set.add(key);
+    }
     return set;
-  }, [customFields]);
+  }, [customFields, canEditProfiles]);
 
   // Column widths (resizable)
   const [colWidths, setColWidths] = useState<Record<string, number>>({});
@@ -926,6 +967,12 @@ export function FollowupDesktopTable({
       if (opt.status !== undefined) overrides.status = opt.status ?? undefined;
       if ((opt as any).zipCode !== undefined)
         overrides.zipCode = (opt as any).zipCode ?? undefined;
+      // Inline profile edits (ADR-034). This merge whitelists keys, so a new
+      // optimistic field is silently dropped unless it is named here.
+      for (const key of ["firstName", "lastName", "email", "phone"] as const) {
+        if ((opt as any)[key] !== undefined)
+          overrides[key] = (opt as any)[key] ?? undefined;
+      }
       for (const [key, val] of Object.entries(opt)) {
         if (key.startsWith("custom")) overrides[key] = val ?? undefined;
       }
@@ -1108,6 +1155,47 @@ export function FollowupDesktopTable({
   const setActiveMut = useAuthenticatedMutation(
     api.functions.communityPeople.setActive,
   );
+  // Inline profile edits (ADR-034) — admin-only, writes the global users row.
+  const updateMemberProfileMut = useAuthenticatedMutation(
+    api.functions.admin.members.updateMemberProfile,
+  );
+
+  // Resolves only while a contact cell is waiting on its permission check.
+  const contactEditPermissions = useAuthenticatedQuery(
+    api.functions.admin.members.getMemberProfileEditPermissions,
+    pendingContactEdit && (groupData?.communityId ?? communityId)
+      ? {
+          communityId: (groupData?.communityId ??
+            communityId) as Id<"communities">,
+          targetUserId: pendingContactEdit.userId as Id<"users">,
+        }
+      : "skip",
+  );
+
+  // When the check lands, either open the cell for editing or explain why not.
+  useEffect(() => {
+    if (!pendingContactEdit || contactEditPermissions === undefined) return;
+
+    const { canEditProfile, contactEditBlockedReason } =
+      contactEditPermissions as {
+        canEditProfile: boolean;
+        profileEditBlockedReason: string | null;
+        contactEditBlockedReason: string | null;
+      };
+
+    if (!canEditProfile || contactEditBlockedReason) {
+      Alert.alert(
+        "Can't edit this here",
+        canEditProfile
+          ? `Phone and email can't be changed because ${contactEditBlockedReason}. They're sign-in details, so only the member can change them.`
+          : (contactEditBlockedReason ?? "This profile can't be edited."),
+      );
+    } else {
+      setEditingInlineField(pendingContactEdit.editKey);
+      setInlineFieldValue(pendingContactEdit.currentValue);
+    }
+    setPendingContactEdit(null);
+  }, [pendingContactEdit, contactEditPermissions]);
   const assigneeMutationQueueRef = useRef<Record<string, Promise<void>>>({});
 
   // Bulk remove mutations
@@ -1392,6 +1480,58 @@ export function FollowupDesktopTable({
         }
         return next;
       });
+    }
+  };
+
+  /**
+   * Commit an inline profile-field edit (ADR-034).
+   *
+   * Sends ONLY this one field, which is what the mutation wants: it treats
+   * every omitted argument as untouched, so a cell edit can never revert a
+   * change another admin made to a different field, and the audit trail
+   * records exactly what was changed.
+   *
+   * Unlike `handleZipCodeSave`, failures are surfaced to the user rather than
+   * only logged. A rejection here is usually meaningful and actionable —
+   * "another account already uses this phone number", or the contact-edit
+   * lock — and silently reverting the cell would look like the grid was
+   * broken.
+   */
+  const handleProfileFieldSave = async (
+    member: FollowupMember,
+    field: "firstName" | "lastName" | "email" | "phone",
+    value: string,
+  ) => {
+    const trimmed = value.trim();
+    const previous = (member as any)[field] ?? "";
+    if (trimmed === (previous ?? "")) return;
+
+    const targetCommunityId = groupData?.communityId ?? communityId;
+    if (!targetCommunityId) return;
+
+    const memberId = member.groupMemberId;
+    setOptimistic((prev) => ({
+      ...prev,
+      [memberId]: { ...prev[memberId], [field]: trimmed || null },
+    }));
+
+    try {
+      await updateMemberProfileMut({
+        communityId: targetCommunityId as Id<"communities">,
+        targetUserId: member.userId as Id<"users">,
+        // `null` clears email; first name and phone reject empty server-side.
+        [field]: field === "email" ? trimmed || null : trimmed,
+      } as any);
+    } catch (err: any) {
+      setOptimistic((prev) => {
+        const next = { ...prev };
+        if (next[memberId]) {
+          delete (next[memberId] as any)[field];
+          if (Object.keys(next[memberId]).length === 0) delete next[memberId];
+        }
+        return next;
+      });
+      Alert.alert("Couldn't save", formatError(err, "Failed to update profile"));
     }
   };
 
@@ -1684,6 +1824,13 @@ export function FollowupDesktopTable({
       }
       if (opt.status !== undefined) overrides.status = opt.status ?? undefined;
       if (opt.isActive !== undefined) overrides.isActive = opt.isActive;
+      // Inline profile edits (ADR-034). Applied here as well as in
+      // `displayMembers` — this is a second, independent copy of the merge, so
+      // a field handled in only one of them updates inconsistently.
+      for (const key of ["firstName", "lastName", "email", "phone"] as const) {
+        if ((opt as any)[key] !== undefined)
+          overrides[key] = (opt as any)[key] ?? undefined;
+      }
       // Apply custom field overrides
       for (const [key, val] of Object.entries(opt)) {
         if (key.startsWith("custom")) overrides[key] = val ?? undefined;
@@ -1725,34 +1872,102 @@ export function FollowupDesktopTable({
         return <Text style={[s.cellText, { color: colors.text }]}>{formatShortDate(item.addedAt)}</Text>;
 
       case "firstName":
-        return (
-          <View style={s.nameCellRow}>
-            <Avatar
-              name={`${item.firstName} ${item.lastName ?? ""}`}
-              imageUrl={item.avatarUrl}
-              size={24}
-            />
-            <Text style={[s.cellText, { color: colors.text }]}>{item.firstName}</Text>
-            {item.isLeader && (
-              <View style={s.leaderBadge}>
-                <Text style={s.leaderBadgeText}>Leader</Text>
-              </View>
-            )}
-          </View>
-        );
-
       case "lastName":
-        return <Text style={[s.cellText, { color: colors.text }]}>{item.lastName ?? ""}</Text>;
-
       case "email":
-        return (
-          <Text style={[s.cellText, s.cellTextSmall, { color: colors.text }]} numberOfLines={1}>
-            {item.email ?? ""}
-          </Text>
-        );
+      case "phone": {
+        const field = col.key as
+          | "firstName"
+          | "lastName"
+          | "email"
+          | "phone";
+        const editKey = `${item.groupMemberId}:${field}`;
+        const stored = ((item as any)[field] ?? "") as string;
+        const isContactField = CONTACT_PROFILE_COLUMNS.has(field);
+        const isSmall = field === "email";
 
-      case "phone":
-        return <Text style={[s.cellText, { color: colors.text }]}>{item.phone ?? ""}</Text>;
+        // The first-name cell carries the avatar and Leader badge, so its
+        // display state stays richer than the others.
+        const displayContent =
+          field === "firstName" ? (
+            <View style={s.nameCellRow}>
+              <Avatar
+                name={`${item.firstName} ${item.lastName ?? ""}`}
+                imageUrl={item.avatarUrl}
+                size={24}
+              />
+              <Text style={[s.cellText, { color: colors.text }]}>{item.firstName}</Text>
+              {item.isLeader && (
+                <View style={s.leaderBadge}>
+                  <Text style={s.leaderBadgeText}>Leader</Text>
+                </View>
+              )}
+            </View>
+          ) : (
+            <Text
+              style={[
+                s.cellText,
+                isSmall && s.cellTextSmall,
+                { color: colors.text },
+                !stored && { color: colors.textTertiary, fontStyle: "italic" as const },
+              ]}
+              numberOfLines={1}
+            >
+              {stored || (canEditProfiles ? "Click to add" : "")}
+            </Text>
+          );
+
+        if (!canEditProfiles) return displayContent;
+
+        if (editingInlineField === editKey) {
+          const commit = () => {
+            handleProfileFieldSave(item, field, inlineFieldValue);
+            setEditingInlineField(null);
+          };
+          return (
+            <TextInput
+              style={[
+                s.inlineInput,
+                { color: colors.text, borderColor: primaryColor, backgroundColor: colors.background },
+              ]}
+              value={inlineFieldValue}
+              onChangeText={setInlineFieldValue}
+              onBlur={commit}
+              onSubmitEditing={commit}
+              autoFocus
+              keyboardType={
+                field === "phone"
+                  ? "phone-pad"
+                  : field === "email"
+                    ? "email-address"
+                    : "default"
+              }
+              autoCapitalize={isContactField ? "none" : "words"}
+            />
+          );
+        }
+
+        return (
+          <TouchableOpacity
+            style={s.editableCellTouchable}
+            onPress={() => {
+              if (isContactField) {
+                // Don't open the editor until we know it's allowed — phone and
+                // email are credentials and may be locked on this account.
+                setPendingContactEdit({
+                  userId: item.userId,
+                  editKey,
+                  currentValue: stored,
+                });
+                return;
+              }
+              setEditingInlineField(editKey);
+              setInlineFieldValue(stored);
+            }}
+          >
+            {displayContent}
+          </TouchableOpacity>
+        );
+      }
 
       case "zipCode": {
         const zipEditKey = `${item.groupMemberId}:zipCode`;
