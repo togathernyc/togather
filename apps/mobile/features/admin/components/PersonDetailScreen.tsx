@@ -26,13 +26,31 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { formatDistanceToNow, format } from "date-fns";
-import { useQuery, useAuthenticatedMutation, api } from "@services/api/convex";
+import {
+  useQuery,
+  useAuthenticatedMutation,
+  useAuthenticatedPaginatedQuery,
+  api,
+} from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 import { useAuth } from "@/providers/AuthProvider";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useTheme } from "@hooks/useTheme";
 import { formatError } from "@/utils/error-handling";
 import { NotificationsDisabledBadge } from "@components/ui/NotificationsDisabledBadge";
+import {
+  EditMemberProfileModal,
+  type MemberProfileEdits,
+} from "./EditMemberProfileModal";
+
+/** Field keys from the audit trail, rendered as human-readable labels. */
+const AUDIT_FIELD_LABELS: Record<string, string> = {
+  firstName: "First name",
+  lastName: "Last name",
+  email: "Email",
+  phone: "Phone",
+  dateOfBirth: "Date of birth",
+};
 
 // Role constants (matching backend)
 const COMMUNITY_ROLES = {
@@ -61,6 +79,8 @@ export function PersonDetailScreen() {
     currentPresent: boolean;
   } | null>(null);
   const [isUpdatingAttendance, setIsUpdatingAttendance] = useState(false);
+  const [isEditingProfile, setIsEditingProfile] = useState(false);
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
 
   // Fetch member details using Convex
   const rawMember = useQuery(
@@ -114,8 +134,26 @@ export function PersonDetailScreen() {
       }
     : null;
 
+  // Edit history for this member — cursor-paginated so the append-only trail
+  // stays fully reachable however long it gets.
+  const {
+    results: auditEntries,
+    status: auditStatus,
+    loadMore: loadMoreAudits,
+  } = useAuthenticatedPaginatedQuery(
+    api.functions.admin.members.listMemberProfileAudits,
+    community?.id && userId
+      ? {
+          communityId: community.id as Id<"communities">,
+          targetUserId: userId as Id<"users">,
+        }
+      : "skip",
+    { initialNumItems: 10 },
+  );
+
   // Mutations
   const updateRoleMutation = useAuthenticatedMutation(api.functions.admin.members.updateMemberRole);
+  const updateMemberProfileMutation = useAuthenticatedMutation(api.functions.admin.members.updateMemberProfile);
   const transferPrimaryAdminMutation = useAuthenticatedMutation(api.functions.admin.members.transferPrimaryAdmin);
   const removeMemberMutation = useAuthenticatedMutation(api.functions.communities.removeMember);
   const updateAttendanceMutation = useAuthenticatedMutation(api.functions.memberFollowups.updateAttendance);
@@ -143,6 +181,34 @@ export function PersonDetailScreen() {
       }
     },
     [editingAttendance, userId, community?.id, updateAttendanceMutation]
+  );
+
+  const handleSaveProfile = useCallback(
+    async (edits: MemberProfileEdits) => {
+      if (!userId || !community?.id) return;
+      setIsSavingProfile(true);
+      try {
+        // Spread rather than naming each field: naming them would turn an
+        // untouched field back into an explicit `undefined` and defeat the
+        // point of submitting only what changed.
+        await updateMemberProfileMutation({
+          communityId: community.id as Id<"communities">,
+          targetUserId: userId as Id<"users">,
+          ...edits,
+        });
+        setIsEditingProfile(false);
+        // The edited member may be the signed-in user.
+        if (currentUser?.id === userId) {
+          await refreshUser();
+        }
+      } catch (error: any) {
+        // Leave the modal open on failure so the admin's typing survives.
+        Alert.alert("Error", formatError(error, "Failed to update profile"));
+      } finally {
+        setIsSavingProfile(false);
+      }
+    },
+    [userId, community?.id, updateMemberProfileMutation, currentUser?.id, refreshUser],
   );
 
   const handleMakeAdmin = useCallback(async () => {
@@ -414,6 +480,22 @@ export function PersonDetailScreen() {
               )}
             </View>
           </View>
+
+          {/*
+            `canEditProfile` comes from the same helper the mutation enforces,
+            so the button appears on exactly the records a save would accept.
+          */}
+          {isCurrentUserAdmin && rawMember?.canEditProfile && (
+            <TouchableOpacity
+              style={[styles.editProfileButton, { borderColor: primaryColor }]}
+              onPress={() => setIsEditingProfile(true)}
+            >
+              <Ionicons name="create-outline" size={18} color={primaryColor} />
+              <Text style={[styles.editProfileButtonText, { color: primaryColor }]}>
+                Edit Profile
+              </Text>
+            </TouchableOpacity>
+          )}
         </View>
 
         {/* Account Activity Section */}
@@ -585,6 +667,60 @@ export function PersonDetailScreen() {
           )}
         </View>
 
+        {/* Edit History Section — the ADR-034 audit trail */}
+        {isCurrentUserAdmin && auditEntries.length > 0 && (
+          <View style={[styles.section, { backgroundColor: colors.surface }]}>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>Edit History</Text>
+            {auditEntries.map((entry: any) => {
+              const actorName = entry.actor
+                ? `${entry.actor.firstName} ${entry.actor.lastName}`.trim() || "An admin"
+                : "A removed admin";
+              // One row per edit, not per field, so a correction touching name
+              // and phone reads as a single event.
+              const fieldNames = entry.changes
+                .map((c: any) => AUDIT_FIELD_LABELS[c.field] ?? c.field)
+                .join(", ");
+              return (
+                <View key={entry.id} style={styles.auditRow}>
+                  <Text style={[styles.auditSummary, { color: colors.text }]}>
+                    {actorName} changed {fieldNames}
+                  </Text>
+                  {entry.changes.map((change: any, index: number) => (
+                    <Text
+                      key={`${entry.id}-${change.field}-${index}`}
+                      style={[styles.auditChange, { color: colors.textSecondary }]}
+                    >
+                      {AUDIT_FIELD_LABELS[change.field] ?? change.field}:{" "}
+                      {change.previousValue ?? "—"} → {change.newValue ?? "—"}
+                    </Text>
+                  ))}
+                  {entry.reason && (
+                    <Text style={[styles.auditReason, { color: colors.textSecondary }]}>
+                      &ldquo;{entry.reason}&rdquo;
+                    </Text>
+                  )}
+                  <Text style={[styles.auditDate, { color: colors.textTertiary }]}>
+                    {format(new Date(entry.createdAt), "d MMM yyyy, h:mm a")}
+                  </Text>
+                </View>
+              );
+            })}
+            {auditStatus === "CanLoadMore" && (
+              <TouchableOpacity
+                onPress={() => loadMoreAudits(10)}
+                style={styles.loadMoreAudits}
+              >
+                <Text style={[styles.loadMoreAuditsText, { color: primaryColor }]}>
+                  Show earlier changes
+                </Text>
+              </TouchableOpacity>
+            )}
+            {auditStatus === "LoadingMore" && (
+              <ActivityIndicator size="small" color={primaryColor} style={{ marginTop: 8 }} />
+            )}
+          </View>
+        )}
+
         {/* Admin Role Management Section - Only visible to Primary Admin */}
         {canManageAdmins && !isSelf && !member.is_primary_admin && (
           <View style={[styles.section, { backgroundColor: colors.surface }]}>
@@ -727,11 +863,72 @@ export function PersonDetailScreen() {
           </Pressable>
         </Pressable>
       </Modal>
+
+      <EditMemberProfileModal
+        visible={isEditingProfile}
+        member={
+          rawMember
+            ? {
+                firstName: rawMember.firstName,
+                lastName: rawMember.lastName,
+                email: rawMember.email,
+                phone: rawMember.phone,
+                dateOfBirth: rawMember.dateOfBirth,
+              }
+            : null
+        }
+        lockedReason={rawMember?.contactEditBlockedReason ?? null}
+        onClose={() => setIsEditingProfile(false)}
+        onSave={handleSaveProfile}
+        isSaving={isSavingProfile}
+      />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  editProfileButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    marginTop: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  editProfileButtonText: {
+    fontSize: 15,
+    fontWeight: "600",
+  },
+  auditRow: {
+    paddingVertical: 10,
+    gap: 2,
+  },
+  auditSummary: {
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  auditChange: {
+    fontSize: 13,
+  },
+  auditReason: {
+    fontSize: 13,
+    fontStyle: "italic",
+    marginTop: 2,
+  },
+  auditDate: {
+    fontSize: 12,
+    marginTop: 2,
+  },
+  loadMoreAudits: {
+    paddingVertical: 10,
+    alignItems: "center",
+  },
+  loadMoreAuditsText: {
+    fontSize: 14,
+    fontWeight: "600",
+  },
   container: {
     flex: 1,
   },

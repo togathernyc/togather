@@ -1,9 +1,14 @@
 import React, { useState } from 'react';
 import { View, TextInput, Text, StyleSheet, TouchableOpacity, Platform } from 'react-native';
+import type { TextInputProps } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '@hooks/useTheme';
 
-interface InputProps {
+interface InputProps
+  extends Pick<
+    TextInputProps,
+    "editable" | "keyboardType" | "autoCapitalize" | "autoCorrect" | "maxLength"
+  > {
   label?: string;
   placeholder?: string;
   value: string;
@@ -29,6 +34,11 @@ export function Input({
   numberOfLines = 1,
   style,
   inputStyle,
+  editable,
+  keyboardType,
+  autoCapitalize,
+  autoCorrect,
+  maxLength,
 }: InputProps) {
   const { colors } = useTheme();
   const [showPassword, setShowPassword] = useState(false);
@@ -64,6 +74,11 @@ export function Input({
           secureTextEntry={secureTextEntry && !showPassword}
           multiline={multiline}
           numberOfLines={numberOfLines}
+          editable={editable}
+          keyboardType={keyboardType}
+          autoCapitalize={autoCapitalize}
+          autoCorrect={autoCorrect}
+          maxLength={maxLength}
           onFocus={() => setIsFocused(true)}
           onBlur={() => setIsFocused(false)}
         />
