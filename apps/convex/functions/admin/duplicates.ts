@@ -298,6 +298,23 @@ export const mergeDuplicateAccounts = mutation({
         }
       }
 
+      // Carry the profile-edit audit trail across to the primary (ADR-034).
+      // These rows are otherwise append-only, but leaving them keyed to the
+      // account we are about to deactivate would strand them: the history
+      // query filters on the primary's exact `targetUserId`, so a merged
+      // member's edit history would silently vanish. Re-key so the trail
+      // follows the person rather than the row.
+      const profileAudits = await ctx.db
+        .query("memberProfileAudits")
+        .withIndex("by_target", (q) => q.eq("targetUserId", secondary._id))
+        .collect();
+
+      for (const audit of profileAudits) {
+        await ctx.db.patch(audit._id, {
+          targetUserId: args.primaryAccountId,
+        });
+      }
+
       // Deactivate secondary account (soft delete)
       const newEmail = secondary.email?.startsWith("merged_")
         ? secondary.email
