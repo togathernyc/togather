@@ -226,7 +226,11 @@ export function EditMemberProfileModal({
         >
           <Pressable
             style={[styles.container, { backgroundColor: colors.surface }]}
-            onPress={(e) => e.stopPropagation()}
+            // Swallow taps on the sheet so they don't reach the overlay and
+            // close the modal. Optional-called because a press can reach this
+            // handler with no event object when the press target above it is
+            // disabled — which is exactly the state a half-filled form is in.
+            onPress={(e) => e?.stopPropagation?.()}
           >
             <View style={[styles.header, { borderBottomColor: colors.border }]}>
               <Text style={[styles.title, { color: colors.text }]}>

@@ -1,6 +1,23 @@
 // Wrapper script that patches Object.defineProperty before running Jest
 // This fixes React 19 compatibility issues with jest-expo
 
+// Pin the test timezone to a NON-UTC zone unless the caller chose one.
+//
+// At UTC, local time and UTC are the same clock, so a date bug that reads a
+// value with the wrong getters is *mathematically undetectable* — no assertion
+// can distinguish `getUTCDate()` from `getDate()` when the offset is zero. Left
+// at UTC, CI is structurally blind to an entire class of off-by-one-day bugs;
+// two have already shipped that way (the `StatsContent` attendance-day filter,
+// and the date-of-birth converter in the admin profile editor).
+//
+// America/New_York is the product's home timezone and has a negative offset,
+// which is the direction that breaks UTC-midnight values. Must be set here,
+// before Jest forks its workers: Node reads TZ once at startup, so setting
+// `process.env.TZ` inside a test file is silently ignored.
+if (!process.env.TZ) {
+  process.env.TZ = 'America/New_York';
+}
+
 // CRITICAL: This must be the FIRST thing that runs
 // Capture the original before anything else
 const originalDefineProperty = Object.defineProperty;
