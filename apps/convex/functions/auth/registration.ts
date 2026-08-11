@@ -146,6 +146,17 @@ export const registerNewUser = action({
         `[registerNewUser] User already exists with phone ${normalizedPhone}, returning existing user`
       );
 
+      // Persist the verification we just proved. This branch already checked a
+      // phone verification token above and is about to issue real tokens, so
+      // ownership is established — but until this call the response reported
+      // `phoneVerified: true` while the database still said otherwise, and
+      // everything downstream that trusts `users.phoneVerified` (including the
+      // ADR-034 contact-edit guard) got the wrong answer.
+      await ctx.runMutation(
+        internal.functions.authInternal.markPhoneVerifiedInternal,
+        { userId: existingUser._id }
+      );
+
       const tokens = await generateTokens(existingUser._id);
 
       return {
@@ -158,7 +169,7 @@ export const registerNewUser = action({
           lastName: existingUser.lastName || args.lastName,
           email: existingUser.email || args.email || "",
           phone: normalizedPhone,
-          phoneVerified: existingUser.phoneVerified ?? true,
+          phoneVerified: true,
         },
       };
     }
@@ -196,6 +207,16 @@ export const registerNewUser = action({
           console.log(
             `[registerNewUser] Race condition detected - user created by another request`
           );
+
+          // Same reasoning as the existing-user branch above: this path issues
+          // real tokens off the verified phone, so the verification has to be
+          // persisted here too. Fixing only one of the two branches would
+          // leave the same hole open on the losing side of a create race.
+          await ctx.runMutation(
+            internal.functions.authInternal.markPhoneVerifiedInternal,
+            { userId: raceWinnerUser._id }
+          );
+
           const tokens = await generateTokens(raceWinnerUser._id);
 
           return {
@@ -208,7 +229,7 @@ export const registerNewUser = action({
               lastName: raceWinnerUser.lastName || args.lastName,
               email: raceWinnerUser.email || args.email || "",
               phone: normalizedPhone,
-              phoneVerified: raceWinnerUser.phoneVerified ?? true,
+              phoneVerified: true,
             },
           };
         }

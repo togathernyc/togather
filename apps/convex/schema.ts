@@ -4315,4 +4315,51 @@ export default defineSchema({
   })
     .index("by_community", ["communityId", "createdAt"])
     .index("by_fund", ["fundId", "createdAt"]),
+
+  // =============================================================================
+  // MEMBER PROFILE AUDITS (ADR-034)
+  // =============================================================================
+
+  /**
+   * Append-only trail of admin edits to a member's profile (ADR-034).
+   *
+   * One row per *edit*, not per field: an admin who fixes a misspelled name and
+   * a transposed phone digit in one save produces a single event, so the UI can
+   * render "Reg Admin changed First name and Phone" rather than two unrelated
+   * entries. `changes` therefore holds every field that actually changed.
+   *
+   * Rows are never patched or deleted, with one exception:
+   * `mergeDuplicateAccounts` repoints `targetUserId` at the surviving primary
+   * account so a merged member's history follows the person instead of being
+   * stranded on the deactivated row.
+   *
+   * Written only by `admin.members.updateMemberProfile`; read only by
+   * `admin.members.listMemberProfileAudits`, which requires community admin.
+   */
+  memberProfileAudits: defineTable({
+    // The community whose admin made the edit. Audit rows are scoped to it
+    // because visibility follows community-admin authority, even though the
+    // edited `users` fields themselves are global.
+    communityId: v.id("communities"),
+    targetUserId: v.id("users"),
+    actorUserId: v.id("users"),
+    // Every field that actually changed in this edit. Values are stored as
+    // strings (null = "was empty" / "cleared") so the shape stays uniform
+    // across the text fields and the numeric dateOfBirth, which is rendered
+    // as an ISO date rather than a raw timestamp.
+    changes: v.array(
+      v.object({
+        field: v.string(),
+        previousValue: v.union(v.string(), v.null()),
+        newValue: v.union(v.string(), v.null()),
+      }),
+    ),
+    // Optional free-text note from the acting admin (max 500 chars).
+    reason: v.optional(v.string()),
+    createdAt: v.number(), // Unix timestamp ms
+  })
+    // History for one member within one community, newest first.
+    .index("by_community_target", ["communityId", "targetUserId", "createdAt"])
+    // Used by the duplicate-account merge to re-key a secondary's rows.
+    .index("by_target", ["targetUserId"]),
 });

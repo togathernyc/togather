@@ -9,8 +9,18 @@
  */
 
 import { v } from "convex/values";
+import { paginationOptsValidator } from "convex/server";
 import { query, mutation } from "../../_generated/server";
-import { now, normalizePhone, getMediaUrl } from "../../lib/utils";
+import type { QueryCtx, MutationCtx } from "../../_generated/server";
+import type { Id } from "../../_generated/dataModel";
+import { internal } from "../../_generated/api";
+import {
+  now,
+  normalizePhone,
+  getMediaUrl,
+  isValidPhone,
+  buildSearchText,
+} from "../../lib/utils";
 import { requireAuth } from "../../lib/auth";
 import { searchCommunityMembersPaginated } from "../../lib/memberSearch";
 import { getUsersWithNotificationsDisabled } from "../../lib/notifications/enabledStatus";
@@ -21,6 +31,326 @@ import {
   COMMUNITY_ROLES,
   ADMIN_ROLE_THRESHOLD,
 } from "./auth";
+
+// ============================================================================
+// Member Profile Edits — claim and authority guards (ADR-034)
+// ============================================================================
+
+/**
+ * Why any of this exists: `users.phone` and `users.email` are not data, they
+ * are credentials. The phone receives sign-in OTPs, and the email is
+ * sufficient on its own — `auth/accountClaim.ts` exposes an *unauthenticated*
+ * `verify_and_link` action that mails a code to whatever address is on the
+ * record and hands back access and refresh tokens for that account. Both
+ * fields live on the global `users` row while admin roles are per-community,
+ * so an unrestricted admin edit reaches into communities the acting admin has
+ * no authority over.
+ *
+ * Hence the rule: contact details are editable ONLY while nobody has claimed
+ * the account AND the account holds no authority anywhere. Names and dates of
+ * birth are not credentials and follow ordinary role rules.
+ */
+
+/**
+ * Ownership signals that mean a human has actually signed in as this account.
+ *
+ * Deliberately broader than `phoneVerified`, because that flag does not mean
+ * what its name suggests: `auth/login.ts` `legacyLogin` authenticates a
+ * migrated password holder and issues real JWTs without ever setting it. Any
+ * ONE of these signals means the account is someone's identity, not data an
+ * admin typed off a paper card.
+ *
+ * Returns a human-readable reason, or null when the account is unclaimed.
+ */
+async function describeAccountClaim(
+  ctx: QueryCtx | MutationCtx,
+  userId: Id<"users">,
+): Promise<string | null> {
+  const user = await ctx.db.get(userId);
+  if (!user) return null;
+
+  // 1. Verified phone — the OTP path completed.
+  if (user.phoneVerified === true) {
+    return "this member has verified their phone number";
+  }
+
+  // 2. Stored password — legacy migrated accounts sign in via `legacyLogin`,
+  //    which issues real tokens and never touches `phoneVerified`.
+  if (user.password) {
+    return "this member has a password on their account";
+  }
+
+  // 3. Recorded login on the user row (backfilled from legacy login data by
+  //    admin/cleanup.ts, so it is an independent record of the same fact).
+  if (user.lastLogin) {
+    return "this member has signed in before";
+  }
+
+  // 4. Recorded login on ANY membership row. Current sign-in paths stamp
+  //    `lastLogin` here (`ensureUserCommunityInternal`), NOT on the user, so
+  //    checking only `users.lastLogin` misses almost everyone who has
+  //    actually signed in.
+  const memberships = await ctx.db
+    .query("userCommunities")
+    .withIndex("by_user", (q) => q.eq("userId", userId))
+    .collect();
+
+  if (memberships.some((m) => m.lastLogin)) {
+    return "this member has signed in before";
+  }
+
+  return null;
+}
+
+/**
+ * Every table and field in this codebase that grants a user a capability
+ * beyond their own rows. Returns a human-readable description of the first
+ * authority found, or null when the account holds none.
+ *
+ * ⚠️ A FEATURE THAT ADDS A NEW KIND OF ROLE MUST ADD IT HERE. ⚠️
+ *
+ * This enumeration is the whole safety of admin-written contact details: if a
+ * role-bearing table is missing below, a local admin can redirect the contact
+ * details of an account holding that role, claim it via the OTP or
+ * account-claim flow, and inherit the capability. Nothing in the type system
+ * will flag the omission — see the known limitation in ADR-034.
+ *
+ * Note that "unclaimed" does NOT imply "powerless", which is why this runs
+ * alongside `describeAccountClaim` rather than instead of it: legacy accounts
+ * were migrated with roles intact, leaders are routinely entered before they
+ * first sign in, and a placeholder row's `_id` is stable so it can already
+ * carry `roleAssignments` / `groupMembers` / `userCommunities` rows (see
+ * `auth/registration.ts`).
+ */
+async function describeAccountAuthority(
+  ctx: QueryCtx | MutationCtx,
+  userId: Id<"users">,
+): Promise<string | null> {
+  // --- Platform-global authority, all on the users doc itself ---------------
+  const user = await ctx.db.get(userId);
+  if (!user) return null;
+
+  // `isSuperuser` / `isStaff` bypass every other platform check
+  // (posters.ts `hasPlatformRole`, devAssistant/access.ts).
+  if (user.isSuperuser === true) return "this member is a platform superuser";
+  if (user.isStaff === true) return "this member is platform staff";
+
+  // Delegated platform roles: "poster_admin" (posters.ts) and
+  // "dev_maintainer" (devAssistant/access.ts) today.
+  if (user.platformRoles && user.platformRoles.length > 0) {
+    return `this member holds the platform role ${user.platformRoles.join(", ")}`;
+  }
+
+  // GLOBAL users.roles — not the per-community one. `messaging/flagging.ts`
+  // `isUserAdmin` reads this field directly, with no membership behind it,
+  // and grants cross-community flag review and message moderation.
+  if ((user.roles ?? 0) >= ADMIN_ROLE_THRESHOLD) {
+    return "this member has a global admin role";
+  }
+
+  // --- Community-scoped authority ------------------------------------------
+  const memberships = await ctx.db
+    .query("userCommunities")
+    .withIndex("by_user", (q) => q.eq("userId", userId))
+    .collect();
+
+  // Only status 1 counts: `isCommunityAdmin` / `isPrimaryAdmin` require it, so
+  // a stale role in a community the member has left confers nothing and must
+  // not permanently lock their contact details.
+  const activeAdminMemberships = memberships.filter(
+    (m) => m.status === 1 && (m.roles ?? 0) >= ADMIN_ROLE_THRESHOLD,
+  );
+  if (activeAdminMemberships.length > 0) {
+    return "this member is an admin of a community";
+  }
+
+  // Community finance roles (ADR-033). The grant alone is not authority —
+  // `canManageCommunityFinance` also requires the holder to still be a
+  // community admin, which the check above has already ruled out. Included so
+  // the enumeration stays complete if that conjunction is ever relaxed.
+  const financeRoles = await ctx.db
+    .query("communityFinanceRoles")
+    .withIndex("by_user_community", (q) => q.eq("userId", userId))
+    .collect();
+  const activeCommunityIds = new Set(
+    memberships.filter((m) => m.status === 1).map((m) => m.communityId),
+  );
+  if (
+    financeRoles.some(
+      (r) => r.revokedAt === undefined && activeCommunityIds.has(r.communityId),
+    )
+  ) {
+    return "this member holds a community finance role";
+  }
+
+  // --- Group-scoped authority ----------------------------------------------
+  const groupMemberships = await ctx.db
+    .query("groupMembers")
+    .withIndex("by_user", (q) => q.eq("userId", userId))
+    .collect();
+
+  for (const membership of groupMemberships) {
+    // `isGroupLeader` semantics (lib/membership.ts): active, accepted, leader.
+    const isActive =
+      membership.leftAt === undefined &&
+      (!membership.requestStatus || membership.requestStatus === "accepted");
+    if (!isActive || membership.role !== "leader") continue;
+
+    // Leading an archived group confers nothing — `isCommunityGroupLeader`
+    // (scheduling/permissions.ts) excludes archived groups too.
+    const group = await ctx.db.get(membership.groupId);
+    if (!group || group.isArchived === true) continue;
+
+    return "this member leads a group";
+  }
+
+  // Fund roles (ADR-032). `revokedAt === undefined` means active; re-grants
+  // leave the revoked row in place, so filter rather than taking the first.
+  const fundRoles = await ctx.db
+    .query("fundRoles")
+    .withIndex("by_user_fund", (q) => q.eq("userId", userId))
+    .collect();
+  if (fundRoles.some((r) => r.revokedAt === undefined)) {
+    return "this member holds a fund role";
+  }
+
+  // Serving-team managers (ADR-025). The row itself is never cleaned up when
+  // someone leaves the group, so `isTeamManager` re-verifies active group
+  // membership on every check — mirror that here rather than trusting the row.
+  const teamManagerRows = await ctx.db
+    .query("teamManagers")
+    .withIndex("by_user", (q) => q.eq("userId", userId))
+    .collect();
+  for (const row of teamManagerRows) {
+    const team = await ctx.db.get(row.teamId);
+    if (!team || team.isArchived === true) continue;
+    // Still an active member of the team's group?
+    const stillInGroup = groupMemberships.some(
+      (m) =>
+        m.groupId === team.groupId &&
+        m.leftAt === undefined &&
+        (!m.requestStatus || m.requestStatus === "accepted"),
+    );
+    if (stillInGroup) return "this member manages a serving team";
+  }
+
+  // --- Channel-scoped authority --------------------------------------------
+  // `chatChannelMembers` roles are granted directly, with no group leadership
+  // behind them. "owner" is a real fourth value the schema comment omits.
+  // Moderators can delete other people's messages (messaging/messages.ts);
+  // owners can remove members and delete the channel (messaging/channels.ts).
+  const channelMemberships = await ctx.db
+    .query("chatChannelMembers")
+    .withIndex("by_user", (q) => q.eq("userId", userId))
+    .collect();
+
+  const CHANNEL_AUTHORITY_ROLES = new Set(["owner", "admin", "moderator"]);
+  if (
+    channelMemberships.some(
+      (m) => m.leftAt === undefined && CHANNEL_AUTHORITY_ROLES.has(m.role),
+    )
+  ) {
+    return "this member holds a channel admin or moderator role";
+  }
+
+  return null;
+}
+
+/**
+ * The single source of truth for "may THIS admin edit THIS member's profile,
+ * and may they touch the contact fields?"
+ *
+ * Called by BOTH `updateMemberProfile` and `getCommunityMemberById`, so the
+ * detail screen offers exactly the actions the mutation would accept. Keeping
+ * these in one place is deliberate: when the query and the mutation disagree,
+ * the UI shows buttons whose every save fails.
+ *
+ * Note this takes the ACTOR as well as the target. An earlier version did not,
+ * which meant the rank rule below lived only in the mutation — so a regular
+ * admin viewing a fellow admin saw an edit form that always rejected them.
+ * Any rule the mutation enforces has to be decided here, or the two drift.
+ */
+async function getProfileEditPermissions(
+  ctx: QueryCtx | MutationCtx,
+  communityId: Id<"communities">,
+  targetUserId: Id<"users">,
+  actorUserId: Id<"users">,
+): Promise<{
+  canEditProfile: boolean;
+  profileEditBlockedReason: string | null;
+  contactEditBlockedReason: string | null;
+}> {
+  const blocked = (reason: string) => ({
+    canEditProfile: false,
+    profileEditBlockedReason: reason,
+    contactEditBlockedReason: reason,
+  });
+
+  const membership = await ctx.db
+    .query("userCommunities")
+    .withIndex("by_user_community", (q) =>
+      q.eq("userId", targetUserId).eq("communityId", communityId),
+    )
+    .first();
+
+  // Status 1 (active) only. Status 2 is "left" and status 3 is "blocked";
+  // both are retained in People search, and a community that someone has left
+  // has no business editing their global user record.
+  if (!membership || membership.status !== 1) {
+    return blocked(
+      "This member is not an active member of this community, so their profile cannot be edited here.",
+    );
+  }
+
+  // Editing a fellow admin's record requires Primary Admin, mirroring
+  // `updateMemberRole`. Editing your OWN is always allowed — self-service
+  // profile settings already permit it.
+  if (
+    actorUserId !== targetUserId &&
+    (membership.roles ?? 0) >= ADMIN_ROLE_THRESHOLD
+  ) {
+    const actorMembership = await ctx.db
+      .query("userCommunities")
+      .withIndex("by_user_community", (q) =>
+        q.eq("userId", actorUserId).eq("communityId", communityId),
+      )
+      .first();
+
+    const actorIsPrimaryAdmin =
+      actorMembership?.status === 1 &&
+      actorMembership.roles === COMMUNITY_ROLES.PRIMARY_ADMIN;
+
+    if (!actorIsPrimaryAdmin) {
+      return blocked(
+        "Only a Primary Admin can edit another admin's profile.",
+      );
+    }
+  }
+
+  const claimReason = await describeAccountClaim(ctx, targetUserId);
+  if (claimReason) {
+    return {
+      canEditProfile: true,
+      profileEditBlockedReason: null,
+      contactEditBlockedReason: claimReason,
+    };
+  }
+
+  const authorityReason = await describeAccountAuthority(ctx, targetUserId);
+  if (authorityReason) {
+    return {
+      canEditProfile: true,
+      profileEditBlockedReason: null,
+      contactEditBlockedReason: authorityReason,
+    };
+  }
+
+  return {
+    canEditProfile: true,
+    profileEditBlockedReason: null,
+    contactEditBlockedReason: null,
+  };
+}
 
 // ============================================================================
 // Community Members
@@ -303,6 +633,18 @@ export const getCommunityMemberById = query({
       user._id,
     ]);
 
+    // Reported here so the detail screen offers exactly the actions
+    // `updateMemberProfile` would accept — see `getProfileEditPermissions`.
+    // `userId` is the CALLER, so this answer is actor-specific: a regular admin
+    // looking at a fellow admin correctly gets `canEditProfile: false`.
+    const { canEditProfile, contactEditBlockedReason } =
+      await getProfileEditPermissions(
+        ctx,
+        args.communityId,
+        args.targetUserId,
+        userId,
+      );
+
     return {
       id: user._id,
       firstName: user.firstName || "",
@@ -312,7 +654,12 @@ export const getCommunityMemberById = query({
       phoneVerified: user.phoneVerified || false,
       profilePhoto: getMediaUrl(user.profilePhoto),
       notificationsDisabled: notifsDisabled.has(user._id),
-      dateOfBirth: user.dateOfBirth || null,
+      canEditProfile,
+      contactEditBlockedReason,
+      // `?? null`, never `|| null`: timestamp 0 is 1970-01-01, a real
+      // birthday, and turning it into null would make the edit form think the
+      // date was empty.
+      dateOfBirth: user.dateOfBirth ?? null,
       lastLogin: communityMembership.lastLogin || null,
       communityMembership: {
         roles: communityMembership.roles || 0,
@@ -526,6 +873,391 @@ export const transferPrimaryAdmin = mutation({
     }
 
     return { success: true };
+  },
+});
+
+// ============================================================================
+// Member Profile Edits (ADR-034)
+// ============================================================================
+
+const MAX_REASON_LENGTH = 500;
+
+/**
+ * `dateOfBirth` is stored as UTC midnight of the calendar day, which is what
+ * `new Date("YYYY-MM-DD")` produces in the signup path
+ * (`auth/helpers.parseAndValidateDate`). The API therefore speaks in
+ * `YYYY-MM-DD` strings rather than timestamps: a calendar date has no
+ * timezone, so there is nothing for the client and server to disagree about.
+ */
+function isoDateToUtcTimestamp(isoDate: string): number {
+  const match = isoDate.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) {
+    throw new Error("Date of birth must be in YYYY-MM-DD format");
+  }
+  const year = parseInt(match[1], 10);
+  const month = parseInt(match[2], 10);
+  const day = parseInt(match[3], 10);
+
+  const timestamp = Date.UTC(year, month - 1, day);
+  const reconstructed = new Date(timestamp);
+  // Rejects impossible calendar dates like 2026-02-30, which Date.UTC would
+  // otherwise silently roll forward into March.
+  if (
+    reconstructed.getUTCFullYear() !== year ||
+    reconstructed.getUTCMonth() !== month - 1 ||
+    reconstructed.getUTCDate() !== day
+  ) {
+    throw new Error("Date of birth is not a valid calendar date");
+  }
+  if (timestamp > Date.now()) {
+    throw new Error("Date of birth cannot be in the future");
+  }
+  return timestamp;
+}
+
+/** Format a stored dateOfBirth timestamp back to YYYY-MM-DD, read in UTC. */
+function utcTimestampToIsoDate(timestamp: number): string {
+  const date = new Date(timestamp);
+  const year = String(date.getUTCFullYear()).padStart(4, "0");
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(date.getUTCDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+/**
+ * Update a community member's profile, recording an append-only audit row.
+ *
+ * Callers submit ONLY the fields the admin actually changed. Every argument is
+ * optional and `undefined` means "untouched": sending the whole form would let
+ * a stale copy revert a concurrent edit by another admin, and the audit trail
+ * would then record that reversal as a deliberate change by someone who never
+ * touched the field. `null` is an explicit clear, which `email` and
+ * `dateOfBirth` accept.
+ *
+ * See ADR-034 for why contact fields are gated the way they are.
+ */
+export const updateMemberProfile = mutation({
+  args: {
+    token: v.string(),
+    communityId: v.id("communities"),
+    targetUserId: v.id("users"),
+    firstName: v.optional(v.string()),
+    lastName: v.optional(v.string()),
+    email: v.optional(v.union(v.string(), v.null())),
+    phone: v.optional(v.union(v.string(), v.null())),
+    // YYYY-MM-DD, or null to clear.
+    dateOfBirth: v.optional(v.union(v.string(), v.null())),
+    reason: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const actorUserId = await requireAuth(ctx, args.token);
+    await requireCommunityAdmin(ctx, args.communityId, actorUserId);
+
+    const target = await ctx.db.get(args.targetUserId);
+    if (!target) {
+      throw new Error("User not found");
+    }
+
+    const { canEditProfile, profileEditBlockedReason, contactEditBlockedReason } =
+      await getProfileEditPermissions(
+        ctx,
+        args.communityId,
+        args.targetUserId,
+        actorUserId,
+      );
+
+    if (!canEditProfile) {
+      throw new Error(profileEditBlockedReason ?? "Profile cannot be edited");
+    }
+
+    if (args.reason !== undefined && args.reason.length > MAX_REASON_LENGTH) {
+      throw new Error(
+        `Reason must be ${MAX_REASON_LENGTH} characters or fewer`,
+      );
+    }
+
+    const changes: Array<{
+      field: string;
+      previousValue: string | null;
+      newValue: string | null;
+    }> = [];
+    const updates: Record<string, unknown> = {};
+
+    // --- Names ---------------------------------------------------------------
+    if (args.firstName !== undefined) {
+      const trimmed = args.firstName.trim();
+      if (trimmed.length === 0) {
+        throw new Error("First name is required");
+      }
+      if (trimmed !== (target.firstName ?? "")) {
+        changes.push({
+          field: "firstName",
+          previousValue: target.firstName || null,
+          newValue: trimmed,
+        });
+        updates.firstName = trimmed;
+      }
+    }
+
+    if (args.lastName !== undefined) {
+      const trimmed = args.lastName.trim();
+      if (trimmed !== (target.lastName ?? "")) {
+        changes.push({
+          field: "lastName",
+          previousValue: target.lastName || null,
+          newValue: trimmed || null,
+        });
+        updates.lastName = trimmed || undefined;
+      }
+    }
+
+    // --- Contact details -----------------------------------------------------
+    // Order matters throughout this block: compare against the STORED value
+    // before validating anything. Legacy rows hold values today's rules reject
+    // (seven-digit phones, addresses with no public TLD), and validating a
+    // value that has not actually changed would take an unrelated name edit
+    // down with it. Comparison is on canonical forms, so `(202) 555-0123` and
+    // `+12025550123` — or `Member@Example.com` and `member@example.com` — are the
+    // same value and produce no change, no audit row and no blocker.
+
+    let phoneChanged = false;
+    let normalizedNewPhone: string | null = null;
+    if (args.phone !== undefined) {
+      const submitted = args.phone?.trim() ?? "";
+      const stored = target.phone ?? "";
+
+      if (submitted.length === 0) {
+        // An empty phone means "none on file", not "remove it". Members
+        // without a phone are common in migrated data, so a profile edit must
+        // never require inventing one — but removing an existing number would
+        // lock the member out of sign-in.
+        if (stored.length > 0) {
+          throw new Error(
+            "A member's phone number cannot be removed, because it is how they sign in.",
+          );
+        }
+      } else {
+        const canonicalSubmitted = normalizePhone(submitted);
+        const canonicalStored = stored ? normalizePhone(stored) : "";
+        if (canonicalSubmitted !== canonicalStored) {
+          phoneChanged = true;
+          normalizedNewPhone = canonicalSubmitted;
+        }
+      }
+    }
+
+    let emailChanged = false;
+    let normalizedNewEmail: string | null = null;
+    if (args.email !== undefined) {
+      const submitted = args.email?.trim() ?? "";
+      const stored = target.email ?? "";
+
+      if (submitted.length === 0) {
+        if (stored.length > 0) {
+          emailChanged = true;
+          normalizedNewEmail = null;
+        }
+      } else {
+        const canonicalSubmitted = submitted.toLowerCase();
+        const canonicalStored = stored.toLowerCase();
+        if (canonicalSubmitted !== canonicalStored) {
+          emailChanged = true;
+          normalizedNewEmail = canonicalSubmitted;
+        }
+      }
+    }
+
+    // Only a REAL contact change trips the guard.
+    if ((phoneChanged || emailChanged) && contactEditBlockedReason) {
+      throw new Error(
+        `Phone and email cannot be changed here because ${contactEditBlockedReason}. ` +
+          `They are sign-in credentials, so only the member can change them, through a flow that proves they own the new details.`,
+      );
+    }
+
+    if (phoneChanged && normalizedNewPhone) {
+      if (!isValidPhone(normalizedNewPhone)) {
+        throw new Error("Please enter a valid phone number");
+      }
+      const existing = await ctx.db
+        .query("users")
+        .withIndex("by_phone", (q) => q.eq("phone", normalizedNewPhone))
+        .first();
+      if (existing && existing._id !== args.targetUserId) {
+        throw new Error("Another account already uses this phone number");
+      }
+
+      changes.push({
+        field: "phone",
+        previousValue: target.phone || null,
+        newValue: normalizedNewPhone,
+      });
+      updates.phone = normalizedNewPhone;
+      // An admin typing a number is not proof the member owns it, so the
+      // account must not inherit the previous number's verified status.
+      updates.phoneVerified = false;
+    }
+
+    if (emailChanged) {
+      if (normalizedNewEmail) {
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedNewEmail)) {
+          throw new Error("Please enter a valid email address");
+        }
+        const existing = await ctx.db
+          .query("users")
+          .withIndex("by_email", (q) => q.eq("email", normalizedNewEmail))
+          .first();
+        if (existing && existing._id !== args.targetUserId) {
+          throw new Error("Another account already uses this email address");
+        }
+      }
+
+      changes.push({
+        field: "email",
+        previousValue: target.email || null,
+        newValue: normalizedNewEmail,
+      });
+      updates.email = normalizedNewEmail ?? undefined;
+    }
+
+    // --- Date of birth -------------------------------------------------------
+    if (args.dateOfBirth !== undefined) {
+      // `?? null`, never `|| null`: timestamp 0 is 1970-01-01, a real birthday.
+      const storedTimestamp = target.dateOfBirth ?? null;
+      const storedIso =
+        storedTimestamp === null ? null : utcTimestampToIsoDate(storedTimestamp);
+
+      if (args.dateOfBirth === null) {
+        if (storedIso !== null) {
+          changes.push({
+            field: "dateOfBirth",
+            previousValue: storedIso,
+            newValue: null,
+          });
+          updates.dateOfBirth = undefined;
+        }
+      } else if (args.dateOfBirth !== storedIso) {
+        const timestamp = isoDateToUtcTimestamp(args.dateOfBirth);
+        changes.push({
+          field: "dateOfBirth",
+          previousValue: storedIso,
+          newValue: args.dateOfBirth,
+        });
+        updates.dateOfBirth = timestamp;
+      }
+    }
+
+    // --- Apply ---------------------------------------------------------------
+    // A no-op edit writes nothing at all, including no audit row: a save that
+    // changed nothing is not an event worth recording, and a reason alone is
+    // not an edit.
+    if (changes.length === 0) {
+      return { success: true, changed: false, changedFields: [] as string[] };
+    }
+
+    const nameChanged = changes.some(
+      (c) => c.field === "firstName" || c.field === "lastName",
+    );
+    const contactChanged = changes.some(
+      (c) => c.field === "email" || c.field === "phone",
+    );
+
+    // Keep the member findable by their corrected details.
+    if (nameChanged || contactChanged) {
+      updates.searchText = buildSearchText({
+        firstName: (updates.firstName as string | undefined) ?? target.firstName,
+        lastName:
+          "lastName" in updates
+            ? (updates.lastName as string | undefined)
+            : target.lastName,
+        email:
+          "email" in updates
+            ? (updates.email as string | undefined)
+            : target.email,
+        phone: (updates.phone as string | undefined) ?? target.phone,
+      });
+    }
+
+    await ctx.db.patch(args.targetUserId, {
+      ...updates,
+      updatedAt: now(),
+    });
+
+    const timestamp = now();
+    await ctx.db.insert("memberProfileAudits", {
+      communityId: args.communityId,
+      targetUserId: args.targetUserId,
+      actorUserId,
+      changes,
+      reason: args.reason?.trim() || undefined,
+      createdAt: timestamp,
+    });
+
+    // Refresh the denormalized display name held in `chatChannelMembers`.
+    if (nameChanged) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.sync.memberships.syncUserProfileToChannels,
+        { userId: args.targetUserId },
+      );
+    }
+
+    return {
+      success: true,
+      changed: true,
+      changedFields: changes.map((c) => c.field),
+    };
+  },
+});
+
+/**
+ * The edit history for one member, newest first.
+ *
+ * Uses the framework's cursor pagination rather than a capped window: a capped
+ * window makes rows past the cap permanently unreachable while `hasMore` stays
+ * true, which is not much of an append-only audit trail.
+ */
+export const listMemberProfileAudits = query({
+  args: {
+    token: v.string(),
+    communityId: v.id("communities"),
+    targetUserId: v.id("users"),
+    paginationOpts: paginationOptsValidator,
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    await requireCommunityAdmin(ctx, args.communityId, userId);
+
+    const result = await ctx.db
+      .query("memberProfileAudits")
+      .withIndex("by_community_target", (q) =>
+        q
+          .eq("communityId", args.communityId)
+          .eq("targetUserId", args.targetUserId),
+      )
+      .order("desc")
+      .paginate(args.paginationOpts);
+
+    const page = await Promise.all(
+      result.page.map(async (entry) => {
+        const actor = await ctx.db.get(entry.actorUserId);
+        return {
+          id: entry._id,
+          changes: entry.changes,
+          reason: entry.reason ?? null,
+          createdAt: entry.createdAt,
+          actor: actor
+            ? {
+                id: actor._id,
+                firstName: actor.firstName || "",
+                lastName: actor.lastName || "",
+              }
+            : null,
+        };
+      }),
+    );
+
+    return { ...result, page };
   },
 });
 

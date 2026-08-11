@@ -31,6 +31,8 @@ export {
   searchCommunityMembers,
   getCommunityMemberById,
   updateMemberRole,
+  updateMemberProfile,
+  listMemberProfileAudits,
   transferPrimaryAdmin,
   getUserGroupHistory,
 } from "./members";
