@@ -36,6 +36,7 @@ import { DOMAIN_CONFIG } from "@togather/shared/config";
 import { getNextFirstOfMonth } from "../../lib/utils";
 import { addUserToAnnouncementGroup } from "../communities";
 import { countBillableActiveUsers } from "../memberActivity";
+import { liveSlugForDemo } from "../demo";
 import { notifyCommunityAdmins } from "../../lib/notifications/send";
 
 /** Per-active-user pricing: $1/month per billable active member. Fee-free. */
@@ -772,6 +773,10 @@ export const handleCheckoutCompleted = internalMutation({
         await countBillableActiveUsers(ctx, communityId),
       );
 
+      // Going live makes /c/<slug> public, so the "demo-" prefix has to come
+      // off before anyone shares the link. See demo.liveSlugForDemo.
+      const liveSlug = await liveSlugForDemo(ctx, existing?.slug);
+
       await ctx.db.patch(communityId, {
         isDemo: false,
         demoCreatedById: undefined,
@@ -781,6 +786,15 @@ export const handleCheckoutCompleted = internalMutation({
         billingModel: "per_active_user",
         subscriptionPriceMonthly: billableActiveUsers, // $1 × active members
         isPublic: true,
+        ...(liveSlug
+          ? {
+              slug: liveSlug,
+              // searchText embeds the slug, so it has to move with it.
+              searchText: `${existing?.name ?? ""} ${liveSlug}`
+                .trim()
+                .toLowerCase(),
+            }
+          : {}),
         updatedAt: now,
       });
 
@@ -810,7 +824,7 @@ export const handleCheckoutCompleted = internalMutation({
 
       await ctx.scheduler.runAfter(
         0,
-        internal.functions.demo.purgeDemoSeedUsers,
+        internal.functions.demo.purgeDemoData,
         { communityId },
       );
       return;
