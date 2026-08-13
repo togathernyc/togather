@@ -208,24 +208,26 @@ export function GoLiveScreen() {
                 style={[
                   styles.notice,
                   {
-                    backgroundColor: colors.surfaceSecondary,
-                    borderColor: colors.borderLight,
+                    backgroundColor: colors.warning + "14",
+                    borderColor: colors.warning + "40",
                     alignItems: "flex-start",
                   },
                 ]}
               >
                 <Ionicons
-                  name="sparkles-outline"
+                  name="alert-circle"
                   size={18}
-                  color={colors.textSecondary}
+                  color={colors.warning}
                   style={{ marginTop: 1 }}
                 />
                 <Text style={[styles.noticeText, { color: colors.textSecondary }]}>
                   The 100 demo members, every demo conversation and event, and
                   anything you tried out yourself will be deleted — including
-                  test messages, events and prayer requests you created. This
-                  can't be undone, so if there's something in here you want to
-                  keep, write it down first.
+                  test messages, events, prayer requests and service plans you
+                  created. Your public link also changes: it drops the "demo-"
+                  prefix, so any demo link you've already shared will stop
+                  working. None of this can be undone, so if there's something
+                  in here you want to keep, write it down first.
                 </Text>
               </View>
 

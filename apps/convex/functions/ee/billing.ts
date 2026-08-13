@@ -737,18 +737,34 @@ export const handleCheckoutCompleted = internalMutation({
 
     if (args.demoConversion) {
       // Demo-conversion flow — the community and its admins already exist;
-      // leave demo mode, switch to per-active-user billing, and purge the
-      // seeded placeholder members (scheduled so a large purge can't fail the
-      // webhook transaction).
+      // leave demo mode, take the "demo-" prefix off the now-public slug,
+      // switch to per-active-user billing, and purge every trace of the demo
+      // (scheduled so a large purge can't fail the webhook transaction).
+
+      const existing = await ctx.db.get(communityId);
+
+      // Redelivery guard. Stripe is at-least-once, and support can re-send an
+      // event from the dashboard weeks later, so this handler MUST NOT re-run
+      // the conversion. It used to be safe to fall through — the old purge
+      // only deleted rows flagged as demo seed, which were already gone — but
+      // purgeDemoData now wipes ALL content in the community, so a second run
+      // would delete the live church's real events, prayers and messages.
+      // The patch below and the purge schedule commit in one transaction, so
+      // isDemo === false proves the first conversion completed in full.
+      if (!existing?.isDemo) {
+        console.warn(
+          `[billing] Ignoring repeat demo-conversion checkout for community ${communityId} ` +
+            `(already live; subscription ${args.stripeSubscriptionId})`,
+        );
+        return;
+      }
 
       // Race guard: with multiple co-admins in a demo, two "Go live" checkouts
       // can both be created before either completes (getDemoConversionInfo
       // only rejects once a subscription is recorded). First completion wins;
       // any later completion for a DIFFERENT subscription is a duplicate that
       // would silently double-bill the church — cancel it instead of letting
-      // it overwrite the tracked subscription. Same-id retries (Stripe is
-      // at-least-once) fall through and re-apply idempotently.
-      const existing = await ctx.db.get(communityId);
+      // it overwrite the tracked subscription.
       if (
         existing?.stripeSubscriptionId &&
         existing.stripeSubscriptionId !== args.stripeSubscriptionId
@@ -779,7 +795,10 @@ export const handleCheckoutCompleted = internalMutation({
 
       await ctx.db.patch(communityId, {
         isDemo: false,
-        demoCreatedById: undefined,
+        // demoCreatedById is deliberately left set: it is the marker that says
+        // "this community still holds demo residue", and purgeDemoData clears
+        // it as the last thing it does. See the guard at the top of that
+        // mutation.
         stripeCustomerId: args.stripeCustomerId,
         stripeSubscriptionId: args.stripeSubscriptionId,
         subscriptionStatus: "active",

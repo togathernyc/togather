@@ -1699,6 +1699,13 @@ export default defineSchema({
     communityId: v.optional(v.id("communities")),
     /** Convenience flag: true for ad-hoc dm/group_dm channels. */
     isAdHoc: v.optional(v.boolean()),
+    /**
+     * True only for the "🎓 Getting Started" tour channel seeded into a demo
+     * community (functions/demo.ts). Deleted on go-live by purgeDemoData —
+     * the flag is what identifies the tour, so a channel a church happened to
+     * create with the same slug is never mistaken for it.
+     */
+    isDemoSeed: v.optional(v.boolean()),
     /** For 1:1 DMs: deterministic key for dedup, sorted "userIdA::userIdB". */
     dmPairKey: v.optional(v.string()),
     slug: v.optional(v.string()), // URL-friendly, unique per group, immutable (optional for migration)

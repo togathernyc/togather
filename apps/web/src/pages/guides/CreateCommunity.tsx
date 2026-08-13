@@ -123,11 +123,12 @@ export function CreateCommunity() {
           whole app. It's also where admins tap <Term>Go live</Term> when
           they're ready for the real thing.
         </Callout>
-        <Callout tone="tip" title="Nothing you do here follows you">
-          Break things. Everything written inside the demo — the sample
+        <Callout tone="tip" title="Nothing you write here follows you">
+          Break things. Everything <em>written</em> inside the demo — the sample
           members, their conversations and events, and anything you try
           yourself — is cleared when you go live, so there's no wrong move and
-          nothing to tidy up afterwards.
+          nothing to tidy up afterwards. What you <em>build</em> does stay: your
+          branding, groups, channels and landing page all carry over.
         </Callout>
         <DeepLink href={appLinks.demo}>Create your community</DeepLink>
       </Section>
@@ -184,16 +185,17 @@ export function CreateCommunity() {
         <Callout tone="warn" title="The clean slate includes your own test content">
           The wipe covers the 100 demo members and their chats, events, RSVPs,
           prayer requests and service plans — <em>and</em> anything you created
-          while exploring, like a test message, a test event, or a practice
-          prayer request. It can't be undone. If you set something up in the
-          demo that you want to keep, write it down and recreate it once you're
-          live.
+          while exploring, including a test message, a test event, a practice
+          prayer request, or a Sunday you rostered. It can't be undone. If you
+          set something up in the demo that you want to keep, write it down and
+          recreate it once you're live.
         </Callout>
         <P>
           Your public web address loses its demo prefix at the same moment:{" "}
           <Term>togather.nyc/demo-grace-fellowship</Term> becomes{" "}
           <Term>togather.nyc/grace-fellowship</Term>, so the link you share with
-          visitors never says "demo".
+          visitors never says "demo". The old address stops working, so wait
+          until you're live before printing your landing-page link on anything.
         </P>
         <P>
           Pricing is simple: <Term>$1 per active member per month</Term>. An

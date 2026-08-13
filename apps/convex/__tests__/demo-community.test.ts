@@ -714,29 +714,91 @@ describe("demo v3: feedback fixes", () => {
     expect(progress?.completed).toBe(1);
   });
 
-  test("go-live purge removes seeded DMs but keeps everything real", async () => {
+  test("go-live removes every DM, including staff-to-staff ones", async () => {
+    // Deliberate reversal: DMs used to survive if no seeded member was in
+    // them. A DM is a conversation, not structure, and staff-to-staff demo
+    // chatter is demo-era scratch work like everything else.
     const t = convexTest(schema, modules);
-    const { token } = await createUser(t, "DmPurge", "+15555550176");
+    const { userId, token } = await createUser(t, "DmPurge", "+15555550176");
+    const { userId: mateId, token: mateToken } = await createUser(
+      t,
+      "DmMate",
+      "+15555550177",
+    );
 
     const demo = await t.mutation(api.functions.demo.createDemoCommunity, {
       token,
       name: "DM Purge Church",
+    });
+    await t.mutation(api.functions.demo.joinDemoCommunity, {
+      token: mateToken,
+      code: demo.demoCode,
+    });
+
+    // A DM between two REAL staff accounts — no seeded member involved.
+    const staffDm = await t.run(async (ctx) => {
+      const channelId = await ctx.db.insert("chatChannels", {
+        communityId: demo.communityId,
+        isAdHoc: true,
+        channelType: "dm",
+        name: "",
+        createdById: userId,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        isArchived: false,
+        memberCount: 2,
+      });
+      for (const uid of [userId, mateId]) {
+        await ctx.db.insert("chatChannelMembers", {
+          channelId,
+          userId: uid,
+          role: "member",
+          joinedAt: Date.now(),
+          isMuted: false,
+        });
+      }
+      await ctx.db.insert("chatMessages", {
+        channelId,
+        communityId: demo.communityId,
+        senderId: userId,
+        content: "shall we go live today?",
+        contentType: "text",
+        createdAt: Date.now(),
+        isDeleted: false,
+      });
+      return channelId;
     });
 
     await t.mutation(internal.functions.demo.purgeDemoData, {
       communityId: demo.communityId,
     });
 
-    const adHoc = await t.run(async (ctx) =>
-      ctx.db
+    const after = await t.run(async (ctx) => ({
+      adHoc: await ctx.db
         .query("chatChannels")
         .withIndex("by_community_isAdHoc", (q) =>
           q.eq("communityId", demo.communityId).eq("isAdHoc", true),
         )
         .collect(),
-    );
-    expect(adHoc).toHaveLength(0);
-  });
+      staffDm: await ctx.db.get(staffDm),
+      staffDmMembers: (await ctx.db.query("chatChannelMembers").collect()).filter(
+        (m) => m.channelId === staffDm,
+      ),
+      staffDmMessages: (await ctx.db.query("chatMessages").collect()).filter(
+        (m) => m.channelId === staffDm,
+      ),
+      // …but both real accounts are untouched.
+      creator: await ctx.db.get(userId),
+      mate: await ctx.db.get(mateId),
+    }));
+
+    expect(after.adHoc).toHaveLength(0);
+    expect(after.staffDm).toBeNull();
+    expect(after.staffDmMembers).toHaveLength(0);
+    expect(after.staffDmMessages).toHaveLength(0);
+    expect(after.creator).not.toBeNull();
+    expect(after.mate).not.toBeNull();
+  }, 20000);
 });
 
 describe("joinDemoCommunity", () => {
@@ -1959,13 +2021,23 @@ describe("go-live leaves no demo content behind", () => {
     const t = convexTest(schema, modules);
     const { demo } = await goLiveDemo(t, "Event Purge Church", "+15555550231");
 
-    const before = await t.run(async (ctx) =>
-      (await ctx.db.query("meetings").collect()).filter(
+    // Guard against vacuous assertions: prove each of these actually exists
+    // before the purge, so a seeding change can't quietly turn the
+    // post-conditions below into no-ops.
+    const before = await t.run(async (ctx) => ({
+      meetings: (await ctx.db.query("meetings").collect()).filter(
         (m) => m.communityId === demo.communityId,
-      ),
-    );
-    // The demo really does seed events (guards against a vacuous assertion).
-    expect(before.length).toBeGreaterThan(0);
+      ).length,
+      cwes: (await ctx.db.query("communityWideEvents").collect()).filter(
+        (c) => c.communityId === demo.communityId,
+      ).length,
+      rsvps: (await ctx.db.query("meetingRsvps").collect()).length,
+      attendances: (await ctx.db.query("meetingAttendances").collect()).length,
+    }));
+    expect(before.meetings).toBeGreaterThan(0);
+    expect(before.cwes).toBeGreaterThan(0);
+    expect(before.rsvps).toBeGreaterThan(0);
+    expect(before.attendances).toBeGreaterThan(0);
 
     await t.mutation(internal.functions.demo.purgeDemoData, {
       communityId: demo.communityId,
@@ -1978,15 +2050,15 @@ describe("go-live leaves no demo content behind", () => {
       cwes: (await ctx.db.query("communityWideEvents").collect()).filter(
         (c) => c.communityId === demo.communityId,
       ),
-      rsvps: await ctx.db.query("meetingRsvps").collect(),
-      attendances: await ctx.db.query("meetingAttendances").collect(),
+      rsvps: (await ctx.db.query("meetingRsvps").collect()).length,
+      attendances: (await ctx.db.query("meetingAttendances").collect()).length,
     }));
 
     expect(after.meetings).toHaveLength(0);
     expect(after.cwes).toHaveLength(0);
-    expect(after.rsvps).toHaveLength(0);
-    expect(after.attendances).toHaveLength(0);
-  });
+    expect(after.rsvps).toBe(0);
+    expect(after.attendances).toBe(0);
+  }, 20000);
 
   test("test content the STAFF created during the demo is cleared too", async () => {
     const t = convexTest(schema, modules);
@@ -2071,7 +2143,7 @@ describe("go-live leaves no demo content behind", () => {
     expect(after.messages).toHaveLength(0);
     expect(after.prayers).toHaveLength(0);
     expect(after.meetings).toHaveLength(0);
-  });
+  }, 20000);
 
   test("the structure the church built survives the content wipe", async () => {
     const t = convexTest(schema, modules);
@@ -2080,6 +2152,23 @@ describe("go-live leaves no demo content behind", () => {
       "Structure Church",
       "+15555550233",
     );
+
+    // Exact counts, not "> 0" — a purge that deleted all but one group would
+    // pass a >0 assertion while destroying the church's structure.
+    const before = await t.run(async (ctx) => ({
+      groups: (
+        await ctx.db
+          .query("groups")
+          .withIndex("by_community", (q) => q.eq("communityId", demo.communityId))
+          .collect()
+      ).length,
+      groupTypes: (
+        await ctx.db
+          .query("groupTypes")
+          .withIndex("by_community", (q) => q.eq("communityId", demo.communityId))
+          .collect()
+      ).length,
+    }));
 
     // A channel the staff added themselves (guided mission 2) is structure,
     // not content — it must outlive the purge even though it is emptied.
@@ -2135,17 +2224,55 @@ describe("go-live leaves no demo content behind", () => {
       };
     });
 
-    expect(after.groups).toBeGreaterThan(0);
-    expect(after.groupTypes).toBeGreaterThan(0);
+    expect(after.groups).toBe(before.groups);
+    expect(after.groupTypes).toBe(before.groupTypes);
     expect(after.landing).toBe(true);
     expect(after.creatorStillPrimaryAdmin).toBe(COMMUNITY_ROLES.PRIMARY_ADMIN);
     expect(after.customChannel).not.toBeNull();
+    expect(after.customChannel?.isArchived).toBe(false);
+    // memberCount is recomputed from the rows that survive, not left stale.
+    expect(after.customChannel?.memberCount).toBe(0);
     expect(after.community?.name).toBe("Structure Church");
-  });
+  }, 20000);
 
   test("emptied channels show no stale last-message preview", async () => {
     const t = convexTest(schema, modules);
-    const { demo } = await goLiveDemo(t, "Preview Church", "+15555550234");
+    const { userId, demo } = await goLiveDemo(t, "Preview Church", "+15555550234");
+
+    // A STAFF-authored message is what makes this test discriminating: seeded
+    // messages were already removed by the old per-user purge, so a channel
+    // fronted by one of those would clear either way. This one survived the
+    // old purge and left its preview stuck on the inbox.
+    await t.run(async (ctx) => {
+      const announcement = (
+        await ctx.db
+          .query("groups")
+          .withIndex("by_community", (q) => q.eq("communityId", demo.communityId))
+          .collect()
+      ).find((g) => g.isAnnouncementGroup)!;
+      const main = (
+        await ctx.db
+          .query("chatChannels")
+          .withIndex("by_group", (q) => q.eq("groupId", announcement._id))
+          .collect()
+      ).find((c) => c.channelType === "main")!;
+      const at = Date.now();
+      await ctx.db.insert("chatMessages", {
+        channelId: main._id,
+        communityId: demo.communityId,
+        senderId: userId,
+        content: "testing the chat",
+        contentType: "text",
+        createdAt: at,
+        isDeleted: false,
+      });
+      await ctx.db.patch(main._id, {
+        lastMessageAt: at,
+        lastMessagePreview: "testing the chat",
+        lastMessageSenderId: userId,
+        lastMessageSenderName: "Live Tester",
+      });
+    });
 
     await t.mutation(internal.functions.demo.purgeDemoData, {
       communityId: demo.communityId,
@@ -2171,24 +2298,371 @@ describe("go-live leaves no demo content behind", () => {
     expect(channels.length).toBeGreaterThan(0);
     expect(channels.every((c) => c.lastMessagePreview === undefined)).toBe(true);
     expect(channels.every((c) => c.lastMessageAt === undefined)).toBe(true);
+    expect(channels.every((c) => c.lastMessageSenderId === undefined)).toBe(true);
     expect(channels.every((c) => c.lastMessageSenderName === undefined)).toBe(
       true,
     );
-  });
+  }, 20000);
 
-  test("running the purge twice is a no-op the second time", async () => {
+  test("a church's OWN 'getting-started' channel is not mistaken for the tour", async () => {
     const t = convexTest(schema, modules);
-    const { demo } = await goLiveDemo(t, "Idempotent Church", "+15555550235");
+    const { userId, demo } = await goLiveDemo(t, "Slug Clash Church", "+15555550238");
+
+    // The tour's slug is not reserved, so a church can create a channel that
+    // collides with it. Matching the tour on slug alone would delete this.
+    const imposterId = await t.run(async (ctx) => {
+      const groups = await ctx.db
+        .query("groups")
+        .withIndex("by_community", (q) => q.eq("communityId", demo.communityId))
+        .collect();
+      const announcement = groups.find((g) => g.isAnnouncementGroup)!;
+      // Rename the real tour out of the way so the slug is free to reuse.
+      const realTour = (
+        await ctx.db
+          .query("chatChannels")
+          .withIndex("by_group", (q) => q.eq("groupId", announcement._id))
+          .collect()
+      ).find((c) => c.slug === "getting-started")!;
+      await ctx.db.patch(realTour._id, { slug: "getting-started-tour" });
+
+      return await ctx.db.insert("chatChannels", {
+        groupId: announcement._id,
+        slug: "getting-started",
+        channelType: "custom",
+        name: "Getting Started",
+        createdById: userId,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        isArchived: false,
+        isEnabled: true,
+        memberCount: 1,
+      });
+    });
 
     await t.mutation(internal.functions.demo.purgeDemoData, {
       communityId: demo.communityId,
     });
-    const second = await t.mutation(internal.functions.demo.purgeDemoData, {
+
+    const after = await t.run(async (ctx) => ({
+      imposter: await ctx.db.get(imposterId),
+      // The real tour is flagged, so it goes regardless of its slug.
+      tourLeft: (await ctx.db.query("chatChannels").collect()).filter(
+        (c) => c.isDemoSeed,
+      ),
+    }));
+
+    expect(after.imposter).not.toBeNull();
+    expect(after.imposter?.name).toBe("Getting Started");
+    expect(after.tourLeft).toHaveLength(0);
+  }, 20000);
+
+  test("a legacy demo's unflagged tour channel is still removed", async () => {
+    const t = convexTest(schema, modules);
+    const { demo } = await goLiveDemo(t, "Legacy Tour Church", "+15555550239");
+
+    // Demos created before chatChannels.isDemoSeed existed carry no flag —
+    // those fall back to "every message is bot-authored".
+    await t.run(async (ctx) => {
+      const groups = await ctx.db
+        .query("groups")
+        .withIndex("by_community", (q) => q.eq("communityId", demo.communityId))
+        .collect();
+      const announcement = groups.find((g) => g.isAnnouncementGroup)!;
+      const tour = (
+        await ctx.db
+          .query("chatChannels")
+          .withIndex("by_group", (q) => q.eq("groupId", announcement._id))
+          .collect()
+      ).find((c) => c.slug === "getting-started")!;
+      await ctx.db.patch(tour._id, { isDemoSeed: undefined });
+    });
+
+    await t.mutation(internal.functions.demo.purgeDemoData, {
       communityId: demo.communityId,
     });
 
+    const tourLeft = await t.run(async (ctx) =>
+      (await ctx.db.query("chatChannels").collect()).filter(
+        (c) => c.slug === "getting-started",
+      ),
+    );
+    expect(tourLeft).toHaveLength(0);
+  }, 20000);
+
+  test("purging one demo leaves a neighbouring community completely untouched", async () => {
+    // Several sweeps query by a non-community key (by_message, by_prayer,
+    // by_meeting, by_plan, by_channel). If a community filter is ever dropped
+    // upstream of one of those, this is what catches it.
+    const t = convexTest(schema, modules);
+    const { demo: victim } = await goLiveDemo(t, "Sweep Church", "+15555550241");
+    const { userId: neighbourUserId, demo: neighbour } = await goLiveDemo(
+      t,
+      "Neighbour Church",
+      "+15555550242",
+    );
+
+    const snapshot = async () =>
+      await t.run(async (ctx) => {
+        const groups = (await ctx.db.query("groups").collect()).filter(
+          (g) => g.communityId === neighbour.communityId,
+        );
+        const channelIds = new Set<string>();
+        for (const g of groups) {
+          for (const c of (await ctx.db.query("chatChannels").collect()).filter(
+            (c) => c.groupId === g._id,
+          )) {
+            channelIds.add(String(c._id));
+          }
+        }
+        const neighbourMeetingIds = new Set(
+          (await ctx.db.query("meetings").collect())
+            .filter((m) => m.communityId === neighbour.communityId)
+            .map((m) => String(m._id)),
+        );
+        return {
+          groups: groups.length,
+          channels: channelIds.size,
+          messages: (await ctx.db.query("chatMessages").collect()).filter(
+            (m) => m.communityId === neighbour.communityId,
+          ).length,
+          meetings: (await ctx.db.query("meetings").collect()).filter(
+            (m) => m.communityId === neighbour.communityId,
+          ).length,
+          rsvps: (await ctx.db.query("meetingRsvps").collect()).filter((r) =>
+            neighbourMeetingIds.has(String(r.meetingId)),
+          ).length,
+          prayers: (await ctx.db.query("prayers").collect()).filter(
+            (p) => p.communityId === neighbour.communityId,
+          ).length,
+          plans: (await ctx.db.query("eventPlans").collect()).filter(
+            (p) => p.communityId === neighbour.communityId,
+          ).length,
+          members: (await ctx.db.query("userCommunities").collect()).filter(
+            (m) => m.communityId === neighbour.communityId,
+          ).length,
+          user: await ctx.db.get(neighbourUserId),
+        };
+      });
+
+    const before = await snapshot();
+    // The neighbour is a real, populated community — otherwise this proves
+    // nothing.
+    expect(before.messages).toBeGreaterThan(0);
+    expect(before.meetings).toBeGreaterThan(0);
+    expect(before.prayers).toBeGreaterThan(0);
+    expect(before.members).toBeGreaterThan(1);
+    expect(before.rsvps).toBeGreaterThan(0);
+
+    await t.mutation(internal.functions.demo.purgeDemoData, {
+      communityId: victim.communityId,
+    });
+
+    const after = await snapshot();
+    expect(after.groups).toBe(before.groups);
+    expect(after.channels).toBe(before.channels);
+    expect(after.messages).toBe(before.messages);
+    expect(after.meetings).toBe(before.meetings);
+    expect(after.prayers).toBe(before.prayers);
+    expect(after.plans).toBe(before.plans);
+    expect(after.rsvps).toBe(before.rsvps);
+    expect(after.members).toBe(before.members);
+    expect(after.user).not.toBeNull();
+
+    // …while the purged community really was emptied.
+    const victimMeetings = await t.run(async (ctx) =>
+      (await ctx.db.query("meetings").collect()).filter(
+        (m) => m.communityId === victim.communityId,
+      ),
+    );
+    expect(victimMeetings).toHaveLength(0);
+  }, 30000);
+
+  test("a repeat purge can never touch a live community's real data", async () => {
+    // The hazard this pins: purgeDemoData takes only a community id and
+    // deletes every message, event and prayer under it. Before the guard, a
+    // second run — a Stripe redelivery, or a mistyped id in the dashboard —
+    // would wipe the real church data written since go-live.
+    const t = convexTest(schema, modules);
+    const { userId, demo } = await goLiveDemo(t, "Idempotent Church", "+15555550235");
+
+    const first = await t.mutation(internal.functions.demo.purgeDemoData, {
+      communityId: demo.communityId,
+    });
+    expect(first.purged).toBe(100);
+
+    // The church is live now and starts using it for real.
+    const structureBefore = await t.run(async (ctx) => {
+      const groups = await ctx.db
+        .query("groups")
+        .withIndex("by_community", (q) => q.eq("communityId", demo.communityId))
+        .collect();
+      const announcement = groups.find((g) => g.isAnnouncementGroup)!;
+      const main = (
+        await ctx.db
+          .query("chatChannels")
+          .withIndex("by_group", (q) => q.eq("groupId", announcement._id))
+          .collect()
+      ).find((c) => c.channelType === "main")!;
+      await ctx.db.insert("chatMessages", {
+        channelId: main._id,
+        communityId: demo.communityId,
+        senderId: userId,
+        content: "Easter service is on! Invite your neighbours 🎉",
+        contentType: "text",
+        createdAt: Date.now(),
+        isDeleted: false,
+      });
+      await ctx.db.insert("meetings", {
+        groupId: announcement._id,
+        createdById: userId,
+        hostUserIds: [userId],
+        title: "Easter Service",
+        scheduledAt: Date.now() + 86400000,
+        meetingType: 1,
+        status: "scheduled",
+        shortId: "easter01",
+        rsvpEnabled: true,
+        visibility: "community",
+        locationMode: "tbd",
+        communityId: demo.communityId,
+        searchText: "easter service",
+        createdAt: Date.now(),
+        reminderSent: false,
+        attendanceConfirmationSent: false,
+      });
+      await ctx.db.insert("prayers", {
+        communityId: demo.communityId,
+        authorUserId: userId,
+        isAnonymous: false,
+        bodyText: "Please pray for my mother's surgery.",
+        status: "active",
+        prayedForCount: 3,
+        moderationStatus: "approved",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      return { groups: groups.length };
+    });
+
+    const second = await t.mutation(internal.functions.demo.purgeDemoData, {
+      communityId: demo.communityId,
+    });
     expect(second.purged).toBe(0);
-  });
+
+    const after = await t.run(async (ctx) => ({
+      messages: (await ctx.db.query("chatMessages").collect()).filter(
+        (m) => m.communityId === demo.communityId,
+      ),
+      meetings: (await ctx.db.query("meetings").collect()).filter(
+        (m) => m.communityId === demo.communityId,
+      ),
+      prayers: (await ctx.db.query("prayers").collect()).filter(
+        (p) => p.communityId === demo.communityId,
+      ),
+      groups: (await ctx.db.query("groups").collect()).filter(
+        (g) => g.communityId === demo.communityId,
+      ).length,
+    }));
+
+    // Every piece of post-go-live church data is untouched.
+    expect(after.messages).toHaveLength(1);
+    expect(after.messages[0].content).toContain("Easter service is on!");
+    expect(after.meetings).toHaveLength(1);
+    expect(after.meetings[0].title).toBe("Easter Service");
+    expect(after.prayers).toHaveLength(1);
+    expect(after.groups).toBe(structureBefore.groups);
+  }, 20000);
+});
+
+describe("a redelivered go-live webhook never re-runs the conversion", () => {
+  test("a same-subscription Stripe redelivery leaves live church data intact", async () => {
+    // Stripe is at-least-once and support can re-send an event by hand weeks
+    // later. The duplicate-subscription race guard does NOT catch a same-id
+    // redelivery, so handleCheckoutCompleted has to refuse it itself —
+    // otherwise it re-schedules the purge over a live community.
+    const t = convexTest(schema, modules);
+    const { userId, token } = await createUser(t, "Redeliver", "+15555550240");
+
+    const demo = await t.mutation(api.functions.demo.createDemoCommunity, {
+      token,
+      name: "Redelivery Church",
+      smallGroupCount: 2,
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    await t.mutation(internal.functions.ee.billing.handleCheckoutCompleted, {
+      stripeCustomerId: "cus_redeliver",
+      stripeSubscriptionId: "sub_redeliver",
+      communityId: demo.communityId,
+      demoConversion: true,
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    // Weeks of real church life happen.
+    await t.run(async (ctx) => {
+      const announcement = (
+        await ctx.db
+          .query("groups")
+          .withIndex("by_community", (q) => q.eq("communityId", demo.communityId))
+          .collect()
+      ).find((g) => g.isAnnouncementGroup)!;
+      const main = (
+        await ctx.db
+          .query("chatChannels")
+          .withIndex("by_group", (q) => q.eq("groupId", announcement._id))
+          .collect()
+      ).find((c) => c.channelType === "main")!;
+      await ctx.db.insert("chatMessages", {
+        channelId: main._id,
+        communityId: demo.communityId,
+        senderId: userId,
+        content: "Welcome to everyone who joined on Sunday!",
+        contentType: "text",
+        createdAt: Date.now(),
+        isDeleted: false,
+      });
+      await ctx.db.insert("prayers", {
+        communityId: demo.communityId,
+        authorUserId: userId,
+        isAnonymous: false,
+        bodyText: "Praying for our city.",
+        status: "active",
+        prayedForCount: 12,
+        moderationStatus: "approved",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+    });
+
+    const slugAfterConversion = await t.run(
+      async (ctx) => (await ctx.db.get(demo.communityId))!.slug,
+    );
+
+    // Stripe redelivers the SAME event.
+    await t.mutation(internal.functions.ee.billing.handleCheckoutCompleted, {
+      stripeCustomerId: "cus_redeliver",
+      stripeSubscriptionId: "sub_redeliver",
+      communityId: demo.communityId,
+      demoConversion: true,
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const after = await t.run(async (ctx) => ({
+      messages: (await ctx.db.query("chatMessages").collect()).filter(
+        (m) => m.communityId === demo.communityId,
+      ),
+      prayers: (await ctx.db.query("prayers").collect()).filter(
+        (p) => p.communityId === demo.communityId,
+      ),
+      community: await ctx.db.get(demo.communityId),
+    }));
+
+    expect(after.messages).toHaveLength(1);
+    expect(after.prayers).toHaveLength(1);
+    // And the redelivery didn't re-suffix the slug it already cleaned up.
+    expect(after.community?.slug).toBe(slugAfterConversion);
+    expect(after.community?.isDemo).toBe(false);
+  }, 20000);
 });
 
 describe("go-live drops the demo- prefix from the public URL", () => {
