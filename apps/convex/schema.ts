@@ -655,7 +655,7 @@ export default defineSchema({
     updatedAt: v.number(),
     createdBy: v.id("users"),
     // True only for the placeholder "Partner with us" giving link seeded into a
-    // demo community (functions/demo.ts). Removed on go-live by purgeDemoSeedUsers.
+    // demo community (functions/demo.ts). Removed on go-live by purgeDemoData.
     isDemoSeed: v.optional(v.boolean()),
   }).index("by_group", ["groupId"]),
 
@@ -830,10 +830,10 @@ export default defineSchema({
     // without a wall-clock heuristic.
     isDemoSeed: v.optional(v.boolean()),
     // True only for the PAST "attendance-history" meetings the demo seeds to
-    // give the 100 placeholder members realistic health scores. Unlike normal
-    // demo events (which survive go-live), these are deleted by
-    // purgeDemoSeedUsers — otherwise their empty past sessions would depress
-    // real members' attendance scores for up to 60 days after going live.
+    // give the 100 placeholder members realistic health scores. Separates them
+    // from the demo's normal upcoming events in queries and admin views; both
+    // kinds are deleted on go-live (purgeDemoData wipes every meeting in the
+    // community), so this flag is no longer what decides their fate.
     isDemoActivitySeed: v.optional(v.boolean()),
   })
     .index("by_legacyId", ["legacyId"])
@@ -1699,6 +1699,13 @@ export default defineSchema({
     communityId: v.optional(v.id("communities")),
     /** Convenience flag: true for ad-hoc dm/group_dm channels. */
     isAdHoc: v.optional(v.boolean()),
+    /**
+     * True only for the "🎓 Getting Started" tour channel seeded into a demo
+     * community (functions/demo.ts). Deleted on go-live by purgeDemoData —
+     * the flag is what identifies the tour, so a channel a church happened to
+     * create with the same slug is never mistaken for it.
+     */
+    isDemoSeed: v.optional(v.boolean()),
     /** For 1:1 DMs: deterministic key for dedup, sorted "userIdA::userIdB". */
     dmPairKey: v.optional(v.string()),
     slug: v.optional(v.string()), // URL-friendly, unique per group, immutable (optional for migration)
@@ -2828,7 +2835,7 @@ export default defineSchema({
     createdById: v.id("users"),
     updatedAt: v.number(),
     // True only for serving teams seeded into a demo community
-    // (functions/demo.ts). Removed on go-live by purgeDemoSeedUsers.
+    // (functions/demo.ts). Removed on go-live by purgeDemoData.
     isDemoSeed: v.optional(v.boolean()),
   })
     .index("by_group", ["groupId"])
@@ -2940,7 +2947,7 @@ export default defineSchema({
     createdById: v.id("users"),
     updatedAt: v.number(),
     // True only for event plans seeded into a demo community
-    // (functions/demo.ts). Removed on go-live by purgeDemoSeedUsers.
+    // (functions/demo.ts). Removed on go-live by purgeDemoData.
     isDemoSeed: v.optional(v.boolean()),
   })
     .index("by_group", ["groupId"])
@@ -2985,7 +2992,7 @@ export default defineSchema({
     pcoAssignmentId: v.optional(v.string()),
     // True only for role assignments seeded into a demo community
     // (functions/demo.ts). Lets getDemoProgress tell a seeded assignment from
-    // one the church created; removed on go-live by purgeDemoSeedUsers.
+    // one the church created; removed on go-live by purgeDemoData.
     isDemoSeed: v.optional(v.boolean()),
   })
     .index("by_plan", ["planId"])

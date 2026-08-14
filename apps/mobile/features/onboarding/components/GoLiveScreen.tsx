@@ -8,9 +8,15 @@
  * "Active Members" card). It is entirely automatic — there is no manual
  * override.
  * The screen shows the current billable count and starts a Stripe checkout
- * (functions/ee/billing.convertDemoToLive). When the webhook confirms
- * payment, the community leaves demo mode and its 100 seeded demo members
- * are removed — groups, branding, settings, and staff accounts stay.
+ * (functions/ee/billing.convertDemoToLive). When the webhook confirms payment,
+ * the community leaves demo mode, drops the "demo-" prefix from its public URL,
+ * and everything written during the demo is deleted — seeded members, chats,
+ * events, prayers, AND the church's own test content (functions/demo.purgeDemoData).
+ * Groups, channels, branding, settings, and staff accounts stay.
+ *
+ * That wipe is irreversible, so this screen states it plainly BEFORE checkout:
+ * a church that scheduled a real event in here would otherwise lose it without
+ * warning.
  */
 import { useState } from "react";
 import {
@@ -152,8 +158,8 @@ export function GoLiveScreen() {
                 {community?.name ?? "Your community"} is live!
               </Text>
               <Text style={[styles.message, { color: colors.textSecondary }]}>
-                Demo mode is off and the seeded demo members have been removed.
-                Time to invite your community.
+                Demo mode is off, the demo data is cleared, and your public link
+                has dropped its "demo-" prefix. Time to invite your community.
               </Text>
             </View>
           ) : (
@@ -190,10 +196,40 @@ export function GoLiveScreen() {
               </Text>
               <Text style={[styles.message, { color: colors.textSecondary }]}>
                 Going live keeps everything you've set up — your name, branding,
-                groups, and the teammates you've invited — and removes the {" "}
-                seeded demo members and their conversations, so you start clean
-                with your real community.
+                groups, channels, and the teammates you've invited — and clears
+                everything written while you were exploring, so your community
+                arrives to a clean slate.
               </Text>
+
+              {/* The wipe is irreversible and includes the church's OWN test
+                  content, so it is spelled out before the pay button, not in a
+                  footnote after it. */}
+              <View
+                style={[
+                  styles.notice,
+                  {
+                    backgroundColor: colors.warning + "14",
+                    borderColor: colors.warning + "40",
+                    alignItems: "flex-start",
+                  },
+                ]}
+              >
+                <Ionicons
+                  name="alert-circle"
+                  size={18}
+                  color={colors.warning}
+                  style={{ marginTop: 1 }}
+                />
+                <Text style={[styles.noticeText, { color: colors.textSecondary }]}>
+                  The 100 demo members, every demo conversation and event, and
+                  anything you tried out yourself will be deleted — including
+                  test messages, events, prayer requests and service plans you
+                  created. Your public link also changes: it drops the "demo-"
+                  prefix, so any demo link you've already shared will stop
+                  working. None of this can be undone, so if there's something
+                  in here you want to keep, write it down first.
+                </Text>
+              </View>
 
               {/* Pricing headline */}
               <View

@@ -13,9 +13,12 @@
  * This is the front door for creating a community: churches start in demo
  * mode and go live from inside the app by adding payment ($1/month per active
  * member — see functions/memberActivity.ts and ee/billing.convertDemoToLive).
- * Conversion flips isDemo off and purges the seeded placeholder members plus
- * demo-only scaffolding (purgeDemoSeedUsers) while keeping groups, branding,
- * and real accounts.
+ * Conversion flips isDemo off, drops the "demo-" prefix from the community's
+ * public slug, and hands over a clean community: purgeDemoData keeps the
+ * structure the church built (groups, channels, group types, branding, staff
+ * accounts) and deletes every row written during the demo — seeded members,
+ * messages, events, prayers, and service plans, the church's own test content
+ * included.
  *
  * Collaboration: the creator gets a demo code (the community slug). Anyone who
  * joins with the code becomes a community admin too, so a whole staff team can
@@ -33,7 +36,7 @@
 import { v } from "convex/values";
 import { internalMutation, mutation, query } from "../_generated/server";
 import { internal } from "../_generated/api";
-import { Id } from "../_generated/dataModel";
+import { Doc, Id } from "../_generated/dataModel";
 import { MutationCtx, QueryCtx } from "../_generated/server";
 import { requireAuth } from "../lib/auth";
 import { now, generateShortId, buildSearchText, getMediaUrl } from "../lib/utils";
@@ -115,10 +118,11 @@ function demoMemberName(i: number): { firstName: string; lastName: string } {
 
 // Demo-only external imagery so the app doesn't feel like an empty shell of
 // initials (getMediaUrl passes absolute https URLs through untouched).
-// Portraits live on seeded member rows (deleted on go-live); stock covers/
-// avatars live on groups/events that SURVIVE go-live, so purgeDemoSeedUsers
-// strips them (via isDemoStockUrl) rather than leaving a live community
-// depending on these third-party hosts in production.
+// Portraits live on seeded member rows and stock covers on seeded events —
+// both deleted outright on go-live. Stock avatars also land on GROUPS, which
+// survive go-live as structure, so purgeDemoData strips those (via
+// isDemoStockUrl) rather than leaving a live community depending on these
+// third-party hosts in production.
 const DEMO_PORTRAIT_HOST = "https://randomuser.me/api/portraits/";
 const DEMO_STOCK_HOST = "https://picsum.photos/";
 
@@ -374,7 +378,7 @@ const GETTING_STARTED_MESSAGES: string[] = [
     (m, i) => `${MISSION_NUMBER_EMOJI[i]} ${m.instruction}`,
   ),
   "Any time, head to Admin → Settings to change your name, logo, and brand color — the whole app re-themes instantly. ✨",
-  "When you're ready for the real thing, tap Go live on the banner — your groups, branding, and teammates stay; these demo members and I clean ourselves up. 🎉",
+  "When you're ready for the real thing, tap Go live on the banner — your groups, channels, branding, and teammates stay. Everything written in here clears out: these demo members, all these conversations and events, and anything you tried out yourself. Play freely — nothing you write here follows you into the real thing. 🎉",
 ];
 
 const PRAYER_REQUESTS = [
@@ -934,28 +938,67 @@ async function createDemoMeeting(
   });
 }
 
-/**
- * Generate a unique demo slug like "demo-grace-fellowship". The slug doubles
- * as the shareable demo code, so keep it readable; add a random suffix only on
- * collision.
- */
-async function uniqueDemoSlug(ctx: MutationCtx, name: string): Promise<string> {
-  const base = `demo-${nameToSlug(name) || "church"}`;
-  const existing = await ctx.db
-    .query("communities")
-    .withIndex("by_slug", (q) => q.eq("slug", base))
-    .first();
-  if (!existing) return base;
+/** Name of the seeded guided-tour channel; also identifies it on go-live. */
+const DEMO_TOUR_CHANNEL_NAME = "🎓 Getting Started";
 
-  // Retry with random suffixes until free (collisions are vanishingly rare).
-  for (;;) {
-    const candidate = `${base}-${generateShortId().slice(-4)}`;
-    const taken = await ctx.db
+/** Prefix that marks a community slug as a demo (and doubles as its code). */
+const DEMO_SLUG_PREFIX = "demo-";
+
+/**
+ * `base` if no community holds it, else `base-XXXX` with random suffixes until
+ * one is free (collisions are vanishingly rare). Slugs are user-visible URLs,
+ * so the unsuffixed form is always preferred.
+ */
+async function uniqueSlug(ctx: MutationCtx, base: string): Promise<string> {
+  const isFree = async (candidate: string) =>
+    !(await ctx.db
       .query("communities")
       .withIndex("by_slug", (q) => q.eq("slug", candidate))
-      .first();
-    if (!taken) return candidate;
+      .first());
+
+  if (await isFree(base)) return base;
+  for (;;) {
+    const candidate = `${base}-${generateShortId().slice(-4)}`;
+    if (await isFree(candidate)) return candidate;
   }
+}
+
+/**
+ * Generate a unique demo slug like "demo-grace-fellowship". The slug doubles
+ * as the shareable demo code, so keep it readable.
+ */
+async function uniqueDemoSlug(ctx: MutationCtx, name: string): Promise<string> {
+  return uniqueSlug(ctx, `${DEMO_SLUG_PREFIX}${nameToSlug(name) || "church"}`);
+}
+
+/**
+ * The slug a converting demo should carry into production, with the "demo-"
+ * prefix dropped.
+ *
+ * The slug is the community's PUBLIC address: `togather.nyc/<slug>` resolves to
+ * the landing page a church texts to visitors, and go-live is what makes that
+ * page public. Left alone, every paying church would advertise itself at
+ * `togather.nyc/demo-grace-fellowship` forever — there is no admin-facing slug
+ * rename to undo it.
+ *
+ * The old slug stops resolving: it doubles as the demo CODE, so any
+ * `togather.nyc/demo-x` link already shared with staff dies at go-live. That's
+ * acceptable — the code only ever circulated inside the church's own team, and
+ * joining by code is closed to live communities anyway (joinDemoCommunity
+ * rejects a non-demo).
+ *
+ * Returns null when there's nothing to do (already prefix-free, or the church
+ * renamed the slug itself). Falls back to a suffixed variant if the clean slug
+ * is taken, so conversion can never fail on a collision.
+ */
+export async function liveSlugForDemo(
+  ctx: MutationCtx,
+  currentSlug: string | undefined,
+): Promise<string | null> {
+  if (!currentSlug?.startsWith(DEMO_SLUG_PREFIX)) return null;
+  const base = currentSlug.slice(DEMO_SLUG_PREFIX.length);
+  if (!base) return null;
+  return await uniqueSlug(ctx, base);
 }
 
 /**
@@ -1247,7 +1290,7 @@ export const createDemoCommunity = mutation({
         firstName: person.firstName,
         lastName: person.lastName,
         isPlaceholder: true, // never a real login; see users.isPlaceholder
-        isDemoSeed: true, // purged on go-live; see purgeDemoSeedUsers
+        isDemoSeed: true, // purged on go-live; see purgeDemoData
         isActive: true,
         profilePhoto: photo,
         searchText: buildSearchText(person),
@@ -1945,7 +1988,7 @@ export const createDemoCommunity = mutation({
       groupId: announcement.groupId,
       slug: "getting-started",
       channelType: "custom",
-      name: "🎓 Getting Started",
+      name: DEMO_TOUR_CHANNEL_NAME,
       description: "Guided tour: the best things to try in your demo.",
       createdById: userId,
       createdAt: timestamp,
@@ -1953,6 +1996,7 @@ export const createDemoCommunity = mutation({
       isArchived: false,
       isEnabled: true,
       memberCount: 0,
+      isDemoSeed: true, // deleted on go-live; see purgeDemoData
     });
     await seedConversation(ctx, {
       channelId: gettingStartedChannelId,
@@ -2050,9 +2094,10 @@ export const createDemoCommunity = mutation({
  * from that activity — so Admin → People shows a realistic spread immediately
  * and it exactly matches what the daily score cron recomputes.
  *
- * The past gatherings are marked isDemoActivitySeed so purgeDemoSeedUsers
- * deletes them on go-live; otherwise their empty past sessions would drag down
- * real members' attendance scores for up to 60 days.
+ * The past gatherings are marked isDemoActivitySeed to separate them from the
+ * demo's normal upcoming events in queries; purgeDemoData deletes both kinds
+ * on go-live, so their empty past sessions can't drag down real members'
+ * attendance scores for the 60 days that follow.
  */
 export const seedMemberActivity = internalMutation({
   args: {
@@ -2532,46 +2577,241 @@ export const getDemoStatus = query({
 // ============================================================================
 
 /**
- * Remove the seeded placeholder members (and everything they authored) plus the
- * demo-only scaffolding (rostering, the giving link) after a demo converts to a
- * live community. Groups, channels, branding, settings, events, and the real
- * staff accounts all stay — only the fake people and demo props go.
+ * Is this the demo's "🎓 Getting Started" tour channel, which promises in its
+ * own bot messages to clean itself up on go-live?
+ *
+ * Identified by the `isDemoSeed` flag stamped at creation. The slug is NOT
+ * reserved, so a church can create its own "getting-started" channel in the
+ * announcement group — matching on slug alone would silently delete it.
+ *
+ * Demos created BEFORE that flag existed carry no flag, so they fall back to
+ * the seeded NAME as well as the slug and group. The original fallback here
+ * was "every message is bot-authored", but the tour channel is an ordinary
+ * custom channel with the creator enrolled — one staff reply (which the tour
+ * invites) would break it and strand the channel forever. The emoji-prefixed
+ * name is both stabler and far harder to collide with by accident.
+ */
+function isDemoTourChannel(
+  channel: Doc<"chatChannels">,
+  group: Doc<"groups">,
+): boolean {
+  if (channel.isDemoSeed) return true;
+  return (
+    channel.slug === "getting-started" &&
+    channel.name === DEMO_TOUR_CHANNEL_NAME &&
+    group.isAnnouncementGroup === true
+  );
+}
+
+/**
+ * Hand a demo community over to the church as a clean, live community.
+ *
+ * Going live is a HAND-OVER, not a merge. The church keeps everything it
+ * BUILT — the community row and its branding, group types, groups, channels,
+ * serving-team structure, the landing page, and every real staff account with
+ * its roles. It loses everything that was WRITTEN while the community was a
+ * demo: the seeded placeholder members, every message, event, RSVP, prayer,
+ * and service plan, and the demo-only props (the Getting Started tour, the
+ * placeholder giving link, the stock photography).
+ *
+ * That content sweep is deliberately author-agnostic. Deleting only what the
+ * placeholder members authored is what used to leave a converted church
+ * staring at eleven events it never scheduled: `createDemoMeeting` stamps the
+ * REAL creator's id on every seeded event, so nothing keyed to a placeholder
+ * user ever reached them. It also swept up the church's own throwaway test
+ * content — the "testing testing 123" the tour asks staff to send — straight
+ * into the feed their congregation is about to be invited into. Both classes
+ * are demo-era scratch work, so both go.
+ *
+ * The trade this makes: a church that scheduled a REAL event or posted a REAL
+ * prayer request during the demo loses it, with no undo. That is the accepted
+ * cost of a guaranteed-clean hand-over, and the Go Live screen says so before
+ * anyone pays.
+ *
+ * Structure vs. content is the line: a container or a setting is structure and
+ * stays; anything with a position in a feed or on a calendar is content and
+ * goes. So a channel the staff created survives (emptied), while the messages
+ * inside it do not.
+ *
+ * KNOWN GAP: a standalone `availabilityRequests` row (one created for link
+ * sharing, with no channelId) is unreachable from here — that table is indexed
+ * only by channel, message and public token, so it can't be enumerated by
+ * community or group. Its `/a/<token>` link keeps resolving after go-live and
+ * renders plan ids this purge deleted. Closing it needs a by_community index,
+ * which is a schema change deliberately left out of this one.
  *
  * Scheduled by ee/billing.handleCheckoutCompleted when the demo-conversion
- * checkout finishes. Idempotent: placeholders and demo-flagged rows are deleted
- * as they're found, so a webhook retry that schedules it twice finds nothing
- * the second time.
+ * checkout finishes.
+ *
+ * REFUSES TO RUN TWICE, and that guard is load-bearing rather than defensive
+ * tidiness: this mutation takes a community id and deletes every message,
+ * event and prayer under it, so a second run against a community that is now
+ * LIVE would destroy the church's real data with no undo. `isDemo` cannot be
+ * the guard — billing flips it to false in the same transaction that schedules
+ * us. `demoCreatedById` is: set at demo creation, left in place through
+ * conversion, and cleared here as the final write. A community that was never
+ * a demo, or whose demo residue is already gone, is refused. The webhook path
+ * is guarded separately in handleCheckoutCompleted; this is the backstop for
+ * every other way an internalMutation can be reached, including a mistyped
+ * community id in the Convex dashboard.
  */
-export const purgeDemoSeedUsers = internalMutation({
+export const purgeDemoData = internalMutation({
   args: { communityId: v.id("communities") },
   handler: async (ctx, args) => {
-    const memberships = await ctx.db
-      .query("userCommunities")
+    const community = await ctx.db.get(args.communityId);
+    if (!community?.demoCreatedById) {
+      console.warn(
+        `[demo] Refusing to purge community ${args.communityId}: no demo residue ` +
+          `(never a demo, or already purged)`,
+      );
+      return { purged: 0 };
+    }
+
+    // ========================================================================
+    // 1. Content sweep — every row written during the demo, whoever wrote it.
+    // ========================================================================
+
+    // ---- Events and everything hanging off them ----
+    const meetings = await ctx.db
+      .query("meetings")
       .withIndex("by_community", (q) => q.eq("communityId", args.communityId))
       .collect();
+    for (const meeting of meetings) {
+      const children = [
+        ctx.db.query("meetingRsvps").withIndex("by_meeting", (q) => q.eq("meetingId", meeting._id)),
+        ctx.db.query("meetingAttendances").withIndex("by_meeting", (q) => q.eq("meetingId", meeting._id)),
+        ctx.db.query("meetingGuests").withIndex("by_meeting", (q) => q.eq("meetingId", meeting._id)),
+        ctx.db.query("eventInvites").withIndex("by_meeting", (q) => q.eq("meetingId", meeting._id)),
+        ctx.db.query("eventBlasts").withIndex("by_meeting", (q) => q.eq("meetingId", meeting._id)),
+        ctx.db.query("meetingReports").withIndex("by_meeting", (q) => q.eq("meetingId", meeting._id)),
+      ];
+      for (const q of children) {
+        for (const row of await q.collect()) await ctx.db.delete(row._id);
+      }
+      // Cancel the reminder / attendance jobs this meeting scheduled at
+      // creation, matching the canonical delete path in meetings/index.ts.
+      // They already no-op on a missing meeting; this just avoids leaving
+      // dangling scheduler entries behind.
+      if (meeting.reminderJobId) await ctx.scheduler.cancel(meeting.reminderJobId);
+      if (meeting.attendanceConfirmationJobId) {
+        await ctx.scheduler.cancel(meeting.attendanceConfirmationJobId);
+      }
+      // `attendanceConfirmationTokens` is deliberately NOT swept: it has no
+      // by-meeting index, so it can't be reached from here. Rows only exist
+      // for an event whose date passed during the demo, and they self-expire
+      // within 24h — the worst case is one dead confirmation link.
+      await ctx.db.delete(meeting._id);
+    }
 
-    // ---- Rostering scaffolding (independent of any single user) ----
-    // Seeded event plans + their children.
-    const demoPlans = (
-      await ctx.db
-        .query("eventPlans")
-        .withIndex("by_community_date", (q) => q.eq("communityId", args.communityId))
-        .collect()
-    ).filter((p) => p.isDemoSeed);
-    for (const plan of demoPlans) {
-      const kids = [
+    // Community-wide events. Indexed by scheduledAt rather than status so a
+    // cancelled one is swept up too — the seeded "Serve Day" is "scheduled",
+    // but a church may have cancelled one while exploring.
+    const cwes = await ctx.db
+      .query("communityWideEvents")
+      .withIndex("by_scheduledAt", (q) => q.eq("communityId", args.communityId))
+      .collect();
+    for (const cwe of cwes) await ctx.db.delete(cwe._id);
+
+    // ---- The notification bell ----
+    // Highest-visibility residue if skipped: the feed query reads by_user with
+    // NO community filter, and every payload deep-links to a meeting, message
+    // or prayer this sweep is deleting. Staff would wake up on day one of the
+    // live community to "You've been assigned to Drums" pointing at nothing.
+    const notifications = await ctx.db
+      .query("notifications")
+      .withIndex("by_community", (q) => q.eq("communityId", args.communityId))
+      .collect();
+    for (const row of notifications) await ctx.db.delete(row._id);
+
+    const broadcasts = await ctx.db
+      .query("adminBroadcasts")
+      .withIndex("by_community", (q) => q.eq("communityId", args.communityId))
+      .collect();
+    for (const row of broadcasts) await ctx.db.delete(row._id);
+
+    // ---- Prayer wall ----
+    const prayers = await ctx.db
+      .query("prayers")
+      .withIndex("by_community", (q) => q.eq("communityId", args.communityId))
+      .collect();
+    for (const prayer of prayers) {
+      // Reactions are keyed by (targetType, targetId) — a plain string id, so
+      // they aren't type-linked and have to be cleared for the prayer AND each
+      // of its follow-ups before those rows go.
+      const followUps = await ctx.db
+        .query("prayerFollowUps")
+        .withIndex("by_prayer", (q) => q.eq("prayerId", prayer._id))
+        .collect();
+      const reactionTargets: Array<["prayer" | "followUp", string]> = [
+        ["prayer", prayer._id],
+        ...followUps.map(
+          (f) => ["followUp", f._id] as ["prayer" | "followUp", string],
+        ),
+      ];
+      for (const [targetType, targetId] of reactionTargets) {
+        const reactions = await ctx.db
+          .query("prayerReactions")
+          .withIndex("by_target", (q) =>
+            q.eq("targetType", targetType).eq("targetId", targetId),
+          )
+          .collect();
+        for (const row of reactions) await ctx.db.delete(row._id);
+      }
+
+      const children = [
+        ctx.db.query("prayerResponses").withIndex("by_prayer", (q) => q.eq("prayerId", prayer._id)),
+        ctx.db.query("prayerFollowUps").withIndex("by_prayer", (q) => q.eq("prayerId", prayer._id)),
+        ctx.db.query("prayerReports").withIndex("by_prayer", (q) => q.eq("prayerId", prayer._id)),
+        ctx.db.query("prayerNotificationEvents").withIndex("by_prayer_type", (q) => q.eq("prayerId", prayer._id)),
+      ];
+      for (const q of children) {
+        for (const row of await q.collect()) await ctx.db.delete(row._id);
+      }
+      await ctx.db.delete(prayer._id);
+    }
+
+    // ---- Service planning ----
+    // Plans are content (a specific Sunday) and all go. Serving TEAMS are
+    // structure (a roster of roles), so only the ones this module seeded are
+    // removed — a team the church built itself is theirs to keep.
+    const plans = await ctx.db
+      .query("eventPlans")
+      .withIndex("by_community_date", (q) => q.eq("communityId", args.communityId))
+      .collect();
+    for (const plan of plans) {
+      // Task completions hang off the TASK, not the plan, so collect the task
+      // ids before deleting them (howToDocChecks.by_task exists for exactly
+      // this cascade — see its schema comment).
+      const planTasks = await ctx.db
+        .query("eventTasks")
+        .withIndex("by_plan", (q) => q.eq("planId", plan._id))
+        .collect();
+      for (const task of planTasks) {
+        const perTask = [
+          ctx.db.query("eventTaskCompletions").withIndex("by_task", (q) => q.eq("taskId", task._id)),
+          ctx.db.query("sharedTaskCompletions").withIndex("by_task", (q) => q.eq("taskId", task._id)),
+          ctx.db.query("howToDocChecks").withIndex("by_task", (q) => q.eq("taskId", task._id)),
+        ];
+        for (const q of perTask) {
+          for (const row of await q.collect()) await ctx.db.delete(row._id);
+        }
+        await ctx.db.delete(task._id);
+      }
+
+      const children = [
         ctx.db.query("neededRoles").withIndex("by_plan", (q) => q.eq("planId", plan._id)),
         ctx.db.query("roleAssignments").withIndex("by_plan", (q) => q.eq("planId", plan._id)),
         ctx.db.query("eventItems").withIndex("by_plan", (q) => q.eq("planId", plan._id)),
-        ctx.db.query("eventTasks").withIndex("by_plan", (q) => q.eq("planId", plan._id)),
         ctx.db.query("eventAvailability").withIndex("by_plan", (q) => q.eq("planId", plan._id)),
+        ctx.db.query("personalServingTasks").withIndex("by_plan_user", (q) => q.eq("planId", plan._id)),
+        ctx.db.query("assignmentRequestLog").withIndex("by_plan", (q) => q.eq("planId", plan._id)),
+        ctx.db.query("sharedTaskCompletions").withIndex("by_plan", (q) => q.eq("planId", plan._id)),
       ];
-      for (const q of kids) {
+      for (const q of children) {
         for (const row of await q.collect()) await ctx.db.delete(row._id);
       }
       await ctx.db.delete(plan._id);
     }
-    // Seeded serving teams + their roles.
     const demoTeams = (
       await ctx.db
         .query("teams")
@@ -2587,8 +2827,53 @@ export const purgeDemoSeedUsers = internalMutation({
       await ctx.db.delete(team._id);
     }
 
-    // Seeded DMs/group DMs involve demo members — delete the whole ad-hoc
-    // channel (members + messages) rather than leaving one-sided orphans.
+    /** Delete everything hanging off a channel, leaving the channel row itself. */
+    const emptyChannel = async (channelId: Id<"chatChannels">) => {
+      const messages = await ctx.db
+        .query("chatMessages")
+        .withIndex("by_channel", (q) => q.eq("channelId", channelId))
+        .collect();
+      for (const message of messages) {
+        const attached = [
+          ctx.db.query("chatMessageReactions").withIndex("by_message", (q) => q.eq("messageId", message._id)),
+          ctx.db.query("chatMessageFlags").withIndex("by_message", (q) => q.eq("messageId", message._id)),
+          ctx.db.query("chatPushNotificationQueue").withIndex("by_message", (q) => q.eq("messageId", message._id)),
+          ctx.db.query("chatThreadSubscriptions").withIndex("by_thread", (q) => q.eq("threadId", message._id)),
+        ];
+        for (const q of attached) {
+          for (const row of await q.collect()) await ctx.db.delete(row._id);
+        }
+        await ctx.db.delete(message._id);
+      }
+      // Polls are keyed to the channel, and their votes to the poll.
+      const polls = await ctx.db
+        .query("polls")
+        .withIndex("by_channel", (q) => q.eq("channelId", channelId))
+        .collect();
+      for (const poll of polls) {
+        const votes = await ctx.db
+          .query("pollVotes")
+          .withIndex("by_poll", (q) => q.eq("pollId", poll._id))
+          .collect();
+        for (const vote of votes) await ctx.db.delete(vote._id);
+        await ctx.db.delete(poll._id);
+      }
+      // Read state and typing indicators describe a conversation that no
+      // longer exists; leaving them would show phantom unread badges. Pending
+      // join requests are demo-era asks about a now-empty channel.
+      const perChannel = [
+        ctx.db.query("chatReadState").withIndex("by_channel", (q) => q.eq("channelId", channelId)),
+        ctx.db.query("chatTypingIndicators").withIndex("by_channel", (q) => q.eq("channelId", channelId)),
+        ctx.db.query("channelJoinRequests").withIndex("by_channel_user", (q) => q.eq("channelId", channelId)),
+      ];
+      for (const q of perChannel) {
+        for (const row of await q.collect()) await ctx.db.delete(row._id);
+      }
+    };
+
+    // ---- DMs and group DMs ----
+    // Ad-hoc channels ARE the conversation — there is no structure to keep, so
+    // the whole channel goes, including staff-to-staff demo chatter.
     const adHocChannels = await ctx.db
       .query("chatChannels")
       .withIndex("by_community_isAdHoc", (q) =>
@@ -2596,32 +2881,27 @@ export const purgeDemoSeedUsers = internalMutation({
       )
       .collect();
     for (const channel of adHocChannels) {
+      await emptyChannel(channel._id);
       const channelMembers = await ctx.db
         .query("chatChannelMembers")
         .withIndex("by_channel", (q) => q.eq("channelId", channel._id))
         .collect();
-      let involvesSeedMember = false;
-      for (const member of channelMembers) {
-        const user = await ctx.db.get(member.userId);
-        if (user?.isDemoSeed) {
-          involvesSeedMember = true;
-          break;
-        }
-      }
-      if (!involvesSeedMember) continue; // real-user DMs survive go-live
-
       for (const member of channelMembers) await ctx.db.delete(member._id);
-      const channelMessages = await ctx.db
-        .query("chatMessages")
-        .withIndex("by_channel", (q) => q.eq("channelId", channel._id))
-        .collect();
-      for (const message of channelMessages) await ctx.db.delete(message._id);
       await ctx.db.delete(channel._id);
     }
 
+    // ========================================================================
+    // 2. Seeded placeholder accounts.
+    // ========================================================================
+
+    const memberships = await ctx.db
+      .query("userCommunities")
+      .withIndex("by_community", (q) => q.eq("communityId", args.communityId))
+      .collect();
+
     let purged = 0;
-    // Track which users we delete so we can scrub only THEIR entries from
-    // shared caches (e.g. pcoServingCounts) without touching real data.
+    // Track who we delete so we can scrub only THEIR entries from shared
+    // caches (e.g. pcoServingCounts) without touching real data.
     const purgedUserIds = new Set<string>();
     for (const membership of memberships) {
       const user = await ctx.db.get(membership.userId);
@@ -2644,6 +2924,15 @@ export const purgeDemoSeedUsers = internalMutation({
           .withIndex("by_groupMember", (q) => q.eq("groupMemberId", row._id))
           .collect();
         for (const f of followupRows) await ctx.db.delete(f._id);
+        // The score doc denormalizes the member's name and avatar and is read
+        // with NO join (memberFollowups.list / listAssignedToMe), so an orphan
+        // renders a deleted placeholder straight into a leader's queue. Every
+        // other membership-delete path in the repo cascades this; so must we.
+        const scoreRows = await ctx.db
+          .query("memberFollowupScores")
+          .withIndex("by_groupMember", (q) => q.eq("groupMemberId", row._id))
+          .collect();
+        for (const sc of scoreRows) await ctx.db.delete(sc._id);
         await ctx.db.delete(row._id);
       }
 
@@ -2677,57 +2966,33 @@ export const purgeDemoSeedUsers = internalMutation({
         .collect();
       for (const f of authoredFollowups) await ctx.db.delete(f._id);
 
+      // Must run before section 3's memberCount recompute, which counts the
+      // rows left behind here.
       const channelRows = await ctx.db
         .query("chatChannelMembers")
         .withIndex("by_user", (q) => q.eq("userId", user._id))
         .collect();
       for (const row of channelRows) await ctx.db.delete(row._id);
 
-      const messages = await ctx.db
-        .query("chatMessages")
-        .withIndex("by_sender", (q) => q.eq("senderId", user._id))
-        .collect();
-      for (const row of messages) await ctx.db.delete(row._id);
-
-      const rsvps = await ctx.db
-        .query("meetingRsvps")
-        .withIndex("by_user", (q) => q.eq("userId", user._id))
-        .collect();
-      for (const row of rsvps) await ctx.db.delete(row._id);
-
-      const prayers = await ctx.db
-        .query("prayers")
-        .withIndex("by_author", (q) => q.eq("authorUserId", user._id))
-        .collect();
-      for (const row of prayers) await ctx.db.delete(row._id);
-
-      // Belt-and-suspenders: any rostering rows keyed to this seed member.
-      // (The plan/team cascade above already removed the seeded ones, but a
-      // member could linger on a plan the church kept.)
-      const seedAssignments = await ctx.db
-        .query("roleAssignments")
-        .withIndex("by_user", (q) => q.eq("userId", user._id))
-        .collect();
-      for (const row of seedAssignments) await ctx.db.delete(row._id);
-
-      const seedAvailability = await ctx.db
-        .query("eventAvailability")
-        .withIndex("by_user", (q) => q.eq("userId", user._id))
-        .collect();
-      for (const row of seedAvailability) await ctx.db.delete(row._id);
-
+      // No per-author deletion of messages, RSVPs, prayers or roster rows is
+      // needed here: every message lives in a channel that is either ad-hoc or
+      // group-owned and both are swept; meetings cascade to their RSVPs and
+      // attendance; plans cascade to roleAssignments and eventAvailability
+      // (both have a required planId); and prayers are swept by community.
       await ctx.db.delete(membership._id);
       purgedUserIds.add(String(user._id));
       await ctx.db.delete(user._id);
       purged++;
     }
 
+    // ========================================================================
+    // 3. Demo props, and repair of the state the sweep invalidated.
+    // ========================================================================
+
     // The seeded landing page SURVIVES go-live — it becomes the live
     // community's real landing page (the same default handleCheckoutCompleted
     // would otherwise create), so /c/[slug] and its join form keep working.
 
-    // Recompute the denormalized channel state the purge invalidated, drop
-    // demo-only props (stock avatars, giving link, tour channel).
     const groups = await ctx.db
       .query("groups")
       .withIndex("by_community", (q) => q.eq("communityId", args.communityId))
@@ -2784,94 +3049,82 @@ export const purgeDemoSeedUsers = internalMutation({
         }
       }
 
+      // Recurring-event definitions are demo content too — a live community
+      // should not inherit a series that regenerates seeded gatherings.
+      const series = await ctx.db
+        .query("eventSeries")
+        .withIndex("by_group", (q) => q.eq("groupId", group._id))
+        .collect();
+      for (const row of series) await ctx.db.delete(row._id);
+
+      // Tasks and reach-out requests point at members and messages this purge
+      // deletes (tasks.targetMemberId, reachOutRequests.leadersMessageId), and
+      // both render in leader tools.
+      const groupTasks = await ctx.db
+        .query("tasks")
+        .withIndex("by_group", (q) => q.eq("groupId", group._id))
+        .collect();
+      for (const task of groupTasks) {
+        const events = await ctx.db
+          .query("taskEvents")
+          .withIndex("by_task", (q) => q.eq("taskId", task._id))
+          .collect();
+        for (const row of events) await ctx.db.delete(row._id);
+        await ctx.db.delete(task._id);
+      }
+
+      const reachOuts = await ctx.db
+        .query("reachOutRequests")
+        .withIndex("by_group", (q) => q.eq("groupId", group._id))
+        .collect();
+      for (const row of reachOuts) await ctx.db.delete(row._id);
+
       const channels = await ctx.db
         .query("chatChannels")
         .withIndex("by_group", (q) => q.eq("groupId", group._id))
         .collect();
       for (const channel of channels) {
-        // The Getting Started tour is demo-only and removes itself on go-live,
-        // as its bot messages promise. Match it narrowly — the announcement
-        // group's tour channel whose messages are ALL bot-authored — so a
-        // real "Getting Started" channel a church happened to create (the slug
-        // isn't reserved) is never mistaken for it and deleted.
-        if (channel.slug === "getting-started" && group.isAnnouncementGroup) {
-          const tourMessages = await ctx.db
-            .query("chatMessages")
+        const isTourChannel = isDemoTourChannel(channel, group);
+
+        await emptyChannel(channel._id);
+
+        // An event-chat channel belongs to one event. Every event in the
+        // community was just deleted, so keeping the channel would leave a
+        // thread hanging off nothing.
+        const isOrphanedEventChat = channel.meetingId !== undefined;
+
+        if (isTourChannel || isOrphanedEventChat) {
+          const channelMembers = await ctx.db
+            .query("chatChannelMembers")
             .withIndex("by_channel", (q) => q.eq("channelId", channel._id))
             .collect();
-          const allBotAuthored = tourMessages.every(
-            (m) => m.senderId === undefined,
-          );
-          if (allBotAuthored) {
-            const tourMembers = await ctx.db
-              .query("chatChannelMembers")
-              .withIndex("by_channel", (q) => q.eq("channelId", channel._id))
-              .collect();
-            for (const member of tourMembers) await ctx.db.delete(member._id);
-            for (const message of tourMessages) await ctx.db.delete(message._id);
-            await ctx.db.delete(channel._id);
-            continue;
-          }
+          for (const member of channelMembers) await ctx.db.delete(member._id);
+          await ctx.db.delete(channel._id);
+          continue;
         }
 
+        // Every conversation in the community is gone, so the denormalized
+        // inbox preview must be cleared outright rather than recomputed.
         const remaining = await ctx.db
           .query("chatChannelMembers")
           .withIndex("by_channel", (q) => q.eq("channelId", channel._id))
           .collect();
-        const lastMessage = await ctx.db
-          .query("chatMessages")
-          .withIndex("by_channel_createdAt", (q) => q.eq("channelId", channel._id))
-          .order("desc")
-          .first();
         await ctx.db.patch(channel._id, {
           memberCount: remaining.filter((m) => m.leftAt === undefined).length,
-          lastMessageAt: lastMessage?.createdAt,
-          lastMessagePreview: lastMessage?.content.slice(0, 100),
-          lastMessageSenderId: lastMessage?.senderId,
-          lastMessageSenderName: lastMessage?.senderName,
+          lastMessageAt: undefined,
+          lastMessagePreview: undefined,
+          lastMessageSenderId: undefined,
+          lastMessageSenderName: undefined,
         });
       }
     }
 
-    // Strip placeholder stock covers from the events that survive go-live
-    // (meetings + the community-wide event are authored by the real creator,
-    // so they aren't deleted with the seed members).
-    const survivingMeetings = await ctx.db
-      .query("meetings")
-      .withIndex("by_community", (q) => q.eq("communityId", args.communityId))
-      .collect();
-    for (const meeting of survivingMeetings) {
-      // The PAST attendance-history gatherings (isDemoActivitySeed) are pure
-      // scoring scaffolding — delete them and their attendance rows. Left in
-      // place, their empty past sessions would depress real members' attendance
-      // scores for up to 60 days after going live.
-      if (meeting.isDemoActivitySeed) {
-        const attendances = await ctx.db
-          .query("meetingAttendances")
-          .withIndex("by_meeting", (q) => q.eq("meetingId", meeting._id))
-          .collect();
-        for (const a of attendances) await ctx.db.delete(a._id);
-        await ctx.db.delete(meeting._id);
-        continue;
-      }
-      if (isDemoStockUrl(meeting.coverImage)) {
-        await ctx.db.patch(meeting._id, { coverImage: undefined });
-      }
-    }
-    const cwes = await ctx.db
-      .query("communityWideEvents")
-      .withIndex("by_community_status", (q) =>
-        q.eq("communityId", args.communityId).eq("status", "scheduled"),
-      )
-      .collect();
-    for (const cwe of cwes) {
-      if (isDemoStockUrl(cwe.coverImage)) {
-        await ctx.db.patch(cwe._id, { coverImage: undefined });
-      }
-    }
+    // Last write: drops the "still holds demo residue" marker, so this mutation
+    // can never run against this community again.
+    await ctx.db.patch(args.communityId, { demoCreatedById: undefined });
 
     console.log(
-      `[demo] Purged ${purged} placeholder members from community ${args.communityId}`,
+      `[demo] Purged ${purged} placeholder members and all demo content from community ${args.communityId}`,
     );
     return { purged };
   },
