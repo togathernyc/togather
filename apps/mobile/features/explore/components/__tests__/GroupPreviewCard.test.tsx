@@ -20,6 +20,17 @@ jest.mock("@features/groups/utils", () => ({
   getGroupTypeLabel: jest.fn(() => "Dinner Party"),
 }));
 
+jest.mock("@services/api/convex", () => ({
+  useAuthenticatedMutation: () => jest.fn(),
+  api: {
+    functions: {
+      groupMembers: {
+        createJoinRequest: "createJoinRequest",
+      },
+    },
+  },
+}));
+
 describe("GroupPreviewCard", () => {
   const mockGroup: Group = {
     _id: "group_123",
@@ -92,5 +103,56 @@ describe("GroupPreviewCard", () => {
     };
     const { getByText } = render(<GroupPreviewCard group={groupWithOneMember} />);
     expect(getByText("1 member")).toBeTruthy();
+  });
+
+  it("shows 'Member' badge when user is already a member", () => {
+    const memberGroup = { ...mockGroup, is_member: true, user_role: "member" };
+    const { getByText } = render(<GroupPreviewCard group={memberGroup} />);
+    expect(getByText("Member")).toBeTruthy();
+  });
+
+  it("shows 'Requested' when user has a pending join request", () => {
+    const requestedGroup = { ...mockGroup, has_pending_request: true };
+    const { getByText } = render(<GroupPreviewCard group={requestedGroup} />);
+    expect(getByText("Requested")).toBeTruthy();
+  });
+
+  it("updates join button when group membership props refresh after optimistic join", () => {
+    const joiningGroup = { ...mockGroup, has_pending_request: true };
+    const { getByText, rerender } = render(<GroupPreviewCard group={joiningGroup} />);
+    expect(getByText("Requested")).toBeTruthy();
+
+    rerender(
+      <GroupPreviewCard
+        group={{ ...mockGroup, is_member: true, user_role: "member", has_pending_request: false }}
+      />,
+    );
+    expect(getByText("Member")).toBeTruthy();
+  });
+
+  it("resets to Join after server clears pending request (e.g. declined)", () => {
+    const pendingGroup = { ...mockGroup, has_pending_request: true };
+    const { getByText, rerender } = render(<GroupPreviewCard group={pendingGroup} />);
+    expect(getByText("Requested")).toBeTruthy();
+
+    rerender(
+      <GroupPreviewCard
+        group={{ ...mockGroup, is_member: false, user_role: undefined, has_pending_request: false }}
+      />,
+    );
+    expect(getByText("Join")).toBeTruthy();
+  });
+
+  it("resets to Join when membership is revoked while card is mounted", () => {
+    const memberGroup = { ...mockGroup, is_member: true, user_role: "member" };
+    const { getByText, rerender } = render(<GroupPreviewCard group={memberGroup} />);
+    expect(getByText("Member")).toBeTruthy();
+
+    rerender(
+      <GroupPreviewCard
+        group={{ ...mockGroup, is_member: false, user_role: undefined, has_pending_request: false }}
+      />,
+    );
+    expect(getByText("Join")).toBeTruthy();
   });
 });
