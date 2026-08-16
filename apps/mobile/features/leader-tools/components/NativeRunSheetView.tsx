@@ -1034,11 +1034,18 @@ const styles = StyleSheet.create({
   editRow: { flexDirection: "row", alignItems: "center", gap: 4, paddingTop: 4 },
   editText: { fontSize: 14, fontWeight: "600" },
   row: { flexDirection: "row", gap: 10, borderRadius: 12, padding: 12, marginTop: 4 },
-  // 76 fits "10:00 AM" at 14pt/700. `toLocaleTimeString` separates the meridiem
-  // with U+202F (narrow no-break space), so an overflowing label cannot break at
-  // the space and breaks mid-word instead ("10:00 A" / "M") — hence the explicit
-  // width plus `numberOfLines={1}` on the label, which holds at larger font scales.
-  timeCol: { width: 76, flexShrink: 0 },
+  // A clock label that overflows this column used to break *mid-word* — "10:00
+  // AM" rendered as "10:00 A" / "M". Mid-word rather than at the space because
+  // current ICU builds separate the meridiem with a non-breaking character
+  // (U+202F, narrow no-break space) that the layout engine may not break at.
+  //
+  // `minWidth` rather than a fixed `width` because RN Text scales with the OS
+  // font-size setting: at a large accessibility scale every label grows, and a
+  // fixed column would only trade the mid-word break for a truncated time. The
+  // column keeps rows aligned at any one scale (every label is the same format)
+  // while still being free to grow. `numberOfLines={1}` is the belt to that
+  // brace, so the row height can never change.
+  timeCol: { minWidth: 76, flexShrink: 0 },
   timeText: { fontSize: 14, fontWeight: "700" },
   durationText: { fontSize: 11, marginTop: 1 },
   content: { flex: 1, gap: 4 },
