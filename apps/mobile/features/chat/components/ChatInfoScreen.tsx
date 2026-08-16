@@ -68,6 +68,7 @@ type Member = {
   isSelf: boolean;
   isInviter: boolean;
   notificationsDisabled: boolean;
+  isBirthdayToday: boolean;
 };
 
 const SEARCH_DEBOUNCE_MS = 200;
@@ -146,6 +147,7 @@ export function ChatInfoScreen({ channelId }: Props) {
       isSelf: false,
       isInviter: m.userId === creatorId,
       notificationsDisabled: m.notificationsDisabled,
+      isBirthdayToday: m.isBirthdayToday,
     }));
     const self: Member = {
       userId: currentUserId,
@@ -157,6 +159,10 @@ export function ChatInfoScreen({ channelId }: Props) {
       // have notifications" indicator — they already get the inbox banner
       // and Settings warning. Always render as enabled here.
       notificationsDisabled: false,
+      // `getDirectInbox` only reports birthdays for the OTHER side of a chat,
+      // so the viewer's own flag isn't available here. Not worth another query:
+      // you already know it's your birthday.
+      isBirthdayToday: false,
     };
     return [self, ...others];
   }, [inboxRow, currentUserId, creatorId, selfDisplayName, user]);
@@ -428,6 +434,7 @@ export function ChatInfoScreen({ channelId }: Props) {
                 imageUrl={m.profilePhoto}
                 size={40}
                 notificationsDisabled={m.notificationsDisabled}
+                isBirthdayToday={m.isBirthdayToday}
                 notificationsBadgeRingColor={colors.surfaceSecondary}
               />
               <View style={styles.memberRowText}>
