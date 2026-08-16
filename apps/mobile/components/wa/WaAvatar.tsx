@@ -18,6 +18,7 @@ import React from 'react';
 import { View, Text, StyleSheet, StyleProp, ViewStyle } from 'react-native';
 import { AppImage } from '@components/ui/AppImage';
 import { NotificationsDisabledBadge } from '@components/ui/NotificationsDisabledBadge';
+import { BirthdayBadge } from '@components/ui/BirthdayBadge';
 import { useTheme } from '@hooks/useTheme';
 import { waAvatarPalette, waAvatarInitials } from './waAvatarColor';
 
@@ -41,6 +42,11 @@ export interface WaAvatarProps {
   notificationsDisabled?: boolean;
   /** Surface the avatar sits on, so the badge's contrast ring blends in. */
   notificationsBadgeRingColor?: string;
+  /**
+   * Gift overlay for a user whose birthday it is today. Sits in the opposite
+   * corner from the slashed bell, so both can show at once.
+   */
+  isBirthdayToday?: boolean;
   style?: StyleProp<ViewStyle>;
   testID?: string;
 }
@@ -53,6 +59,7 @@ export function WaAvatar({
   size,
   notificationsDisabled,
   notificationsBadgeRingColor,
+  isBirthdayToday,
   style,
   testID,
 }: WaAvatarProps) {
@@ -84,12 +91,17 @@ export function WaAvatar({
     />
   );
 
-  if (!notificationsDisabled) return image;
+  if (!notificationsDisabled && !isBirthdayToday) return image;
 
   return (
     <View style={{ width: size, height: size }}>
       {image}
-      <NotificationsDisabledBadge avatarSize={size} ringColor={notificationsBadgeRingColor} />
+      {isBirthdayToday && (
+        <BirthdayBadge avatarSize={size} ringColor={notificationsBadgeRingColor} />
+      )}
+      {notificationsDisabled && (
+        <NotificationsDisabledBadge avatarSize={size} ringColor={notificationsBadgeRingColor} />
+      )}
     </View>
   );
 }

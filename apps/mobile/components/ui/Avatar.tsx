@@ -2,6 +2,7 @@ import React, { useMemo } from 'react';
 import { StyleSheet, View, ImageStyle, StyleProp } from 'react-native';
 import { AppImage } from './AppImage';
 import { NotificationsDisabledBadge } from './NotificationsDisabledBadge';
+import { BirthdayBadge } from './BirthdayBadge';
 import { getMediaUrlWithTransform } from '@/utils/media';
 
 interface AvatarProps {
@@ -29,6 +30,12 @@ interface AvatarProps {
    * theme `surface` when omitted.
    */
   notificationsBadgeRingColor?: string;
+  /**
+   * When true, overlays a gift badge in the top-right corner to signal that
+   * it is this user's birthday today. Uses the opposite corner from the
+   * slashed bell so a muted user still gets both badges on their birthday.
+   */
+  isBirthdayToday?: boolean;
 }
 
 export function Avatar({
@@ -40,6 +47,7 @@ export function Avatar({
   placeholderBackgroundColor,
   notificationsDisabled,
   notificationsBadgeRingColor,
+  isBirthdayToday,
 }: AvatarProps) {
   const safeSize = size && size > 0 ? size : 48;
 
@@ -71,18 +79,26 @@ export function Avatar({
     />
   );
 
-  if (!notificationsDisabled) {
+  if (!notificationsDisabled && !isBirthdayToday) {
     return image;
   }
 
-  // Wrap so the badge can be absolutely positioned over the avatar's corner.
+  // Wrap so the badges can be absolutely positioned over the avatar's corners.
   return (
     <View style={[styles.wrapper, { width: safeSize, height: safeSize }]}>
       {image}
-      <NotificationsDisabledBadge
-        avatarSize={safeSize}
-        ringColor={notificationsBadgeRingColor}
-      />
+      {isBirthdayToday && (
+        <BirthdayBadge
+          avatarSize={safeSize}
+          ringColor={notificationsBadgeRingColor}
+        />
+      )}
+      {notificationsDisabled && (
+        <NotificationsDisabledBadge
+          avatarSize={safeSize}
+          ringColor={notificationsBadgeRingColor}
+        />
+      )}
     </View>
   );
 }

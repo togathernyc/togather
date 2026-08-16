@@ -20,6 +20,10 @@ import { requireAuth } from "../../lib/auth";
 import { checkRateLimit } from "../../lib/rateLimit";
 import { getDisplayName, getMediaUrl, normalizePhone } from "../../lib/utils";
 import { getUsersWithNotificationsDisabled } from "../../lib/notifications/enabledStatus";
+import {
+  getUsersWithBirthdayToday,
+  isBirthdayToday,
+} from "../../lib/birthdays";
 import { getLeaderDmRelationship } from "../../lib/leaderDm";
 
 // ============================================================================
@@ -1445,6 +1449,7 @@ export const getAdHocChannelMembers = query({
       displayName: string;
       profilePhoto: string | null;
       notificationsDisabled: boolean;
+      isBirthdayToday: boolean;
     }>;
     /** See `resolveFormerDirectMember` — 1:1 display fallback, never a member. */
     formerMember: FormerDirectMember | null;
@@ -1489,6 +1494,11 @@ export const getAdHocChannelMembers = query({
       ctx,
       otherIds,
     );
+    // The user docs are already loaded above, so this is a local check — see
+    // `lib/birthdays.ts` for why only the boolean may cross the wire.
+    const channelCommunity = channel.communityId
+      ? await ctx.db.get(channel.communityId)
+      : null;
     const otherMembers = others
       .map((m, i) => {
         const u = otherUsers[i];
@@ -1501,6 +1511,7 @@ export const getAdHocChannelMembers = query({
             "Member",
           profilePhoto: getMediaUrl(u.profilePhoto ?? m.profilePhoto) ?? null,
           notificationsDisabled: otherNotifsDisabled.has(m.userId),
+          isBirthdayToday: isBirthdayToday(u, channelCommunity?.timezone),
         };
       })
       .filter((x): x is NonNullable<typeof x> => x !== null);
@@ -1536,6 +1547,11 @@ export const getDirectInbox = query({
       )
       .collect();
 
+    // Birthdays are decided in the community's timezone, so the badge turns on
+    // and off on the same day the birthday bot posts.
+    const community = await ctx.db.get(args.communityId);
+    const communityTimezone = community?.timezone;
+
     const results: Array<{
       channelId: Id<"chatChannels">;
       channelType: "dm" | "group_dm";
@@ -1546,6 +1562,7 @@ export const getDirectInbox = query({
         displayName: string;
         profilePhoto: string | null;
         notificationsDisabled: boolean;
+        isBirthdayToday: boolean;
       }>;
       /** See `resolveFormerDirectMember` — 1:1 display fallback, never a member. */
       formerMember: FormerDirectMember | null;
@@ -1613,6 +1630,12 @@ export const getDirectInbox = query({
         ctx,
         idsToCheck,
       );
+      // Only the boolean reaches the client — see `lib/birthdays.ts`.
+      const rowBirthdays = await getUsersWithBirthdayToday(
+        ctx,
+        otherMemberIds,
+        communityTimezone,
+      );
       const otherMembers = otherMemberRows
         .filter((m) => m.userId !== userId)
         .map((m) => ({
@@ -1620,6 +1643,7 @@ export const getDirectInbox = query({
           displayName: m.displayName ?? "",
           profilePhoto: getMediaUrl(m.profilePhoto) ?? null,
           notificationsDisabled: rowNotifsDisabled.has(m.userId),
+          isBirthdayToday: rowBirthdays.has(m.userId),
         }));
 
       // A 1:1 whose counterpart left (expired request, decline, block) has no

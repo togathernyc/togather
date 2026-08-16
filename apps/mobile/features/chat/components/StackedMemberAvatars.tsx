@@ -7,6 +7,8 @@ type StackMember = {
   imageUrl: string | null;
   /** When true, the slashed-bell badge overlays this avatar in the stack. */
   notificationsDisabled?: boolean;
+  /** When true, the gift badge overlays this avatar in the stack. */
+  isBirthdayToday?: boolean;
 };
 
 type Props = {
@@ -39,11 +41,18 @@ export function StackedMemberAvatars({
           imageUrl={m.imageUrl ?? undefined}
           size={size}
           notificationsDisabled={m.notificationsDisabled}
+          isBirthdayToday={m.isBirthdayToday}
           notificationsBadgeRingColor={surfaceColor}
         />
       </View>
     );
   }
+
+  // NOTE: the multi-member clusters below deliberately render no per-avatar
+  // badges — neither the slashed bell nor the birthday gift. Each sub-avatar is
+  // ~30pt inside a 2pt ring, so a corner badge would overlap its neighbours and
+  // the cluster would read as noise. A birthday in a group chat still shows on
+  // that person's own 1:1 row and on their profile.
 
   // Sizes are proportional to the bounding box so the cluster scales for
   // header (36), inbox (56), and info-hero (96) callers without re-tuning.

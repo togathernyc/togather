@@ -8,6 +8,7 @@ import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { AppImage } from '@components/ui';
 import { ImageViewer } from '@components/ui/ImageViewer';
 import { NotificationsDisabledBadge } from '@components/ui/NotificationsDisabledBadge';
+import { BirthdayBadge } from '@components/ui/BirthdayBadge';
 import { useTheme } from '@hooks/useTheme';
 
 import type { UserProfile } from '../hooks/useUserProfile';
@@ -53,6 +54,9 @@ export function UserProfileHeader({ profile }: UserProfileHeaderProps) {
               backgroundColor: '#E5E5E5',
             }}
           />
+          {profile.isBirthdayToday ? (
+            <BirthdayBadge avatarSize={96} ringColor={colors.surface} />
+          ) : null}
           {profile.notificationsDisabled ? (
             <NotificationsDisabledBadge
               avatarSize={96}

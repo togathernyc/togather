@@ -2311,6 +2311,7 @@ type DirectInboxRowData = {
     displayName: string;
     profilePhoto: string | null;
     notificationsDisabled: boolean;
+    isBirthdayToday: boolean;
   }>;
   /** 1:1 counterpart who left (e.g. expired request) — display only. */
   formerMember: {
@@ -2407,6 +2408,7 @@ export function DirectMessageRow({ row, primaryColor, colors, whatsappShellEnabl
               members={displayMembers.map((m) => ({
                 name: m.displayName,
                 imageUrl: m.profilePhoto,
+                isBirthdayToday: m.isBirthdayToday,
               }))}
               surfaceColor={colors.surface}
               size={WA_ROW_AVATAR_SIZE}
@@ -2422,6 +2424,7 @@ export function DirectMessageRow({ row, primaryColor, colors, whatsappShellEnabl
               imageUrl={primaryAvatar?.profilePhoto ?? undefined}
               size={WA_ROW_AVATAR_SIZE}
               notificationsDisabled={primaryAvatar?.notificationsDisabled ?? false}
+              isBirthdayToday={primaryAvatar?.isBirthdayToday ?? false}
               notificationsBadgeRingColor={colors.surface}
             />
           )}
@@ -2459,6 +2462,7 @@ export function DirectMessageRow({ row, primaryColor, colors, whatsappShellEnabl
           members={displayMembers.map((m) => ({
             name: m.displayName,
             imageUrl: m.profilePhoto,
+            isBirthdayToday: m.isBirthdayToday,
           }))}
           surfaceColor={colors.surface}
         />
@@ -2468,6 +2472,7 @@ export function DirectMessageRow({ row, primaryColor, colors, whatsappShellEnabl
           imageUrl={primaryAvatar?.profilePhoto ?? undefined}
           size={56}
           notificationsDisabled={primaryAvatar?.notificationsDisabled ?? false}
+          isBirthdayToday={primaryAvatar?.isBirthdayToday ?? false}
           notificationsBadgeRingColor={colors.surface}
         />
       )}

@@ -21,6 +21,7 @@ import {
   getOptionalAuth,
 } from "../lib/auth";
 import { parseDate } from "../lib/validation";
+import { isBirthdayToday } from "../lib/birthdays";
 import { COMMUNITY_ROLES, COMMUNITY_ADMIN_THRESHOLD } from "../lib/permissions";
 import { adjustEnabledCounter } from "../lib/notifications/enabledCounter";
 import {
@@ -175,6 +176,11 @@ export const getProfile = query({
 
     const notificationsDisabled = await isUserNotificationsDisabled(ctx, user._id);
 
+    // Decided in the community's timezone so the profile agrees with what the
+    // birthday bot announces. Only the boolean crosses the wire — `dateOfBirth`
+    // itself stays server-side.
+    const community = await ctx.db.get(args.communityId);
+
     return {
       _id: user._id,
       firstName: user.firstName,
@@ -186,6 +192,7 @@ export const getProfile = query({
       linkedinHandle: user.linkedinHandle ?? null,
       birthdayMonth: user.birthdayMonth ?? null,
       birthdayDay: user.birthdayDay ?? null,
+      isBirthdayToday: isBirthdayToday(user, community?.timezone),
       location: user.location ?? null,
       // Community-scoped:
       memberSince: membership.createdAt ?? null,
