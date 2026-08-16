@@ -25,6 +25,14 @@ export interface UserProfile {
   linkedinHandle: string | null;
   birthdayMonth: number | null;
   birthdayDay: number | null;
+  /**
+   * Decided on the server, in the community's timezone, from either stored
+   * birthday — a superset of what the birthday bot announces, on the same
+   * calendar day. The date behind it never leaves the server, and it is only
+   * populated for viewers who are seated members of the community; see
+   * `apps/convex/lib/birthdays.ts`.
+   */
+  isBirthdayToday: boolean;
   location: string | null;
   memberSince: number | null;
   communityRole: number;

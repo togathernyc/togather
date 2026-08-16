@@ -5,6 +5,7 @@ const active = {
   displayName: "Carol Chen",
   profilePhoto: "https://example.com/carol.jpg",
   notificationsDisabled: true,
+  isBirthdayToday: false,
 };
 
 const former = {
@@ -26,6 +27,8 @@ describe("adHocDisplayMembers", () => {
         profilePhoto: former.profilePhoto,
         // Someone who left is not a notification target — never badge them.
         notificationsDisabled: false,
+        // And `formerMember` is a snapshot, so it can't know their birthday.
+        isBirthdayToday: false,
       },
     ]);
   });

@@ -902,8 +902,11 @@ describe("Birthday Bot - Timezone Awareness", () => {
         message.content.includes("it's your turn to say happy birthday")
       );
       expect(botMessage).toBeDefined();
-      expect(botMessage?.content).toContain("Hey Test User");
+      // The leader is @mentioned so the reminder actually notifies them —
+      // `@[Name]` is the markup, `mentionedUserIds` is what drives the push.
+      expect(botMessage?.content).toContain("Hey @[Test User]");
       expect(botMessage?.content).not.toContain("[[leader_name]]");
+      expect(botMessage?.mentionedUserIds).toEqual([userId]);
     });
   });
 });

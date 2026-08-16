@@ -69,6 +69,7 @@ describe("DirectMessageRow — departed 1:1 counterpart", () => {
           displayName: "David Walker",
           profilePhoto: null,
           notificationsDisabled: false,
+          isBirthdayToday: false,
         },
       ],
     });

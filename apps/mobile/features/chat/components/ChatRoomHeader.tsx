@@ -30,6 +30,8 @@ import { StackedMemberAvatars } from "./StackedMemberAvatars";
 type Member = {
   name: string;
   imageUrl: string | null;
+  /** Gift badge on their avatar when it's their birthday today. */
+  isBirthdayToday?: boolean;
 };
 
 type Props = {
@@ -124,6 +126,8 @@ export const ChatRoomHeader = memo(function ChatRoomHeader({
               name={otherMembers[0]?.name ?? titleLine}
               imageUrl={otherMembers[0]?.imageUrl ?? undefined}
               size={36}
+              isBirthdayToday={otherMembers[0]?.isBirthdayToday}
+              notificationsBadgeRingColor={colors.surface}
             />
           ) : (
             <StackedMemberAvatars

@@ -20,6 +20,7 @@ type ActiveMember = {
   displayName: string;
   profilePhoto: string | null;
   notificationsDisabled: boolean;
+  isBirthdayToday: boolean;
 };
 
 type FormerMember = {
@@ -40,6 +41,9 @@ export function adHocDisplayMembers(
       // Someone who left this chat is not a notification target, so the
       // "notifications off" avatar badge would be misleading noise.
       notificationsDisabled: false,
+      // `formerMember` is a snapshot of who they were when they left, not a
+      // live user read — so it can't know, and shouldn't guess, their birthday.
+      isBirthdayToday: false,
     },
   ];
 }

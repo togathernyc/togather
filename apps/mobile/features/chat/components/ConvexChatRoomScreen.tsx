@@ -1144,13 +1144,17 @@ const ConvexChatRoomScreenInner: React.FC = () => {
     adHocChannelMembers?.formerMember,
   );
   const adHocOtherMembersKey = adHocDisplayedMembers
-    .map((m) => `${m.userId}|${m.profilePhoto ?? ""}|${m.displayName}`)
+    .map(
+      (m) =>
+        `${m.userId}|${m.profilePhoto ?? ""}|${m.displayName}|${m.isBirthdayToday ? 1 : 0}`,
+    )
     .join("\n");
   const adHocOtherMembers = useMemo(
     () =>
       adHocDisplayedMembers.map((m) => ({
         name: m.displayName,
         imageUrl: m.profilePhoto,
+        isBirthdayToday: m.isBirthdayToday,
       })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [adHocOtherMembersKey],

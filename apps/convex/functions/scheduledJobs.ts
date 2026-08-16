@@ -27,6 +27,7 @@ import { Id } from "../_generated/dataModel";
 import { notifyBatch } from "../lib/notifications/send";
 import { resolveChannelCommunityId } from "../lib/messaging/communityScope";
 import { now, getMediaUrlWithTransform, ImagePresets } from "../lib/utils";
+import { todayMonthDay } from "../lib/birthdays";
 import {
   calculateCommunicationBotNextSchedule,
   isScheduleDueNow,
@@ -93,6 +94,119 @@ function resolveBirthdayReminderLeader(params: {
   return leaders[nextIndex];
 }
 
+export type BirthdayBotMember = {
+  userId: Id<"users">;
+  firstName?: string;
+  lastName?: string;
+};
+
+/** Full name from the first/last pair, or `null` when neither is set. */
+function fullName(person: {
+  firstName?: string;
+  lastName?: string;
+}): string | null {
+  const name = [person.firstName, person.lastName].filter(Boolean).join(" ");
+  return name || null;
+}
+
+/**
+ * `@[Display Name]` — the mention markup the chat client parses and styles.
+ * Must stay in sync with `mentionRegex` in
+ * `apps/mobile/features/shared/utils/linkify.tsx`.
+ *
+ * The markup only makes the name *look* like a mention; the recipient is
+ * notified via the message's `mentionedUserIds`, so the two are always built
+ * together.
+ */
+function mention(displayName: string): string {
+  // Strip brackets so a name can't terminate the markup early and forge a
+  // second, visible-but-inert mention of someone else. Names are free text —
+  // `updateProfile` does not restrict the characters in them.
+  return `@[${displayName.replace(/[[\]]/g, "")}]`;
+}
+
+/**
+ * Replace every occurrence of a `[[placeholder]]`. Uses a replacer function so
+ * a `$` in someone's name is never treated as a capture-group reference.
+ */
+function fillPlaceholder(
+  template: string,
+  placeholder: string,
+  value: string,
+): string {
+  return template.split(placeholder).join(value);
+}
+
+/**
+ * Build the birthday bot's message body and the set of users it @mentions.
+ *
+ * The two modes address different people, so they mention different people:
+ * - `general_chat` posts to the whole group, so it **@mentions the birthday
+ *   people** — the message is addressed to them.
+ * - `leader_reminder` posts in the leaders channel asking one leader to go and
+ *   say happy birthday, so it **@mentions that leader** (they're the one who
+ *   needs to act) and names the birthday people in full — first and last — so
+ *   the leader knows exactly who is meant. The birthday people are deliberately
+ *   *not* mentioned here: it's a private nudge, and pinging them would give the
+ *   surprise away.
+ */
+export function buildBirthdayBotMessage(params: {
+  template: string;
+  mode?: string;
+  birthdays: BirthdayBotMember[];
+  targetLeader: BirthdayReminderLeader | null;
+  groupName: string;
+  communityName: string;
+}): { message: string; mentionedUserIds: Id<"users">[] } {
+  const {
+    template,
+    mode,
+    birthdays,
+    targetLeader,
+    groupName,
+    communityName,
+  } = params;
+
+  const isGeneralChat = mode === "general_chat";
+  const mentionedUserIds: Id<"users">[] = [];
+
+  // A mention only counts if the reader can actually see it. `mentionedUserIds`
+  // is what drives the mention push *and email*, so attaching an id whose
+  // `@[Name]` markup never reached the message would tell someone they were
+  // mentioned in a message that does not mention them. Leaders can edit these
+  // templates and drop a placeholder, so collect ids only when the placeholder
+  // that renders them is actually present.
+  const namesAreRendered = template.includes("[[birthday_names]]");
+  const leaderIsRendered = template.includes("[[leader_name]]");
+
+  const birthdayNames = birthdays
+    .map((member) => {
+      const name = fullName(member);
+      if (!name) return "a member";
+      if (!isGeneralChat) return name;
+      if (namesAreRendered) mentionedUserIds.push(member.userId);
+      return mention(name);
+    })
+    .join(", ");
+
+  let leaderName = "leader";
+  if (targetLeader) {
+    if (isGeneralChat) {
+      leaderName = targetLeader.displayName;
+    } else {
+      leaderName = mention(targetLeader.displayName);
+      if (leaderIsRendered) mentionedUserIds.push(targetLeader.userId);
+    }
+  }
+
+  let message = fillPlaceholder(template, "[[birthday_names]]", birthdayNames);
+  message = fillPlaceholder(message, "[[leader_name]]", leaderName);
+  message = fillPlaceholder(message, "[[group_name]]", groupName);
+  message = fillPlaceholder(message, "[[community_name]]", communityName);
+
+  return { message, mentionedUserIds };
+}
+
 // ============================================================================
 // BIRTHDAY BOT
 // ============================================================================
@@ -133,10 +247,6 @@ export const runBirthdayBot = internalAction({
           continue;
         }
 
-        const birthdayNames = birthdays
-          .map((m: { firstName?: string }) => m.firstName || "a member")
-          .join(", ");
-
         const targetLeader =
           config.mode === "leader_reminder"
             ? resolveBirthdayReminderLeader({
@@ -146,14 +256,15 @@ export const runBirthdayBot = internalAction({
                 lastLeaderIndex: config.lastLeaderIndex,
               })
             : null;
-        const leaderName = targetLeader?.displayName || "leader";
 
-        // Build message with placeholder replacement
-        const message = config.message
-          .replace("[[birthday_names]]", birthdayNames)
-          .replace("[[leader_name]]", leaderName)
-          .replace("[[group_name]]", config.groupName)
-          .replace("[[community_name]]", config.communityName);
+        const { message, mentionedUserIds } = buildBirthdayBotMessage({
+          template: config.message,
+          mode: config.mode,
+          birthdays,
+          targetLeader,
+          groupName: config.groupName,
+          communityName: config.communityName,
+        });
 
         // Determine target channel with backwards compatibility
         // Priority: 1) configured targetChannelSlug, 2) mode-based default
@@ -171,6 +282,7 @@ export const runBirthdayBot = internalAction({
           message: finalMessage,
           targetChannelSlug,
           botType: "birthday",
+          mentionedUserIds,
         });
 
         // Update state for round-robin
@@ -246,10 +358,6 @@ export const processBirthdayBotBucket = internalAction({
         );
 
         if (birthdays.length > 0) {
-          const birthdayNames = birthdays
-            .map((m: { firstName?: string }) => m.firstName || "a member")
-            .join(", ");
-
           const targetLeader =
             config.mode === "leader_reminder"
               ? resolveBirthdayReminderLeader({
@@ -259,13 +367,15 @@ export const processBirthdayBotBucket = internalAction({
                   lastLeaderIndex: config.lastLeaderIndex,
                 })
               : null;
-          const leaderName = targetLeader?.displayName || "leader";
 
-          const message = config.message
-            .replace("[[birthday_names]]", birthdayNames)
-            .replace("[[leader_name]]", leaderName)
-            .replace("[[group_name]]", config.groupName)
-            .replace("[[community_name]]", config.communityName);
+          const { message, mentionedUserIds } = buildBirthdayBotMessage({
+            template: config.message,
+            mode: config.mode,
+            birthdays,
+            targetLeader,
+            groupName: config.groupName,
+            communityName: config.communityName,
+          });
 
           // Determine target channel with backwards compatibility
           // Priority: 1) configured targetChannelSlug, 2) mode-based default
@@ -283,6 +393,7 @@ export const processBirthdayBotBucket = internalAction({
             message: finalMessage,
             targetChannelSlug,
             botType: "birthday",
+            mentionedUserIds,
           });
 
           if (
@@ -559,31 +670,10 @@ export const getMembersWithBirthdayToday = internalQuery({
     timezone: v.optional(v.string()),
   },
   handler: async (ctx, { groupId, timezone }) => {
-    // Use timezone to determine "today" (default to UTC for backwards compat)
-    const tz = timezone || "UTC";
-    const today = new Date();
-
-    let todayMonth: number;
-    let todayDate: number;
-
-    if (tz === "UTC") {
-      todayMonth = today.getUTCMonth();
-      todayDate = today.getUTCDate();
-    } else {
-      // Get current date in the community's timezone
-      const dateFormatter = new Intl.DateTimeFormat("en-US", {
-        timeZone: tz,
-        month: "numeric",
-        day: "numeric",
-      });
-      const parts = dateFormatter.formatToParts(today);
-      todayMonth =
-        parseInt(parts.find((p) => p.type === "month")?.value || "1", 10) - 1;
-      todayDate = parseInt(
-        parts.find((p) => p.type === "day")?.value || "1",
-        10,
-      );
-    }
+    // Shared with the avatar/profile badge (`lib/birthdays.ts`) so the bot and
+    // the badge can never land on different calendar days. Note `month` is
+    // 1-based here, unlike the `getUTCMonth()` it replaced.
+    const { month: todayMonth, day: todayDate } = todayMonthDay(timezone);
 
     const members = await ctx.db
       .query("groupMembers")
@@ -611,12 +701,15 @@ export const getMembersWithBirthdayToday = internalQuery({
 
       const birthday = new Date(user.dateOfBirth);
       if (
-        birthday.getUTCMonth() === todayMonth &&
+        birthday.getUTCMonth() + 1 === todayMonth &&
         birthday.getUTCDate() === todayDate
       ) {
         birthdayMembers.push({
           userId: member.userId,
           firstName: user.firstName,
+          // The bot names birthday people in full when it nudges a leader, so
+          // the leader knows which "Sarah" is meant.
+          lastName: user.lastName,
         });
       }
     }

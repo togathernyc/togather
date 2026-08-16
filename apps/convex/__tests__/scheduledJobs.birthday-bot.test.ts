@@ -8,7 +8,7 @@
  */
 
 import { convexTest } from "convex-test";
-import { expect, test, describe } from "vitest";
+import { expect, test, describe, vi } from "vitest";
 import schema from "../schema";
 import { internal } from "../_generated/api";
 import { modules } from "../test.setup";
@@ -464,5 +464,115 @@ describe("getMembersWithBirthdayToday", () => {
     expect(result).toHaveLength(2);
     const names = result.map((r: { firstName: string }) => r.firstName).sort();
     expect(names).toEqual(["Alice", "Bob"]);
+  });
+});
+
+// ============================================================================
+// processBirthdayBotBucket — the path the hourly cron actually runs
+// ============================================================================
+
+/**
+ * `crons.ts` calls `processBirthdayBotBucket`, not `runBirthdayBot`. Without
+ * these, the mention feature could be dropped from the scheduled path entirely
+ * and every other birthday test would stay green.
+ *
+ * Both cases seed the leader and the birthday person as DIFFERENT users, so
+ * `mentionedUserIds` can distinguish which one was mentioned.
+ */
+describe("processBirthdayBotBucket mentions", () => {
+  async function seedChannel(
+    t: ReturnType<typeof convexTest>,
+    groupId: Id<"groups">,
+    slug: string,
+    createdById: Id<"users">
+  ) {
+    return await t.run(async (ctx) => {
+      return await ctx.db.insert("chatChannels", {
+        groupId,
+        slug,
+        channelType: slug === "leaders" ? "leaders" : "general",
+        name: slug,
+        createdById,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        isArchived: false,
+        memberCount: 2,
+      });
+    });
+  }
+
+  async function runBucket(
+    t: ReturnType<typeof convexTest>,
+    mode: string,
+    slug: string
+  ) {
+    const { groupId } = await seedCommunityAndGroup(t);
+    // 14 March in New York, the community's zone.
+    vi.setSystemTime(new Date("2026-03-14T16:00:00Z"));
+
+    const leader = await seedUser(t, {
+      firstName: "Maria",
+      lastName: "Okonkwo",
+    });
+    const birthdayUser = await seedUser(t, {
+      firstName: "Tadala",
+      lastName: "Jumbe",
+      dateOfBirth: Date.UTC(1994, 2, 14),
+    });
+    await addGroupMember(t, groupId, leader, "leader");
+    await addGroupMember(t, groupId, birthdayUser, "member");
+    await seedChannel(t, groupId, slug, leader);
+
+    const nowMs = Date.now();
+    await seedBotConfig(t, groupId, {
+      nextScheduledAt: nowMs,
+      config: { mode, targetChannelSlug: slug },
+    });
+
+    await t.action(
+      internal.functions.scheduledJobs.processBirthdayBotBucket,
+      {}
+    );
+
+    const messages = await t.run(async (ctx) =>
+      ctx.db.query("chatMessages").collect()
+    );
+    return { message: messages[0], leader, birthdayUser };
+  }
+
+  test("leader_reminder mentions the LEADER, not the birthday person", async () => {
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const { message, leader, birthdayUser } = await runBucket(
+      t,
+      "leader_reminder",
+      "leaders"
+    );
+
+    expect(message).toBeDefined();
+    expect(message.content).toContain("@[Maria Okonkwo]");
+    // Named in full so the leader knows who — but deliberately not pinged.
+    expect(message.content).toContain("Tadala Jumbe");
+    expect(message.content).not.toContain("@[Tadala Jumbe]");
+    expect(message.mentionedUserIds).toEqual([leader]);
+    expect(message.mentionedUserIds).not.toContain(birthdayUser);
+    vi.useRealTimers();
+  });
+
+  test("general_chat mentions the BIRTHDAY PERSON, not the leader", async () => {
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const { message, leader, birthdayUser } = await runBucket(
+      t,
+      "general_chat",
+      "general"
+    );
+
+    expect(message).toBeDefined();
+    expect(message.content).toContain("@[Tadala Jumbe]");
+    expect(message.content).not.toContain("@[Maria Okonkwo]");
+    expect(message.mentionedUserIds).toEqual([birthdayUser]);
+    expect(message.mentionedUserIds).not.toContain(leader);
+    vi.useRealTimers();
   });
 });

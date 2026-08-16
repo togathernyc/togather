@@ -3,11 +3,20 @@ import { StyleSheet, View, ViewStyle, StyleProp } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '@/hooks/useTheme';
 
-interface NotificationsDisabledBadgeProps {
+/**
+ * The birthday accent — deliberately the same in light and dark.
+ *
+ * A celebration doesn't change meaning in the dark, and white-on-rose clears
+ * 4.6:1 on either ground. It is also kept clear of the palette's existing
+ * meanings: brand green is "leader", grey is "muted", red is "destructive".
+ */
+export const BIRTHDAY_COLOR = '#D6336C';
+
+interface BirthdayBadgeProps {
   /**
    * Diameter of the parent avatar in pixels. The badge scales relative to it
-   * so the slashed-bell stays legible on tiny stacked previews and on the
-   * large profile-header avatar.
+   * so the gift stays legible on tiny stacked previews and on the large
+   * profile-header avatar.
    */
   avatarSize: number;
   /**
@@ -25,20 +34,26 @@ interface NotificationsDisabledBadgeProps {
 }
 
 /**
- * Slashed-bell badge overlaid on a user avatar to signal that the user has
- * push notifications disabled. Renders nothing visual on its own — callsites
- * mount it inside a `position: relative` parent (typically Avatar) so it sits
- * over the bottom-right corner of the avatar.
+ * Gift badge overlaid on a user avatar on their birthday. Renders nothing
+ * visual on its own — callsites mount it inside a `position: relative` parent
+ * (typically an Avatar) so it sits over the corner of the avatar.
  *
- * Sizing: badge diameter ~38% of the avatar (clamped to 14–24px). Icon takes
- * ~62% of the badge so the slash is visible at small sizes.
+ * Sits in the **top-right** corner, unlike `NotificationsDisabledBadge` and the
+ * inbox's leader shield, which both own the bottom-right. Someone can be a
+ * leader with notifications off on their birthday, so the corners can't clash.
+ *
+ * The gift glyph matches how Togather already talks about birthdays — it's the
+ * same icon the profile's details card uses for the date itself.
+ *
+ * Sizing mirrors `NotificationsDisabledBadge` exactly, so when both badges are
+ * on one avatar they are the same size.
  */
-export function NotificationsDisabledBadge({
+export function BirthdayBadge({
   avatarSize,
   style,
   ringColor,
-  testID = 'notifications-disabled-badge',
-}: NotificationsDisabledBadgeProps) {
+  testID = 'birthday-badge',
+}: BirthdayBadgeProps) {
   const { colors } = useTheme();
   const sizes = useMemo(() => {
     const raw = Math.round(avatarSize * 0.42);
@@ -58,18 +73,14 @@ export function NotificationsDisabledBadge({
           width: sizes.badge,
           height: sizes.badge,
           borderRadius: sizes.badge / 2,
-          backgroundColor: colors.textSecondary,
+          backgroundColor: BIRTHDAY_COLOR,
           borderColor: ringColor ?? colors.surface,
           borderWidth: sizes.border,
         },
         style,
       ]}
     >
-      <Ionicons
-        name="notifications-off"
-        size={sizes.icon}
-        color={colors.surface}
-      />
+      <Ionicons name="gift" size={sizes.icon} color="#FFFFFF" />
     </View>
   );
 }
@@ -77,7 +88,7 @@ export function NotificationsDisabledBadge({
 const styles = StyleSheet.create({
   badge: {
     position: 'absolute',
-    bottom: -2,
+    top: -2,
     right: -2,
     alignItems: 'center',
     justifyContent: 'center',

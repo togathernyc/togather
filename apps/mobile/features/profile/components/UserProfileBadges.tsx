@@ -1,6 +1,8 @@
 /**
- * Role pills: Primary Admin, Community Admin, Group Leader.
- * Returns null when the user has no badges to show (keeps the layout tight).
+ * Standing pills under the profile name: "Birthday today", then the role pills
+ * (Primary Admin, Community Admin, Group Leader).
+ *
+ * Returns null when the user has no pills to show (keeps the layout tight).
  */
 
 import React from 'react';
@@ -8,6 +10,7 @@ import { View, Text, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '@hooks/useTheme';
 import { useCommunityTheme } from '@hooks/useCommunityTheme';
+import { BIRTHDAY_COLOR } from '@components/ui/BirthdayBadge';
 
 import type { UserProfile } from '../hooks/useUserProfile';
 
@@ -21,12 +24,26 @@ export function UserProfileBadges({ profile }: UserProfileBadgesProps) {
 
   const isLeader = (profile.leaderGroupIds?.length ?? 0) > 0;
 
-  if (!profile.isPrimaryAdmin && !profile.isCommunityAdmin && !isLeader) {
+  if (
+    !profile.isBirthdayToday &&
+    !profile.isPrimaryAdmin &&
+    !profile.isCommunityAdmin &&
+    !isLeader
+  ) {
     return null;
   }
 
   return (
     <View style={styles.container}>
+      {/* Leads the row: it's the one pill that is only true today. */}
+      {profile.isBirthdayToday && (
+        <Pill
+          icon="gift"
+          label="Birthday today"
+          backgroundColor={BIRTHDAY_COLOR + '20'}
+          color={BIRTHDAY_COLOR}
+        />
+      )}
       {profile.isPrimaryAdmin && (
         <Pill
           icon="star"
