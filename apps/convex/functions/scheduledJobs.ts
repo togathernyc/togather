@@ -93,6 +93,105 @@ function resolveBirthdayReminderLeader(params: {
   return leaders[nextIndex];
 }
 
+export type BirthdayBotMember = {
+  userId: Id<"users">;
+  firstName?: string;
+  lastName?: string;
+};
+
+/** Full name from the first/last pair, or `null` when neither is set. */
+function fullName(person: {
+  firstName?: string;
+  lastName?: string;
+}): string | null {
+  const name = [person.firstName, person.lastName].filter(Boolean).join(" ");
+  return name || null;
+}
+
+/**
+ * `@[Display Name]` — the mention markup the chat client parses and styles.
+ * Must stay in sync with `mentionRegex` in
+ * `apps/mobile/features/shared/utils/linkify.tsx`.
+ *
+ * The markup only makes the name *look* like a mention; the recipient is
+ * notified via the message's `mentionedUserIds`, so the two are always built
+ * together.
+ */
+function mention(displayName: string): string {
+  return `@[${displayName}]`;
+}
+
+/**
+ * Replace every occurrence of a `[[placeholder]]`. Uses a replacer function so
+ * a `$` in someone's name is never treated as a capture-group reference.
+ */
+function fillPlaceholder(
+  template: string,
+  placeholder: string,
+  value: string,
+): string {
+  return template.split(placeholder).join(value);
+}
+
+/**
+ * Build the birthday bot's message body and the set of users it @mentions.
+ *
+ * The two modes address different people, so they mention different people:
+ * - `general_chat` posts to the whole group, so it **@mentions the birthday
+ *   people** — the message is addressed to them.
+ * - `leader_reminder` posts in the leaders channel asking one leader to go and
+ *   say happy birthday, so it **@mentions that leader** (they're the one who
+ *   needs to act) and names the birthday people in full — first and last — so
+ *   the leader knows exactly who is meant. The birthday people are deliberately
+ *   *not* mentioned here: it's a private nudge, and pinging them would give the
+ *   surprise away.
+ */
+export function buildBirthdayBotMessage(params: {
+  template: string;
+  mode?: string;
+  birthdays: BirthdayBotMember[];
+  targetLeader: BirthdayReminderLeader | null;
+  groupName: string;
+  communityName: string;
+}): { message: string; mentionedUserIds: Id<"users">[] } {
+  const {
+    template,
+    mode,
+    birthdays,
+    targetLeader,
+    groupName,
+    communityName,
+  } = params;
+
+  const isGeneralChat = mode === "general_chat";
+  const mentionedUserIds: Id<"users">[] = [];
+
+  const birthdayNames = birthdays
+    .map((member) => {
+      const name = fullName(member);
+      if (!name) return "a member";
+      if (!isGeneralChat) return name;
+      mentionedUserIds.push(member.userId);
+      return mention(name);
+    })
+    .join(", ");
+
+  let leaderName = "leader";
+  if (!isGeneralChat && targetLeader) {
+    leaderName = mention(targetLeader.displayName);
+    mentionedUserIds.push(targetLeader.userId);
+  } else if (targetLeader) {
+    leaderName = targetLeader.displayName;
+  }
+
+  let message = fillPlaceholder(template, "[[birthday_names]]", birthdayNames);
+  message = fillPlaceholder(message, "[[leader_name]]", leaderName);
+  message = fillPlaceholder(message, "[[group_name]]", groupName);
+  message = fillPlaceholder(message, "[[community_name]]", communityName);
+
+  return { message, mentionedUserIds };
+}
+
 // ============================================================================
 // BIRTHDAY BOT
 // ============================================================================
@@ -133,10 +232,6 @@ export const runBirthdayBot = internalAction({
           continue;
         }
 
-        const birthdayNames = birthdays
-          .map((m: { firstName?: string }) => m.firstName || "a member")
-          .join(", ");
-
         const targetLeader =
           config.mode === "leader_reminder"
             ? resolveBirthdayReminderLeader({
@@ -146,14 +241,15 @@ export const runBirthdayBot = internalAction({
                 lastLeaderIndex: config.lastLeaderIndex,
               })
             : null;
-        const leaderName = targetLeader?.displayName || "leader";
 
-        // Build message with placeholder replacement
-        const message = config.message
-          .replace("[[birthday_names]]", birthdayNames)
-          .replace("[[leader_name]]", leaderName)
-          .replace("[[group_name]]", config.groupName)
-          .replace("[[community_name]]", config.communityName);
+        const { message, mentionedUserIds } = buildBirthdayBotMessage({
+          template: config.message,
+          mode: config.mode,
+          birthdays,
+          targetLeader,
+          groupName: config.groupName,
+          communityName: config.communityName,
+        });
 
         // Determine target channel with backwards compatibility
         // Priority: 1) configured targetChannelSlug, 2) mode-based default
@@ -171,6 +267,7 @@ export const runBirthdayBot = internalAction({
           message: finalMessage,
           targetChannelSlug,
           botType: "birthday",
+          mentionedUserIds,
         });
 
         // Update state for round-robin
@@ -246,10 +343,6 @@ export const processBirthdayBotBucket = internalAction({
         );
 
         if (birthdays.length > 0) {
-          const birthdayNames = birthdays
-            .map((m: { firstName?: string }) => m.firstName || "a member")
-            .join(", ");
-
           const targetLeader =
             config.mode === "leader_reminder"
               ? resolveBirthdayReminderLeader({
@@ -259,13 +352,15 @@ export const processBirthdayBotBucket = internalAction({
                   lastLeaderIndex: config.lastLeaderIndex,
                 })
               : null;
-          const leaderName = targetLeader?.displayName || "leader";
 
-          const message = config.message
-            .replace("[[birthday_names]]", birthdayNames)
-            .replace("[[leader_name]]", leaderName)
-            .replace("[[group_name]]", config.groupName)
-            .replace("[[community_name]]", config.communityName);
+          const { message, mentionedUserIds } = buildBirthdayBotMessage({
+            template: config.message,
+            mode: config.mode,
+            birthdays,
+            targetLeader,
+            groupName: config.groupName,
+            communityName: config.communityName,
+          });
 
           // Determine target channel with backwards compatibility
           // Priority: 1) configured targetChannelSlug, 2) mode-based default
@@ -283,6 +378,7 @@ export const processBirthdayBotBucket = internalAction({
             message: finalMessage,
             targetChannelSlug,
             botType: "birthday",
+            mentionedUserIds,
           });
 
           if (
@@ -617,6 +713,9 @@ export const getMembersWithBirthdayToday = internalQuery({
         birthdayMembers.push({
           userId: member.userId,
           firstName: user.firstName,
+          // The bot names birthday people in full when it nudges a leader, so
+          // the leader knows which "Sarah" is meant.
+          lastName: user.lastName,
         });
       }
     }
