@@ -131,7 +131,7 @@ export const getProfile = query({
   },
   handler: async (ctx, args) => {
     // Viewer auth is optional — we don't gate public fields on it.
-    await getOptionalAuth(ctx, args.token);
+    const viewerId = await getOptionalAuth(ctx, args.token);
 
     const user = await ctx.db.get(args.userId);
     if (!user || user.isActive === false) {
@@ -179,7 +179,28 @@ export const getProfile = query({
     // Decided in the community's timezone so the profile agrees with what the
     // birthday bot announces. Only the boolean crosses the wire — `dateOfBirth`
     // itself stays server-side.
-    const community = await ctx.db.get(args.communityId);
+    //
+    // Unlike the other fields here, this one is gated on the VIEWER being a
+    // seated member of this community. The rest of this query is public by
+    // design (`getOptionalAuth`, mirroring `getById`), and every other field is
+    // either already public or opt-in via the profile form. This one is neither:
+    // it falls back to `dateOfBirth`, which is collected for the 13+ age check
+    // and is not something the member chose to share. Left ungated, an
+    // unauthenticated caller could poll it daily to recover the exact month and
+    // day for any user id they hold.
+    const viewerMembership = viewerId
+      ? await ctx.db
+          .query("userCommunities")
+          .withIndex("by_user_community", (q) =>
+            q.eq("userId", viewerId).eq("communityId", args.communityId),
+          )
+          .filter((q) => q.eq(q.field("status"), 1))
+          .first()
+      : null;
+
+    const community = viewerMembership
+      ? await ctx.db.get(args.communityId)
+      : null;
 
     return {
       _id: user._id,
@@ -192,7 +213,9 @@ export const getProfile = query({
       linkedinHandle: user.linkedinHandle ?? null,
       birthdayMonth: user.birthdayMonth ?? null,
       birthdayDay: user.birthdayDay ?? null,
-      isBirthdayToday: isBirthdayToday(user, community?.timezone),
+      isBirthdayToday: viewerMembership
+        ? isBirthdayToday(user, community?.timezone)
+        : false,
       location: user.location ?? null,
       // Community-scoped:
       memberSince: membership.createdAt ?? null,

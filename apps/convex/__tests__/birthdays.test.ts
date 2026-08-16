@@ -14,8 +14,17 @@ const MAR_14_1994 = Date.UTC(1994, 2, 14);
 const MAR_14_AFTERNOON = Date.UTC(2026, 2, 14, 15, 0);
 
 describe("todayMonthDay", () => {
-  test("reads the date in UTC by default", () => {
-    expect(todayMonthDay(undefined, MAR_14_AFTERNOON)).toEqual({
+  test("falls back to the community default zone, not UTC", () => {
+    // 14 March 02:00 UTC is still 13 March in Eastern. A community with no
+    // timezone set must land on the same day its birthday bot does, and the bot
+    // defaults `community.timezone` to America/New_York.
+    const justAfterUtcMidnight = Date.UTC(2026, 2, 14, 2, 0);
+
+    expect(todayMonthDay(undefined, justAfterUtcMidnight)).toEqual({
+      month: 3,
+      day: 13,
+    });
+    expect(todayMonthDay("UTC", justAfterUtcMidnight)).toEqual({
       month: 3,
       day: 14,
     });
@@ -34,10 +43,12 @@ describe("todayMonthDay", () => {
     });
   });
 
-  test("falls back to UTC for an unrecognised timezone instead of throwing", () => {
-    expect(todayMonthDay("Not/AZone", MAR_14_AFTERNOON)).toEqual({
+  test("falls back for an unrecognised timezone instead of throwing", () => {
+    // A bad `communities.timezone` value must never break an inbox query.
+    const justAfterUtcMidnight = Date.UTC(2026, 2, 14, 2, 0);
+    expect(todayMonthDay("Not/AZone", justAfterUtcMidnight)).toEqual({
       month: 3,
-      day: 14,
+      day: 13,
     });
   });
 });

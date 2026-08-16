@@ -77,10 +77,30 @@ describe.each([
     expect(queryByTestId('birthday-badge')).toBeTruthy();
   });
 
-  it('shows the badge for a muted user too — the corners do not collide', () => {
-    const { queryByTestId } = render(
+  it('shows BOTH badges for a muted user on their birthday, in opposite corners', () => {
+    const { getByTestId } = render(
       renderAvatar({ isBirthdayToday: true, notificationsDisabled: true }),
     );
-    expect(queryByTestId('birthday-badge')).toBeTruthy();
+
+    const gift = flatten(getByTestId('birthday-badge').props.style);
+    const bell = flatten(
+      getByTestId('notifications-disabled-badge').props.style,
+    );
+
+    // Neither badge may be dropped to make room for the other, and they must
+    // stay on opposite vertical edges — that split is the whole reason the
+    // birthday badge is top-anchored.
+    expect(gift.top).toBe(-2);
+    expect(gift.bottom).toBeUndefined();
+    expect(bell.bottom).toBe(-2);
+    expect(bell.top).toBeUndefined();
+  });
+
+  it('shows only the bell when it is not their birthday', () => {
+    const { queryByTestId } = render(
+      renderAvatar({ notificationsDisabled: true }),
+    );
+    expect(queryByTestId('notifications-disabled-badge')).toBeTruthy();
+    expect(queryByTestId('birthday-badge')).toBeNull();
   });
 });

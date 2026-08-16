@@ -21,6 +21,7 @@ interface NotificationsDisabledBadgeProps {
    * reads as an overlay rather than a free-floating dot.
    */
   ringColor?: string;
+  testID?: string;
 }
 
 /**
@@ -36,6 +37,7 @@ export function NotificationsDisabledBadge({
   avatarSize,
   style,
   ringColor,
+  testID = 'notifications-disabled-badge',
 }: NotificationsDisabledBadgeProps) {
   const { colors } = useTheme();
   const sizes = useMemo(() => {
@@ -49,6 +51,7 @@ export function NotificationsDisabledBadge({
   return (
     <View
       pointerEvents="none"
+      testID={testID}
       style={[
         styles.badge,
         {

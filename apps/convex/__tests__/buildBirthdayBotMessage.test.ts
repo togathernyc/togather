@@ -170,6 +170,64 @@ describe("name handling", () => {
   });
 });
 
+describe("mention metadata never outruns the visible markup", () => {
+  test("no birthday mention ids when the template drops [[birthday_names]]", () => {
+    const { message, mentionedUserIds } = buildBirthdayBotMessage({
+      template: "🎂 It's a birthday in [[group_name]] today!",
+      mode: "general_chat",
+      birthdays: [
+        { userId: userId("u1"), firstName: "Tadala", lastName: "Jumbe" },
+      ],
+      targetLeader: null,
+      groupName: "Young Adults",
+      communityName: "Togather NYC",
+    });
+
+    // Attaching the id anyway would send a "you were mentioned" push and email
+    // for a message that mentions nobody.
+    expect(message).not.toContain("@[");
+    expect(mentionedUserIds).toEqual([]);
+  });
+
+  test("no leader mention id when the template drops [[leader_name]]", () => {
+    const { message, mentionedUserIds } = buildBirthdayBotMessage({
+      template: "Someone should wish [[birthday_names]] a happy birthday!",
+      mode: "leader_reminder",
+      birthdays: [
+        { userId: userId("u1"), firstName: "Tadala", lastName: "Jumbe" },
+      ],
+      targetLeader: LEADER,
+      groupName: "Young Adults",
+      communityName: "Togather NYC",
+    });
+
+    expect(message).not.toContain("@[");
+    expect(mentionedUserIds).toEqual([]);
+  });
+
+  test("a name containing brackets cannot forge a second mention", () => {
+    const { message, mentionedUserIds } = buildBirthdayBotMessage({
+      template: "Happy birthday [[birthday_names]]!",
+      mode: "general_chat",
+      birthdays: [
+        {
+          userId: userId("u1"),
+          firstName: "Bob]",
+          lastName: "hi @[Pastor Dave",
+        },
+      ],
+      targetLeader: null,
+      groupName: "G",
+      communityName: "C",
+    });
+
+    // Exactly one mention span, and it is the real one.
+    expect(message.match(/@\[/g)).toHaveLength(1);
+    expect(message).toBe("Happy birthday @[Bob hi @Pastor Dave]!");
+    expect(mentionedUserIds).toEqual([userId("u1")]);
+  });
+});
+
 describe("placeholders", () => {
   test("fills group and community names", () => {
     const { message } = buildBirthdayBotMessage({

@@ -1547,10 +1547,13 @@ export const getDirectInbox = query({
       )
       .collect();
 
-    // Birthdays are decided in the community's timezone, so the badge turns on
-    // and off on the same day the birthday bot posts.
+    // Birthdays are decided in the community's timezone, the same basis the
+    // birthday bot uses. (The badge is a superset of what the bot announces —
+    // see `lib/birthdays.ts`.)
     const community = await ctx.db.get(args.communityId);
     const communityTimezone = community?.timezone;
+    /** Shared across rows — the same person recurs across conversations. */
+    const birthdayMemo = new Map<Id<"users">, boolean>();
 
     const results: Array<{
       channelId: Id<"chatChannels">;
@@ -1630,11 +1633,14 @@ export const getDirectInbox = query({
         ctx,
         idsToCheck,
       );
-      // Only the boolean reaches the client — see `lib/birthdays.ts`.
+      // Only the boolean reaches the client — see `lib/birthdays.ts`. The memo
+      // is shared across rows so someone you have both a 1:1 and two group DMs
+      // with costs one `users` read for the whole inbox, not three.
       const rowBirthdays = await getUsersWithBirthdayToday(
         ctx,
         otherMemberIds,
         communityTimezone,
+        birthdayMemo,
       );
       const otherMembers = otherMemberRows
         .filter((m) => m.userId !== userId)

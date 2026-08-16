@@ -13,6 +13,13 @@
  * announces from it — so a badge driven only by the profile pair would leave
  * people celebrated in chat with nothing on their icon.
  *
+ * NOTE the relationship with the bot is a **superset**, not equality:
+ * `getMembersWithBirthdayToday` reads `dateOfBirth` only, so someone who set
+ * just the profile month/day gets a badge and no bot post. That direction is
+ * harmless. The direction that would be wrong — announced in chat with a bare
+ * icon — is the one this union rules out. Matching the bot's *timezone* is what
+ * keeps the two on the same calendar day.
+ *
  * IMPORTANT: callers may send the resulting **boolean** to clients, and nothing
  * else. Returning the underlying date would leak the year that `dateOfBirth`
  * deliberately keeps server-side.
@@ -20,6 +27,7 @@
 
 import type { QueryCtx } from "../_generated/server";
 import type { Id } from "../_generated/dataModel";
+import { resolveTimeZone } from "./localDay";
 
 export type BirthdayFields = {
   dateOfBirth?: number;
@@ -37,38 +45,31 @@ export type MonthDay = {
 /**
  * The month and day it is "now" in an IANA timezone.
  *
- * Falls back to UTC for a missing or unrecognised zone rather than throwing —
- * a bad community timezone should not take down an inbox query.
+ * A missing or unrecognised zone falls back to {@link DEFAULT_TIMEZONE} via the
+ * shared `resolveTimeZone`, which is the same fallback the birthday bot applies
+ * to `community.timezone` (`getDueBirthdayBotConfigs`). Falling back to UTC here
+ * instead would put a legacy community's badge on a different calendar day from
+ * its own bot post for the last hours of the day.
  */
 export function todayMonthDay(timezone?: string, nowMs?: number): MonthDay {
   const now = nowMs === undefined ? new Date() : new Date(nowMs);
 
-  if (timezone && timezone !== "UTC") {
-    try {
-      const parts = new Intl.DateTimeFormat("en-US", {
-        timeZone: timezone,
-        month: "numeric",
-        day: "numeric",
-      }).formatToParts(now);
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: resolveTimeZone(timezone),
+    month: "numeric",
+    day: "numeric",
+  }).formatToParts(now);
 
-      const month = Number(parts.find((p) => p.type === "month")?.value);
-      const day = Number(parts.find((p) => p.type === "day")?.value);
-
-      if (Number.isFinite(month) && Number.isFinite(day)) {
-        return { month, day };
-      }
-    } catch {
-      // Unrecognised timezone — fall through to UTC.
-    }
-  }
-
-  return { month: now.getUTCMonth() + 1, day: now.getUTCDate() };
+  return {
+    month: Number(parts.find((p) => p.type === "month")?.value),
+    day: Number(parts.find((p) => p.type === "day")?.value),
+  };
 }
 
 /**
  * Whether it is this user's birthday on the given day, from either stored
- * birthday. `timezone` should be the community's, so the answer matches what
- * the birthday bot announces.
+ * birthday. `timezone` should be the community's, so this lands on the same
+ * calendar day the birthday bot uses.
  */
 export function isBirthdayToday(
   user: BirthdayFields,
@@ -102,19 +103,31 @@ export async function getUsersWithBirthdayToday(
   ctx: QueryCtx,
   userIds: ReadonlyArray<Id<"users">>,
   timezone?: string,
+  /**
+   * Optional memo shared across calls. A list query that calls this once per
+   * row should pass one — the same person appears in several conversations,
+   * and without it each appearance costs another `users` read.
+   */
+  cache?: Map<Id<"users">, boolean>,
 ): Promise<Set<Id<"users">>> {
   if (userIds.length === 0) return new Set();
 
+  const memo = cache ?? new Map<Id<"users">, boolean>();
   const unique = Array.from(new Set(userIds));
-  const users = await Promise.all(unique.map((userId) => ctx.db.get(userId)));
+  const unknown = unique.filter((id) => !memo.has(id));
 
-  const nowMs = Date.now();
+  if (unknown.length > 0) {
+    const users = await Promise.all(unknown.map((userId) => ctx.db.get(userId)));
+    const nowMs = Date.now();
+    unknown.forEach((userId, i) => {
+      const user = users[i];
+      memo.set(userId, !!user && isBirthdayToday(user, timezone, nowMs));
+    });
+  }
+
   const birthdays = new Set<Id<"users">>();
-  unique.forEach((userId, i) => {
-    const user = users[i];
-    if (user && isBirthdayToday(user, timezone, nowMs)) {
-      birthdays.add(userId);
-    }
-  });
+  for (const userId of unique) {
+    if (memo.get(userId)) birthdays.add(userId);
+  }
   return birthdays;
 }

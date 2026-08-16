@@ -27,6 +27,7 @@ import { Id } from "../_generated/dataModel";
 import { notifyBatch } from "../lib/notifications/send";
 import { resolveChannelCommunityId } from "../lib/messaging/communityScope";
 import { now, getMediaUrlWithTransform, ImagePresets } from "../lib/utils";
+import { todayMonthDay } from "../lib/birthdays";
 import {
   calculateCommunicationBotNextSchedule,
   isScheduleDueNow,
@@ -118,7 +119,10 @@ function fullName(person: {
  * together.
  */
 function mention(displayName: string): string {
-  return `@[${displayName}]`;
+  // Strip brackets so a name can't terminate the markup early and forge a
+  // second, visible-but-inert mention of someone else. Names are free text —
+  // `updateProfile` does not restrict the characters in them.
+  return `@[${displayName.replace(/[[\]]/g, "")}]`;
 }
 
 /**
@@ -166,22 +170,33 @@ export function buildBirthdayBotMessage(params: {
   const isGeneralChat = mode === "general_chat";
   const mentionedUserIds: Id<"users">[] = [];
 
+  // A mention only counts if the reader can actually see it. `mentionedUserIds`
+  // is what drives the mention push *and email*, so attaching an id whose
+  // `@[Name]` markup never reached the message would tell someone they were
+  // mentioned in a message that does not mention them. Leaders can edit these
+  // templates and drop a placeholder, so collect ids only when the placeholder
+  // that renders them is actually present.
+  const namesAreRendered = template.includes("[[birthday_names]]");
+  const leaderIsRendered = template.includes("[[leader_name]]");
+
   const birthdayNames = birthdays
     .map((member) => {
       const name = fullName(member);
       if (!name) return "a member";
       if (!isGeneralChat) return name;
-      mentionedUserIds.push(member.userId);
+      if (namesAreRendered) mentionedUserIds.push(member.userId);
       return mention(name);
     })
     .join(", ");
 
   let leaderName = "leader";
-  if (!isGeneralChat && targetLeader) {
-    leaderName = mention(targetLeader.displayName);
-    mentionedUserIds.push(targetLeader.userId);
-  } else if (targetLeader) {
-    leaderName = targetLeader.displayName;
+  if (targetLeader) {
+    if (isGeneralChat) {
+      leaderName = targetLeader.displayName;
+    } else {
+      leaderName = mention(targetLeader.displayName);
+      if (leaderIsRendered) mentionedUserIds.push(targetLeader.userId);
+    }
   }
 
   let message = fillPlaceholder(template, "[[birthday_names]]", birthdayNames);
@@ -655,31 +670,10 @@ export const getMembersWithBirthdayToday = internalQuery({
     timezone: v.optional(v.string()),
   },
   handler: async (ctx, { groupId, timezone }) => {
-    // Use timezone to determine "today" (default to UTC for backwards compat)
-    const tz = timezone || "UTC";
-    const today = new Date();
-
-    let todayMonth: number;
-    let todayDate: number;
-
-    if (tz === "UTC") {
-      todayMonth = today.getUTCMonth();
-      todayDate = today.getUTCDate();
-    } else {
-      // Get current date in the community's timezone
-      const dateFormatter = new Intl.DateTimeFormat("en-US", {
-        timeZone: tz,
-        month: "numeric",
-        day: "numeric",
-      });
-      const parts = dateFormatter.formatToParts(today);
-      todayMonth =
-        parseInt(parts.find((p) => p.type === "month")?.value || "1", 10) - 1;
-      todayDate = parseInt(
-        parts.find((p) => p.type === "day")?.value || "1",
-        10,
-      );
-    }
+    // Shared with the avatar/profile badge (`lib/birthdays.ts`) so the bot and
+    // the badge can never land on different calendar days. Note `month` is
+    // 1-based here, unlike the `getUTCMonth()` it replaced.
+    const { month: todayMonth, day: todayDate } = todayMonthDay(timezone);
 
     const members = await ctx.db
       .query("groupMembers")
@@ -707,7 +701,7 @@ export const getMembersWithBirthdayToday = internalQuery({
 
       const birthday = new Date(user.dateOfBirth);
       if (
-        birthday.getUTCMonth() === todayMonth &&
+        birthday.getUTCMonth() + 1 === todayMonth &&
         birthday.getUTCDate() === todayDate
       ) {
         birthdayMembers.push({
