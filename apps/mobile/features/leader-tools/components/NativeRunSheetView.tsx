@@ -873,11 +873,17 @@ function ReadOnlyRow({
       ]}
     >
       <View style={styles.timeCol}>
-        <Text style={[styles.timeText, { color: colors.text }]}>
+        <Text
+          style={[styles.timeText, { color: colors.text }]}
+          numberOfLines={1}
+        >
           {clockMs != null ? formatClockTime(clockMs) : "—"}
         </Text>
         {duration ? (
-          <Text style={[styles.durationText, { color: colors.textTertiary }]}>
+          <Text
+            style={[styles.durationText, { color: colors.textTertiary }]}
+            numberOfLines={1}
+          >
             {duration}
           </Text>
         ) : null}
@@ -1028,7 +1034,11 @@ const styles = StyleSheet.create({
   editRow: { flexDirection: "row", alignItems: "center", gap: 4, paddingTop: 4 },
   editText: { fontSize: 14, fontWeight: "600" },
   row: { flexDirection: "row", gap: 10, borderRadius: 12, padding: 12, marginTop: 4 },
-  timeCol: { width: 64 },
+  // 76 fits "10:00 AM" at 14pt/700. `toLocaleTimeString` separates the meridiem
+  // with U+202F (narrow no-break space), so an overflowing label cannot break at
+  // the space and breaks mid-word instead ("10:00 A" / "M") — hence the explicit
+  // width plus `numberOfLines={1}` on the label, which holds at larger font scales.
+  timeCol: { width: 76, flexShrink: 0 },
   timeText: { fontSize: 14, fontWeight: "700" },
   durationText: { fontSize: 11, marginTop: 1 },
   content: { flex: 1, gap: 4 },
