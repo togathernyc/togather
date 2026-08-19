@@ -1,14 +1,12 @@
 # Agent lanes — which one to reach for
 
-There are two interactive coding lanes on a maintainer's machine, plus the
-scheduled fleet. They bill to different budgets, so the choice is a spend
-decision as much as a quality one.
+There are two interactive coding lanes on a maintainer's machine. They bill to
+different budgets, so the choice is a spend decision as much as a quality one.
 
 | Lane | Engine | Bills to | Harness |
 | --- | --- | --- | --- |
 | **Claude lane** | Claude (Opus / Sonnet) | Claude Max subscription | Claude Code, Conductor |
 | **OpenCode lane** | Ollama Cloud — `glm-5.2`, `deepseek-v4-flash` | Ollama Cloud subscription | OpenCode CLI/TUI, Conductor |
-| Gardeners / watchdog | Ollama Cloud (`glm-5.2`) | Ollama Cloud subscription | gh-aw on GitHub Actions — see [GARDENERS.md](GARDENERS.md) |
 
 The two interactive lanes are **flat-rate plans, not metered APIs**. The point of
 having both is that they exhaust independently: when the Claude lane hits a
@@ -77,6 +75,3 @@ it is personal config, not repo config, because the API key is machine-local:
   (`launchctl setenv OLLAMA_API_KEY …`) or a credential stored via
   `opencode providers login`.
 - `AGENTS.md` + `rules/rn-web.md` — the always-loaded rules described above.
-
-The gardeners reach the same models a different way — GitHub Actions secrets and
-a pinned `engine.env` block. See [GARDENERS.md](GARDENERS.md).
