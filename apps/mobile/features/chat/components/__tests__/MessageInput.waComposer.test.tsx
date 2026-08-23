@@ -242,6 +242,63 @@ describe('MessageInput WhatsApp composer (flag-on)', () => {
     expect(getByText('add')).toBeTruthy();
   });
 
+  /**
+   * Android regression guard (device video, 2026-08-23: tapping the composer
+   * never raised the keyboard, while '+' / camera / mic beside it all worked).
+   *
+   * The empty-field hint is an absolutely-positioned overlay covering the
+   * whole tappable area of the TextInput underneath it, so it MUST be
+   * transparent to touches. `pointerEvents` on a <Text> only achieves that on
+   * iOS: on Android `TouchTargetHelper` reads pointerEvents solely off views
+   * implementing `ReactPointerEventsView`, and in RN 0.81 `ReactViewGroup`
+   * (<View>) is the only one — `ReactTextView` does not implement it, and
+   * `TextProps` does not even declare the prop. The hit test walks siblings
+   * topmost-first and returns the first hit with no fall-through, so a bare
+   * <Text pointerEvents="none"> swallows every tap on the field and the
+   * EditText never focuses. Since the hint only unmounts once the field is
+   * non-empty, that state is unrecoverable.
+   *
+   * So: the opt-out must live on a host <View>, never on the <Text>.
+   */
+  it('makes the empty-field hint tap-through via a View, not a Text (Android)', () => {
+    const { getByTestId, UNSAFE_root } = render(
+      <MessageInput channelId={'test-channel' as any} />
+    );
+
+    const hint = getByTestId('wa-composer-hint');
+    expect(hint.type).toBe('Text');
+
+    // The hint sits over the input, inside the pill.
+    expect(isInside(hint, getByTestId('wa-composer-field'))).toBe(true);
+
+    // Some ancestor View between the hint and the pill opts out of touches.
+    let node: any = hint.parent;
+    let shield: any = null;
+    while (node && node !== getByTestId('wa-composer-field')) {
+      if (node.type === 'View' && node.props?.pointerEvents === 'none') {
+        shield = node;
+        break;
+      }
+      node = node.parent;
+    }
+    expect(shield).not.toBeNull();
+
+    // ...and no <Text> anywhere in the composer relies on the prop Android drops.
+    for (const text of UNSAFE_root.findAllByType('Text' as any)) {
+      expect(text.props?.pointerEvents).toBeUndefined();
+    }
+
+    // Splitting the style across the two nodes must not move or restyle the
+    // hint: the box keeps the insets, the line keeps its italic line box.
+    const box = StyleSheet.flatten(shield.props.style);
+    expect(box.position).toBe('absolute');
+    expect(box.left).toBe(16);
+    expect(box.right).toBe(44);
+    const line = StyleSheet.flatten(hint.props.style);
+    expect(line.fontStyle).toBe('italic');
+    expect(line.lineHeight).toBe(WA_FIELD_HEIGHT);
+  });
+
   it('hides the in-field sticker glyph while a DM request is pending', () => {
     const { queryByLabelText } = render(
       <MessageInput channelId={'test-channel' as any} recipientPending />
