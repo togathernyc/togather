@@ -1297,12 +1297,21 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, onReply
                inside it. The hint covers the whole tappable area of the
                TextInput above, and on Android `pointerEvents` is only read off
                views implementing `ReactPointerEventsView` — `ReactViewGroup`
-               (<View>) is the only one; `ReactTextView` isn't, and `TextProps`
-               doesn't even declare the prop. A bare <Text pointerEvents="none">
-               therefore stays the hit target (the sibling walk is topmost-first
-               with no fall-through), the EditText never focuses, and since the
-               hint only unmounts once the field is non-empty the composer is
-               permanently dead. See the regression test next door. */
+               (<View>) is the only one, `ReactTextView` isn't. So a bare
+               <Text pointerEvents="none"> stays the hit target (the sibling
+               walk is topmost-first with no fall-through), so the EditText
+               never focuses. The hint only unmounts once the field is
+               non-empty, so the state can't be typed out of. (Not quite 100%
+               dead: the hint stops at `right: 44`, so taps in that strip still
+               landed — when no KLIPY glyph is there to take them.)
+
+               The trap: `Text.d.ts` DOES declare the prop — "Similar to
+               `View`'s `pointerEvents`" — so the broken version typechecks and
+               ships green. Only the Flow `TextProps.js` omits it. Nothing but a
+               device catches this.
+               See: ReactAndroid/src/main/java/com/facebook/react/uimanager/
+               TouchTargetHelper.kt:317 (pointerEvents read) and :217 (the
+               topmost-first sibling walk). */
             <View pointerEvents="none" style={styles.waHintOverlay}>
               <Text
                 testID="wa-composer-hint"

@@ -246,36 +246,50 @@ describe('MessageInput WhatsApp composer (flag-on)', () => {
    * Android regression guard (device video, 2026-08-23: tapping the composer
    * never raised the keyboard, while '+' / camera / mic beside it all worked).
    *
-   * The empty-field hint is an absolutely-positioned overlay covering the
-   * whole tappable area of the TextInput underneath it, so it MUST be
-   * transparent to touches. `pointerEvents` on a <Text> only achieves that on
-   * iOS: on Android `TouchTargetHelper` reads pointerEvents solely off views
-   * implementing `ReactPointerEventsView`, and in RN 0.81 `ReactViewGroup`
-   * (<View>) is the only one — `ReactTextView` does not implement it, and
-   * `TextProps` does not even declare the prop. The hit test walks siblings
-   * topmost-first and returns the first hit with no fall-through, so a bare
-   * <Text pointerEvents="none"> swallows every tap on the field and the
-   * EditText never focuses. Since the hint only unmounts once the field is
-   * non-empty, that state is unrecoverable.
+   * Anything absolutely positioned over the pill is a hit target on Android
+   * unless it is a <View> that opts out. `pointerEvents` on a <Text> does not
+   * count: `Text.d.ts` declares the prop ("Similar to `View`'s"), so the broken
+   * version typechecks and ships green, but Android reads it only off
+   * `ReactViewGroup`. See the note at the hint in MessageInput.tsx.
    *
-   * So: the opt-out must live on a host <View>, never on the <Text>.
+   * Runs under Android because the bug is Android-only and the composer does
+   * render platform-dependently — under iOS a `Platform.OS === 'android'`
+   * branch could reintroduce exactly this bug and still pass.
+   *
+   * Structural guard only: RNTL runs no hit test, so this proves tree shape,
+   * never that a real tap focuses a real EditText. That needs a device. It also
+   * only sees the default render state (empty field, no reply preview /
+   * offline hint / pending request / GIF key).
    */
-  it('makes the empty-field hint tap-through via a View, not a Text (Android)', () => {
-    const { getByTestId, UNSAFE_root } = render(
+  it('keeps every overlay over the composer field tap-through (Android)', () => {
+    Platform.OS = 'android';
+
+    const { getByTestId } = render(
       <MessageInput channelId={'test-channel' as any} />
     );
 
+    const field = getByTestId('wa-composer-field');
     const hint = getByTestId('wa-composer-hint');
     expect(hint.type).toBe('Text');
+    expect(isInside(hint, field)).toBe(true);
 
-    // The hint sits over the input, inside the pill.
-    expect(isInside(hint, getByTestId('wa-composer-field'))).toBe(true);
+    /** Element name, whether the node is a host string or a composite. */
+    const nameOf = (node: any) =>
+      typeof node.type === 'string'
+        ? node.type
+        : node.type?.displayName ?? node.type?.name ?? '';
 
-    // Some ancestor View between the hint and the pill opts out of touches.
+    /** On Android only a View honors the opt-out — in prop or style form. */
+    const optsOutOfTouches = (node: any) =>
+      !/Text$/.test(nameOf(node)) &&
+      (node.props?.pointerEvents === 'none' ||
+        StyleSheet.flatten(node.props?.style)?.pointerEvents === 'none');
+
+    // The hint specifically is shielded by such a View before the pill.
     let node: any = hint.parent;
     let shield: any = null;
-    while (node && node !== getByTestId('wa-composer-field')) {
-      if (node.type === 'View' && node.props?.pointerEvents === 'none') {
+    while (node && node !== field) {
+      if (nameOf(node) === 'View' && optsOutOfTouches(node)) {
         shield = node;
         break;
       }
@@ -283,20 +297,47 @@ describe('MessageInput WhatsApp composer (flag-on)', () => {
     }
     expect(shield).not.toBeNull();
 
-    // ...and no <Text> anywhere in the composer relies on the prop Android drops.
-    for (const text of UNSAFE_root.findAllByType('Text' as any)) {
+    // The general invariant, not just this node: every absolutely-positioned
+    // child of the pill must be tap-through, or it steals the input's taps.
+    // Guards the naive next overlay (a character counter, an edit badge...).
+    for (const child of field.children) {
+      if (typeof child === 'string') continue;
+      const style = StyleSheet.flatten((child as any).props?.style);
+      if (style?.position !== 'absolute') continue;
+      expect(optsOutOfTouches(child)).toBe(true);
+    }
+
+    // No <Text> in the composer field relies on the prop Android drops.
+    // Scoped to the field: Ionicons renders its glyphs as <Text>, so a
+    // repo-wide sweep would fail on a vector-icons bump, not on this bug.
+    for (const text of (field as any).findAllByType('Text')) {
       expect(text.props?.pointerEvents).toBeUndefined();
     }
 
-    // Splitting the style across the two nodes must not move or restyle the
-    // hint: the box keeps the insets, the line keeps its italic line box.
+    // Splitting one style entry into two must not move or restyle the hint.
+    // `lineHeight` is what gives the box its height; `top`/`bottom` must stay
+    // unset so waFieldWrap's `alignItems: 'flex-end'` seats it on the baseline.
     const box = StyleSheet.flatten(shield.props.style);
     expect(box.position).toBe('absolute');
     expect(box.left).toBe(16);
     expect(box.right).toBe(44);
+    expect(box.top).toBeUndefined();
+    expect(box.bottom).toBeUndefined();
     const line = StyleSheet.flatten(hint.props.style);
+    expect(line.fontSize).toBe(14);
     expect(line.fontStyle).toBe('italic');
     expect(line.lineHeight).toBe(WA_FIELD_HEIGHT);
+  });
+
+  it('shows the hint only while the field is empty', () => {
+    // If the hint ever stopped unmounting it would sit over the typed text.
+    const { getByTestId, queryByTestId } = render(
+      <MessageInput channelId={'test-channel' as any} />
+    );
+    expect(getByTestId('wa-composer-hint').props.children).toBe('Message...');
+
+    fireEvent.changeText(getByTestId('wa-composer-input'), 'hello');
+    expect(queryByTestId('wa-composer-hint')).toBeNull();
   });
 
   it('hides the in-field sticker glyph while a DM request is pending', () => {
