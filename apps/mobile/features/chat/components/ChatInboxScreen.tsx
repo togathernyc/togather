@@ -1070,6 +1070,13 @@ export function ChatInboxScreen({
             </WaFloatingButton>
           )}
         </View>
+        {/* TODO: Investigate - `pointerEvents` is a no-op on <Text> on Android
+            (only `ReactViewGroup` implements `ReactPointerEventsView`), so this
+            title swallows taps in its rect there. `Text.d.ts` declares the prop,
+            which is why it typechecks. Fix needs an <Animated.View> wrapper with
+            the animated style moved onto it — device-verify the header
+            animation when doing it. Same defect as the composer hint fixed in
+            MessageInput.tsx; see the note there. */}
         <Animated.Text
           style={[styles.smallTitle, { color: colors.text }, smallTitleStyle]}
           numberOfLines={1}
@@ -1151,6 +1158,13 @@ export function ChatInboxScreen({
             {collapsingHeaderTitle}
           </Text>
         </Animated.View>
+        {/* TODO: Investigate - `pointerEvents` is a no-op on <Text> on Android
+            (only `ReactViewGroup` implements `ReactPointerEventsView`), so this
+            title swallows taps in its rect there. `Text.d.ts` declares the prop,
+            which is why it typechecks. Fix needs an <Animated.View> wrapper with
+            the animated style moved onto it — device-verify the header
+            animation when doing it. Same defect as the composer hint fixed in
+            MessageInput.tsx; see the note there. */}
         <Animated.Text
           style={[styles.smallTitle, { color: colors.text }, smallTitleStyle]}
           numberOfLines={1}

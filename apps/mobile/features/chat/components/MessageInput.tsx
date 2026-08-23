@@ -1293,14 +1293,35 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, onReply
             editable={!uploading}
           />
           {text.length === 0 && (
-            <Text
-              pointerEvents="none"
-              numberOfLines={1}
-              ellipsizeMode="tail"
-              style={[styles.waHintOverlay, { color: themeColors.textTertiary }]}
-            >
-              {(placeholder ?? "").trim() || "Message..."}
-            </Text>
+            /* The tap-through opt-out lives on this <View>, NOT on the <Text>
+               inside it. The hint covers the whole tappable area of the
+               TextInput above, and on Android `pointerEvents` is only read off
+               views implementing `ReactPointerEventsView` — `ReactViewGroup`
+               (<View>) is the only one, `ReactTextView` isn't. So a bare
+               <Text pointerEvents="none"> stays the hit target (the sibling
+               walk is topmost-first with no fall-through), so the EditText
+               never focuses. The hint only unmounts once the field is
+               non-empty, so the state can't be typed out of. (Not quite 100%
+               dead: the hint stops at `right: 44`, so taps in that strip still
+               landed — when no KLIPY glyph is there to take them.)
+
+               The trap: `Text.d.ts` DOES declare the prop — "Similar to
+               `View`'s `pointerEvents`" — so the broken version typechecks and
+               ships green. Only the Flow `TextProps.js` omits it. Nothing but a
+               device catches this.
+               See: ReactAndroid/src/main/java/com/facebook/react/uimanager/
+               TouchTargetHelper.kt:317 (pointerEvents read) and :217 (the
+               topmost-first sibling walk). */
+            <View pointerEvents="none" style={styles.waHintOverlay}>
+              <Text
+                testID="wa-composer-hint"
+                numberOfLines={1}
+                ellipsizeMode="tail"
+                style={[styles.waHintOverlayText, { color: themeColors.textTertiary }]}
+              >
+                {(placeholder ?? "").trim() || "Message..."}
+              </Text>
+            </View>
           )}
           {/* Hidden without a KLIPY key — the documented degradation is "GIF
               picker hidden", matching the attachment-sheet option's gate. */}
@@ -1637,9 +1658,12 @@ const styles = StyleSheet.create({
     // paints the browser's focus outline around it. Ignored on native.
     outlineStyle: 'none',
   } as any,
-  /** Empty-field hint overlay: one quiet italic line, vertically centered
-   *  in the pill; sits behind taps (pointerEvents none) and clear of the
-   *  in-field sticker glyph. */
+  /** Empty-field hint overlay: the positioning box. Takes its height from the
+   *  single line of text inside it (`lineHeight` === the field height), and
+   *  with no `top`/`bottom` the wrap's `alignItems: 'flex-end'` seats it on the
+   *  field's baseline row — the geometry the hint Text used to own directly.
+   *  Carries `pointerEvents="none"` in the JSX; see the note there for why the
+   *  <Text> can't. */
   waHintOverlay: {
     position: 'absolute',
     left: 16,
@@ -1647,6 +1671,9 @@ const styles = StyleSheet.create({
     // padding + the wrap's 4pt right padding = 38, rounded up) — NOT the field
     // height, which this deliberately does not track.
     right: 44,
+  },
+  /** One quiet italic line, vertically centered in the pill by its line box. */
+  waHintOverlayText: {
     fontSize: 14,
     fontStyle: 'italic',
     lineHeight: WA_COMPOSER_FIELD_HEIGHT,
