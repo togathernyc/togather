@@ -19,7 +19,7 @@
  * - Uses `api.functions.groups.getLeaders` and `api.functions.groups.isLeader` for checks
  */
 
-import { v } from "convex/values";
+import { v, ConvexError } from "convex/values";
 import { query, mutation } from "../_generated/server";
 import type { QueryCtx, MutationCtx } from "../_generated/server";
 import { internal } from "../_generated/api";
@@ -824,6 +824,20 @@ export const createJoinRequest = mutation({
     const userId = await requireAuth(ctx, args.token);
     const timestamp = now();
 
+    // An archived group accepts no new members. `groups.join` has always
+    // refused them; this guard lives here too so the request path can't be
+    // used to queue a membership (and notify admins) for a dead group —
+    // archived groups stay reachable by share link for community admins.
+    const group = await ctx.db.get(args.groupId);
+    if (!group) {
+      throw new ConvexError("Group not found");
+    }
+    if (group.isArchived) {
+      throw new ConvexError(
+        "This group is archived and not accepting new members"
+      );
+    }
+
     // Check if already an active member
     const existingMember = await ctx.db
       .query("groupMembers")
@@ -832,13 +846,17 @@ export const createJoinRequest = mutation({
       )
       .first();
 
+    // Both guards are shown to the user, so they throw ConvexError — a plain
+    // Error surfaces to production clients as an opaque "Server Error".
     if (existingMember && !existingMember.leftAt) {
-      throw new Error("You are already a member of this group");
+      throw new ConvexError("You are already a member of this group");
     }
 
     // Check for existing pending request
     if (existingMember && existingMember.requestStatus === "pending") {
-      throw new Error("You already have a pending join request for this group");
+      throw new ConvexError(
+        "You already have a pending join request for this group"
+      );
     }
 
     // Update existing record or create new one

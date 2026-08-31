@@ -24,8 +24,11 @@ import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppImage } from "@components/ui";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
+import { errorMessage, showAlert } from "@utils/error-handling";
 import { useTheme } from "@hooks/useTheme";
 import { MembersRow } from "@/features/groups/components/MembersRow";
+import { useMyPendingJoinRequests } from "@/features/groups/hooks/useMyPendingJoinRequests";
+import { PendingRequestLimitModal } from "@/features/groups/components/PendingRequestLimitModal";
 import { JoinCommunityCard } from "@/features/events/components/JoinCommunityCard";
 import { SharedPageTabBar } from "@/features/events/components/SharedPageTabBar";
 import { DOMAIN_CONFIG } from "@togather/shared";
@@ -92,6 +95,7 @@ export default function GroupPageClient({ initialGroupData }: GroupPageClientPro
   // Check if we're in the (user) modal group to navigate correctly
   const isInUserGroup = segments[0] === "(user)";
   const [isJoining, setIsJoining] = useState(false);
+  const [showPendingLimitModal, setShowPendingLimitModal] = useState(false);
   const [authToken, setAuthToken] = useState<string | null>(null);
 
   // Load auth token from AsyncStorage
@@ -115,8 +119,21 @@ export default function GroupPageClient({ initialGroupData }: GroupPageClientPro
   const isLoading = group === undefined && !initialGroupData;
   const error = group === null;
 
-  // Join group mutation
+  // Pending join-request cap. This is a frontend-only gate (see the hook), so
+  // every surface that can create a request has to apply it — otherwise a
+  // shared link becomes a way around the limit. Count against the *group's*
+  // community, not the viewer's active one: a share link routinely points at a
+  // community the viewer isn't currently in.
+  const { isAtLimit: isAtPendingLimit, isLoading: isPendingLimitLoading } =
+    useMyPendingJoinRequests(groupData?.communityId as string | undefined);
+
+  // Join mutations. Public groups join outright; private groups can only be
+  // entered by submitting a request for a leader to approve — `groups.join`
+  // rejects private groups outright, so it must never be used for them.
   const joinGroupMutation = useAuthenticatedMutation(api.functions.groups.mutations.join);
+  const createJoinRequestMutation = useAuthenticatedMutation(
+    api.functions.groupMembers.createJoinRequest
+  );
 
   // Handle sharing the group
   const handleShare = async () => {
@@ -161,7 +178,11 @@ export default function GroupPageClient({ initialGroupData }: GroupPageClientPro
     router.push("/(auth)/signin");
   };
 
-  // Handle joining the group
+  // A request press is blocked both while it is in flight and while the
+  // pending-request cap is still loading.
+  const isRequestBusy = isJoining || isPendingLimitLoading;
+
+  // Handle joining the group (or requesting to join, for private groups)
   const handleJoin = async () => {
     if (!groupData?.id || !authToken) {
       // If not authenticated, navigate to sign in with return URL
@@ -169,11 +190,31 @@ export default function GroupPageClient({ initialGroupData }: GroupPageClientPro
       return;
     }
 
+    const groupId = groupData.id as Id<"groups">;
+    const isPrivate = !groupData.isPublic;
+
+    if (isPrivate) {
+      if (isPendingLimitLoading) return;
+      if (isAtPendingLimit) {
+        setShowPendingLimitModal(true);
+        return;
+      }
+    }
+
     setIsJoining(true);
     try {
-      await joinGroupMutation({
-        groupId: groupData.id as Id<"groups">,
-      });
+      if (isPrivate) {
+        await createJoinRequestMutation({ groupId });
+        // The reactive getByShortId query picks up the pending status and
+        // swaps the button for the "Request Pending" state on its own.
+        showAlert(
+          "Request Sent",
+          `Your request to join ${groupData.name} has been sent to the group's leaders.`
+        );
+        return;
+      }
+
+      await joinGroupMutation({ groupId });
       Alert.alert("Joined!", `You've joined ${groupData.name}`, [
         {
           text: "View Group",
@@ -181,7 +222,7 @@ export default function GroupPageClient({ initialGroupData }: GroupPageClientPro
         },
       ]);
     } catch (error: any) {
-      Alert.alert("Error", error.message || "Failed to join group");
+      showAlert("Error", errorMessage(error, "Failed to join group"));
     } finally {
       setIsJoining(false);
     }
@@ -416,13 +457,18 @@ export default function GroupPageClient({ initialGroupData }: GroupPageClientPro
             <Text style={styles.primaryButtonText}>Sign In to Join</Text>
           </TouchableOpacity>
         ) : !groupData.isPublic ? (
-          // Private group - request to join
+          // Private group - request to join. The cap query gates this press
+          // (handleJoin returns early while it loads), so the button has to
+          // show that wait or the tap looks like it did nothing.
           <TouchableOpacity
-            style={[styles.primaryButton, isJoining && styles.buttonDisabled]}
+            style={[
+              styles.primaryButton,
+              isRequestBusy && styles.buttonDisabled,
+            ]}
             onPress={handleJoin}
-            disabled={isJoining}
+            disabled={isRequestBusy}
           >
-            {isJoining ? (
+            {isRequestBusy ? (
               <ActivityIndicator color="#fff" />
             ) : (
               <Text style={styles.primaryButtonText}>Request to Join</Text>
@@ -443,6 +489,15 @@ export default function GroupPageClient({ initialGroupData }: GroupPageClientPro
           </TouchableOpacity>
         )}
       </View>
+
+      <PendingRequestLimitModal
+        visible={showPendingLimitModal}
+        onDismiss={() => setShowPendingLimitModal(false)}
+        onViewRequests={() => {
+          setShowPendingLimitModal(false);
+          router.push("/(tabs)/profile");
+        }}
+      />
 
       {/* Tab bar for authenticated users (web only — native has its own tab bar) */}
       {Platform.OS === "web" && isAuthenticated && (

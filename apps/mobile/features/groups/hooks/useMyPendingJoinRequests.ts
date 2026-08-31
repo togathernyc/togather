@@ -22,7 +22,13 @@ export type PendingJoinRequest = {
 };
 
 /**
- * Returns the current user's pending join requests within the active community.
+ * Returns the current user's pending join requests within a community.
+ *
+ * Defaults to the user's active community, which is what every in-app caller
+ * wants. Pass `communityId` when the surface can show a group from a *different*
+ * community than the active one — a share link, for example: the cap has to be
+ * counted in the community the request would actually be created in, or it
+ * blocks and permits the wrong things.
  *
  * - `requests` — list of pending requests, newest first.
  * - `count` — convenience accessor (length).
@@ -33,15 +39,17 @@ export type PendingJoinRequest = {
  * selected (rather than throwing) so callers don't need to special-case those
  * states — the gate simply doesn't fire.
  */
-export function useMyPendingJoinRequests() {
+export function useMyPendingJoinRequests(communityId?: string | null) {
   const { token, community } = useAuth();
+
+  const targetCommunityId = communityId ?? community?.id;
 
   const data = useQuery(
     api.functions.groupMembers.listMyPendingJoinRequests,
-    token && community?.id
+    token && targetCommunityId
       ? {
           token,
-          communityId: community.id as Id<"communities">,
+          communityId: targetCommunityId as Id<"communities">,
         }
       : "skip"
   );
@@ -52,6 +60,6 @@ export function useMyPendingJoinRequests() {
     requests,
     count: requests.length,
     isAtLimit: requests.length >= PENDING_JOIN_REQUEST_LIMIT,
-    isLoading: data === undefined && !!token && !!community?.id,
+    isLoading: data === undefined && !!token && !!targetCommunityId,
   };
 }

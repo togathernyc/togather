@@ -540,18 +540,24 @@ export const join = mutation({
     const userId = await requireAuth(ctx, args.token);
     const timestamp = now();
 
-    // Check if group exists and is not archived
+    // Check if group exists and is not archived.
+    // These are user-facing conditions, so they throw ConvexError: production
+    // Convex replaces a plain Error's message with a bare "Server Error",
+    // which left users staring at an opaque alert instead of the reason.
     const group = await ctx.db.get(args.groupId);
     if (!group) {
-      throw new Error("Group not found");
+      throw new ConvexError("Group not found");
     }
     if (group.isArchived) {
-      throw new Error("This group is archived and not accepting new members");
+      throw new ConvexError(
+        "This group is archived and not accepting new members"
+      );
     }
 
-    // Check if this is a private group
+    // Private groups are join-by-approval only — callers must use
+    // groupMembers.createJoinRequest instead.
     if (!group.isPublic) {
-      throw new Error("This is a private group. Please request to join.");
+      throw new ConvexError("This is a private group. Please request to join.");
     }
 
     // Check if already a member
