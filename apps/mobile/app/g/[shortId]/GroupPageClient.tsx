@@ -178,6 +178,10 @@ export default function GroupPageClient({ initialGroupData }: GroupPageClientPro
     router.push("/(auth)/signin");
   };
 
+  // A request press is blocked both while it is in flight and while the
+  // pending-request cap is still loading.
+  const isRequestBusy = isJoining || isPendingLimitLoading;
+
   // Handle joining the group (or requesting to join, for private groups)
   const handleJoin = async () => {
     if (!groupData?.id || !authToken) {
@@ -453,13 +457,18 @@ export default function GroupPageClient({ initialGroupData }: GroupPageClientPro
             <Text style={styles.primaryButtonText}>Sign In to Join</Text>
           </TouchableOpacity>
         ) : !groupData.isPublic ? (
-          // Private group - request to join
+          // Private group - request to join. The cap query gates this press
+          // (handleJoin returns early while it loads), so the button has to
+          // show that wait or the tap looks like it did nothing.
           <TouchableOpacity
-            style={[styles.primaryButton, isJoining && styles.buttonDisabled]}
+            style={[
+              styles.primaryButton,
+              isRequestBusy && styles.buttonDisabled,
+            ]}
             onPress={handleJoin}
-            disabled={isJoining}
+            disabled={isRequestBusy}
           >
-            {isJoining ? (
+            {isRequestBusy ? (
               <ActivityIndicator color="#fff" />
             ) : (
               <Text style={styles.primaryButtonText}>Request to Join</Text>

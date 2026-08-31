@@ -245,6 +245,21 @@ describe("GroupPageClient join routing", () => {
     expect(pendingLimitCommunityIds).not.toContain("community-1");
   });
 
+  it("disables the request button while the cap query is still loading", async () => {
+    // handleJoin returns early in this window, so an enabled button would eat
+    // the press with no mutation and no feedback.
+    mockPendingLimit = { isAtLimit: false, isLoading: true };
+    const { getByText, queryByText, UNSAFE_getByType } = await renderPage({
+      ...baseGroup,
+      isPublic: false,
+    });
+
+    expect(queryByText("Request to Join")).toBeNull();
+    const { ActivityIndicator } = require("react-native");
+    expect(UNSAFE_getByType(ActivityIndicator)).toBeTruthy();
+    expect(requestMutation).not.toHaveBeenCalled();
+  });
+
   it("does not apply the pending-request cap to a direct public-group join", async () => {
     mockPendingLimit = { isAtLimit: true, isLoading: false };
     const { getByText } = await renderPage({ ...baseGroup, isPublic: true });

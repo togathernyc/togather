@@ -122,6 +122,31 @@ describe("joining a private group from a share link", () => {
     ).rejects.toThrow("You already have a pending join request for this group");
   });
 
+  test("an archived private group refuses join requests", async () => {
+    const t = convexTest(schema, modules);
+    const { groupId, accessToken } = await seed(t, false);
+    await t.run(async (ctx) => {
+      await ctx.db.patch(groupId, { isArchived: true });
+    });
+
+    // getByShortId still serves archived groups to community admins, so the
+    // share link stays reachable — the guard has to be on the mutation.
+    await expect(
+      t.mutation(api.functions.groupMembers.createJoinRequest, {
+        token: accessToken,
+        groupId,
+      })
+    ).rejects.toThrow("This group is archived and not accepting new members");
+
+    const rows = await t.run(async (ctx) => {
+      return await ctx.db
+        .query("groupMembers")
+        .withIndex("by_group", (q) => q.eq("groupId", groupId))
+        .collect();
+    });
+    expect(rows).toHaveLength(0);
+  });
+
   test("public groups still join directly", async () => {
     const t = convexTest(schema, modules);
     const { groupId, accessToken } = await seed(t, true);
