@@ -124,6 +124,19 @@ jest.mock("@/features/events/components/SharedPageTabBar", () => {
 
 jest.mock("expo-clipboard", () => ({ setStringAsync: jest.fn() }));
 
+let mockPendingLimit = { isAtLimit: false, isLoading: false };
+jest.mock("@/features/groups/hooks/useMyPendingJoinRequests", () => ({
+  useMyPendingJoinRequests: () => mockPendingLimit,
+}));
+
+jest.mock("@/features/groups/components/PendingRequestLimitModal", () => {
+  const { Text } = require("react-native");
+  return {
+    PendingRequestLimitModal: ({ visible }: any) =>
+      visible ? <Text>pending-limit-modal</Text> : null,
+  };
+});
+
 const baseGroup = {
   id: "group-1",
   shortId: "abc123",
@@ -150,6 +163,7 @@ async function renderPage(group: Record<string, unknown>) {
 describe("GroupPageClient join routing", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockPendingLimit = { isAtLimit: false, isLoading: false };
     jest.spyOn(Alert, "alert").mockImplementation(() => {});
     (useAuthenticatedMutation as jest.Mock).mockImplementation((ref: string) => {
       if (ref === JOIN_REF) return joinMutation;
@@ -187,10 +201,14 @@ describe("GroupPageClient join routing", () => {
     expect(queryByText("Request to Join")).toBeNull();
   });
 
-  it("surfaces the server's message rather than a raw Convex error string", async () => {
-    requestMutation.mockRejectedValueOnce(
-      new Error("You already have a pending join request for this group")
+  it("surfaces the ConvexError payload rather than a raw Convex error string", async () => {
+    // What the Convex client actually throws: the readable reason lives on
+    // `.data` (forwardData), while `.message` keeps the opaque server text.
+    const convexError: Error & { data?: string } = new Error(
+      "[CONVEX M(functions/groupMembers:createJoinRequest)] [Request ID: abc] Server Error"
     );
+    convexError.data = "You already have a pending join request for this group";
+    requestMutation.mockRejectedValueOnce(convexError);
     const { getByText } = await renderPage({ ...baseGroup, isPublic: false });
 
     fireEvent.press(getByText("Request to Join"));
@@ -201,5 +219,24 @@ describe("GroupPageClient join routing", () => {
         "You already have a pending join request for this group"
       )
     );
+  });
+
+  it("blocks a request at the pending-request cap instead of creating a third", async () => {
+    mockPendingLimit = { isAtLimit: true, isLoading: false };
+    const { getByText } = await renderPage({ ...baseGroup, isPublic: false });
+
+    fireEvent.press(getByText("Request to Join"));
+
+    await waitFor(() => expect(getByText("pending-limit-modal")).toBeTruthy());
+    expect(requestMutation).not.toHaveBeenCalled();
+  });
+
+  it("does not apply the pending-request cap to a direct public-group join", async () => {
+    mockPendingLimit = { isAtLimit: true, isLoading: false };
+    const { getByText } = await renderPage({ ...baseGroup, isPublic: true });
+
+    fireEvent.press(getByText("Join Group"));
+
+    await waitFor(() => expect(joinMutation).toHaveBeenCalledWith({ groupId: "group-1" }));
   });
 });

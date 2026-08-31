@@ -24,9 +24,11 @@ import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppImage } from "@components/ui";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
-import { formatError, showAlert } from "@utils/error-handling";
+import { errorMessage, showAlert } from "@utils/error-handling";
 import { useTheme } from "@hooks/useTheme";
 import { MembersRow } from "@/features/groups/components/MembersRow";
+import { useMyPendingJoinRequests } from "@/features/groups/hooks/useMyPendingJoinRequests";
+import { PendingRequestLimitModal } from "@/features/groups/components/PendingRequestLimitModal";
 import { JoinCommunityCard } from "@/features/events/components/JoinCommunityCard";
 import { SharedPageTabBar } from "@/features/events/components/SharedPageTabBar";
 import { DOMAIN_CONFIG } from "@togather/shared";
@@ -93,12 +95,19 @@ export default function GroupPageClient({ initialGroupData }: GroupPageClientPro
   // Check if we're in the (user) modal group to navigate correctly
   const isInUserGroup = segments[0] === "(user)";
   const [isJoining, setIsJoining] = useState(false);
+  const [showPendingLimitModal, setShowPendingLimitModal] = useState(false);
   const [authToken, setAuthToken] = useState<string | null>(null);
 
   // Load auth token from AsyncStorage
   useEffect(() => {
     AsyncStorage.getItem('auth_token').then(setAuthToken);
   }, []);
+
+  // Pending join-request cap. This is a frontend-only gate (see the hook), so
+  // every surface that can create a request has to apply it — otherwise a
+  // shared link becomes a way around the limit.
+  const { isAtLimit: isAtPendingLimit, isLoading: isPendingLimitLoading } =
+    useMyPendingJoinRequests();
 
   // Get user data to check community membership
   const { data: userData, isLoading: isLoadingUser } = useUserData(isAuthenticated);
@@ -178,6 +187,14 @@ export default function GroupPageClient({ initialGroupData }: GroupPageClientPro
     const groupId = groupData.id as Id<"groups">;
     const isPrivate = !groupData.isPublic;
 
+    if (isPrivate) {
+      if (isPendingLimitLoading) return;
+      if (isAtPendingLimit) {
+        setShowPendingLimitModal(true);
+        return;
+      }
+    }
+
     setIsJoining(true);
     try {
       if (isPrivate) {
@@ -199,7 +216,7 @@ export default function GroupPageClient({ initialGroupData }: GroupPageClientPro
         },
       ]);
     } catch (error: any) {
-      showAlert("Error", formatError(error, "Failed to join group"));
+      showAlert("Error", errorMessage(error, "Failed to join group"));
     } finally {
       setIsJoining(false);
     }
@@ -461,6 +478,15 @@ export default function GroupPageClient({ initialGroupData }: GroupPageClientPro
           </TouchableOpacity>
         )}
       </View>
+
+      <PendingRequestLimitModal
+        visible={showPendingLimitModal}
+        onDismiss={() => setShowPendingLimitModal(false)}
+        onViewRequests={() => {
+          setShowPendingLimitModal(false);
+          router.push("/(tabs)/profile");
+        }}
+      />
 
       {/* Tab bar for authenticated users (web only — native has its own tab bar) */}
       {Platform.OS === "web" && isAuthenticated && (
