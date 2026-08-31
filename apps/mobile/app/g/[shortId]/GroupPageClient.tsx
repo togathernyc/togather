@@ -103,12 +103,6 @@ export default function GroupPageClient({ initialGroupData }: GroupPageClientPro
     AsyncStorage.getItem('auth_token').then(setAuthToken);
   }, []);
 
-  // Pending join-request cap. This is a frontend-only gate (see the hook), so
-  // every surface that can create a request has to apply it — otherwise a
-  // shared link becomes a way around the limit.
-  const { isAtLimit: isAtPendingLimit, isLoading: isPendingLimitLoading } =
-    useMyPendingJoinRequests();
-
   // Get user data to check community membership
   const { data: userData, isLoading: isLoadingUser } = useUserData(isAuthenticated);
   const selectCommunityMutation = useSelectCommunity();
@@ -124,6 +118,14 @@ export default function GroupPageClient({ initialGroupData }: GroupPageClientPro
   const groupData = group ?? (initialGroupData as typeof group);
   const isLoading = group === undefined && !initialGroupData;
   const error = group === null;
+
+  // Pending join-request cap. This is a frontend-only gate (see the hook), so
+  // every surface that can create a request has to apply it — otherwise a
+  // shared link becomes a way around the limit. Count against the *group's*
+  // community, not the viewer's active one: a share link routinely points at a
+  // community the viewer isn't currently in.
+  const { isAtLimit: isAtPendingLimit, isLoading: isPendingLimitLoading } =
+    useMyPendingJoinRequests(groupData?.communityId as string | undefined);
 
   // Join mutations. Public groups join outright; private groups can only be
   // entered by submitting a request for a leader to approve — `groups.join`

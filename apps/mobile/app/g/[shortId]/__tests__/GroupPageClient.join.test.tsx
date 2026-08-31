@@ -125,8 +125,12 @@ jest.mock("@/features/events/components/SharedPageTabBar", () => {
 jest.mock("expo-clipboard", () => ({ setStringAsync: jest.fn() }));
 
 let mockPendingLimit = { isAtLimit: false, isLoading: false };
+const pendingLimitCommunityIds: unknown[] = [];
 jest.mock("@/features/groups/hooks/useMyPendingJoinRequests", () => ({
-  useMyPendingJoinRequests: () => mockPendingLimit,
+  useMyPendingJoinRequests: (communityId?: unknown) => {
+    pendingLimitCommunityIds.push(communityId);
+    return mockPendingLimit;
+  },
 }));
 
 jest.mock("@/features/groups/components/PendingRequestLimitModal", () => {
@@ -164,6 +168,7 @@ describe("GroupPageClient join routing", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockPendingLimit = { isAtLimit: false, isLoading: false };
+    pendingLimitCommunityIds.length = 0;
     jest.spyOn(Alert, "alert").mockImplementation(() => {});
     (useAuthenticatedMutation as jest.Mock).mockImplementation((ref: string) => {
       if (ref === JOIN_REF) return joinMutation;
@@ -229,6 +234,15 @@ describe("GroupPageClient join routing", () => {
 
     await waitFor(() => expect(getByText("pending-limit-modal")).toBeTruthy());
     expect(requestMutation).not.toHaveBeenCalled();
+  });
+
+  it("counts the cap against the shared group's community, not the active one", async () => {
+    // A share link routinely points at a community the viewer isn't in, so
+    // counting against their active community gates the wrong ledger.
+    await renderPage({ ...baseGroup, isPublic: false, communityId: "community-other" });
+
+    expect(pendingLimitCommunityIds).toContain("community-other");
+    expect(pendingLimitCommunityIds).not.toContain("community-1");
   });
 
   it("does not apply the pending-request cap to a direct public-group join", async () => {
