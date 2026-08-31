@@ -24,6 +24,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppImage } from "@components/ui";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
+import { formatError, showAlert } from "@utils/error-handling";
 import { useTheme } from "@hooks/useTheme";
 import { MembersRow } from "@/features/groups/components/MembersRow";
 import { JoinCommunityCard } from "@/features/events/components/JoinCommunityCard";
@@ -115,8 +116,13 @@ export default function GroupPageClient({ initialGroupData }: GroupPageClientPro
   const isLoading = group === undefined && !initialGroupData;
   const error = group === null;
 
-  // Join group mutation
+  // Join mutations. Public groups join outright; private groups can only be
+  // entered by submitting a request for a leader to approve — `groups.join`
+  // rejects private groups outright, so it must never be used for them.
   const joinGroupMutation = useAuthenticatedMutation(api.functions.groups.mutations.join);
+  const createJoinRequestMutation = useAuthenticatedMutation(
+    api.functions.groupMembers.createJoinRequest
+  );
 
   // Handle sharing the group
   const handleShare = async () => {
@@ -161,7 +167,7 @@ export default function GroupPageClient({ initialGroupData }: GroupPageClientPro
     router.push("/(auth)/signin");
   };
 
-  // Handle joining the group
+  // Handle joining the group (or requesting to join, for private groups)
   const handleJoin = async () => {
     if (!groupData?.id || !authToken) {
       // If not authenticated, navigate to sign in with return URL
@@ -169,11 +175,23 @@ export default function GroupPageClient({ initialGroupData }: GroupPageClientPro
       return;
     }
 
+    const groupId = groupData.id as Id<"groups">;
+    const isPrivate = !groupData.isPublic;
+
     setIsJoining(true);
     try {
-      await joinGroupMutation({
-        groupId: groupData.id as Id<"groups">,
-      });
+      if (isPrivate) {
+        await createJoinRequestMutation({ groupId });
+        // The reactive getByShortId query picks up the pending status and
+        // swaps the button for the "Request Pending" state on its own.
+        showAlert(
+          "Request Sent",
+          `Your request to join ${groupData.name} has been sent to the group's leaders.`
+        );
+        return;
+      }
+
+      await joinGroupMutation({ groupId });
       Alert.alert("Joined!", `You've joined ${groupData.name}`, [
         {
           text: "View Group",
@@ -181,7 +199,7 @@ export default function GroupPageClient({ initialGroupData }: GroupPageClientPro
         },
       ]);
     } catch (error: any) {
-      Alert.alert("Error", error.message || "Failed to join group");
+      showAlert("Error", formatError(error, "Failed to join group"));
     } finally {
       setIsJoining(false);
     }

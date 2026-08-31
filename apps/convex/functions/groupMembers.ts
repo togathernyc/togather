@@ -19,7 +19,7 @@
  * - Uses `api.functions.groups.getLeaders` and `api.functions.groups.isLeader` for checks
  */
 
-import { v } from "convex/values";
+import { v, ConvexError } from "convex/values";
 import { query, mutation } from "../_generated/server";
 import type { QueryCtx, MutationCtx } from "../_generated/server";
 import { internal } from "../_generated/api";
@@ -832,13 +832,17 @@ export const createJoinRequest = mutation({
       )
       .first();
 
+    // Both guards are shown to the user, so they throw ConvexError — a plain
+    // Error surfaces to production clients as an opaque "Server Error".
     if (existingMember && !existingMember.leftAt) {
-      throw new Error("You are already a member of this group");
+      throw new ConvexError("You are already a member of this group");
     }
 
     // Check for existing pending request
     if (existingMember && existingMember.requestStatus === "pending") {
-      throw new Error("You already have a pending join request for this group");
+      throw new ConvexError(
+        "You already have a pending join request for this group"
+      );
     }
 
     // Update existing record or create new one
