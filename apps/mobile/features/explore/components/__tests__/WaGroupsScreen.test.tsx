@@ -20,6 +20,7 @@ import {
   WA_LIST_AVATAR,
   WA_FLOATING_CTA_HEIGHT,
   waFloatingCtaContentClearance,
+  waTabBarIslandTop,
   WA_TAB_ISLAND_HEIGHT,
   waFloatingCtaBottomOffset,
   waTabBarBottomOffset,
@@ -290,6 +291,24 @@ describe('WaGroupsScreen — CTA, empty states and the map (S5.1)', () => {
    * Scroll-content clearance alone does not catch a reintroduced band — the
    * old model carried both paddings at once.
    */
+  /**
+   * The scroll-past rule has exactly two exceptions, both FIXED surfaces that
+   * cannot scroll anything clear of the opaque island: Prayer's pinned rail,
+   * and a map. A map carries mandatory provider attribution in its bottom-left
+   * corner (Google's logo on Android, Apple's tappable "Legal" link on iOS) —
+   * running the map to the screen edge buries it under the island, and the
+   * island swallows taps over its own area.
+   */
+  it('map view ends at the island top so provider attribution stays visible', () => {
+    mockBottomInset = 34;
+    const { getByTestId, getByLabelText } = renderScreen();
+    fireEvent.press(getByLabelText('Map view'));
+    const mapArea = StyleSheet.flatten(getByTestId('wa-groups-map-area').props.style);
+    expect(mapArea.paddingBottom).toBe(waTabBarIslandTop(34));
+    expect(mapArea.paddingBottom).toBeGreaterThan(0);
+    mockBottomInset = 0;
+  });
+
   it('reserves NOTHING on the page-background container', () => {
     const { getByTestId } = renderScreen();
     const container = StyleSheet.flatten(getByTestId('wa-groups-page').props.style);

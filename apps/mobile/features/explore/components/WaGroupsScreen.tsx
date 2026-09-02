@@ -79,6 +79,7 @@ import {
   WA_TYPE_SECTION_HEADER,
   WA_WEIGHT_SEMIBOLD,
   waFloatingCtaContentClearance,
+  waTabBarIslandTop,
 } from '@components/wa';
 import { useUserLocation } from '@features/location/hooks/useUserLocation';
 import { useConvexFeatureFlag } from '@hooks/useConvexFeatureFlag';
@@ -649,7 +650,22 @@ export function WaGroupsScreen({
     return (
       <View {...containerProps}>
         {header}
-        <View style={styles.mapArea}>
+        {/*
+          * A map is a FIXED surface, not scroll content: nothing can scroll
+          * the provider attribution (Google's logo on Android, Apple's
+          * "Legal" link on iOS — both mandatory, both bottom-left) out from
+          * under the opaque island, and the island swallows taps over its own
+          * area, so the iOS link would not even be reachable. The map box
+          * therefore ends at the island's top edge — the same fixed-surface
+          * exception Prayer's rail uses. Lists still scroll behind the island.
+          */}
+        <View
+          testID="wa-groups-map-area"
+          style={[
+            styles.mapArea,
+            { paddingBottom: waTabBarIslandTop(insets.bottom) },
+          ]}
+        >
           <ExploreMap
             groups={groupsWithLocation}
             selectedGroupId={selectedGroupId}

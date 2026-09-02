@@ -25,6 +25,7 @@ import {
   WA_TAB_ISLAND_HEIGHT,
   WA_FLOATING_CTA_HEIGHT,
   waFloatingCtaContentClearance,
+  waTabBarIslandTop,
   waFloatingCtaBottomOffset,
   waTabBarBottomOffset,
 } from '@components/wa';
@@ -410,6 +411,28 @@ describe('EventsScreen — WhatsApp parity (flag-on) vs legacy (flag-off)', () =
    * reintroduced band: the old model had BOTH paddings at once, so the two
    * facts are independent. This pins the half that was missing.
    */
+  /**
+   * A map is a FIXED surface — the twin of Prayer's pinned rail, and the other
+   * exception to the scroll-past rule. Its mandatory provider attribution
+   * (Google's logo / Apple's tappable "Legal" link, bottom-left) cannot scroll
+   * clear of the opaque island, so the map box ends at the island's top edge.
+   * Flag-off must stay unpadded.
+   */
+  it('flag-on ends the map at the island top; flag-off leaves it alone', () => {
+    mockBottomInset = 34;
+    render(<EventsScreen />);
+    fireEvent.press(screen.getByLabelText('Map view'));
+    expect(
+      StyleSheet.flatten(screen.getByTestId('wa-events-map-wrap').props.style)
+        .paddingBottom
+    ).toBe(waTabBarIslandTop(34));
+
+    screen.unmount();
+    (useWhatsappShell as jest.Mock).mockReturnValue(false);
+    render(<EventsScreen />);
+    mockBottomInset = 0;
+  });
+
   it('flag-on reserves NOTHING on the page-background container', () => {
     render(<EventsScreen />);
     const container = StyleSheet.flatten(

@@ -44,6 +44,7 @@ import {
   WA_GROUP_MARGIN,
   WA_GROUP_SPACING,
   waFloatingCtaContentClearance,
+  waTabBarIslandTop,
   WA_TYPE_SECTION_HEADER,
   WA_TYPE_ROW_TITLE,
   WA_TYPE_SUBTITLE,
@@ -825,7 +826,22 @@ export function EventsScreen() {
           point is restyled. */}
       {whatsappShellEnabled && renderWaHeader()}
       {viewMode === 'map' ? (
-        <EventsMapView enabled={viewMode === 'map'} />
+        // Flag-on the island floats over the content, but a map is a FIXED
+        // surface — it can't scroll its mandatory provider attribution out
+        // from under an opaque island (and the island swallows taps over its
+        // own area). So the map box ends at the island's top edge, the same
+        // fixed-surface exception Prayer's rail uses.
+        <View
+          testID="wa-events-map-wrap"
+          style={[
+            styles.mapWrap,
+            whatsappShellEnabled && {
+              paddingBottom: waTabBarIslandTop(insets.bottom),
+            },
+          ]}
+        >
+          <EventsMapView enabled={viewMode === 'map'} />
+        </View>
       ) : (
         <>
           {isLoading ? (
@@ -1071,6 +1087,9 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   // --- WhatsApp-shell (flag-on) styles ------------------------------------
+  mapWrap: {
+    flex: 1,
+  },
   waScrollContent: {
     paddingHorizontal: 0,
     // `waCtaContentClearance` supplies the bottom padding — it depends on the
