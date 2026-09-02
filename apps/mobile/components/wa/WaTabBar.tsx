@@ -42,6 +42,8 @@ import {
   waTabBarBottomOffset,
   WA_TAB_ISLAND_FILL_LIGHT,
   WA_TAB_ISLAND_FILL_DARK,
+  WA_TAB_ISLAND_EDGE_LIGHT,
+  WA_TAB_ISLAND_EDGE_DARK,
   WA_TAB_ICON_SIZE,
   WA_TAB_LABEL_GAP,
   WA_TAB_LABEL_SIZE,
@@ -67,6 +69,7 @@ export function WaTabBar({ state, descriptors, navigation, badgeColor }: WaTabBa
 
   const ink = isDark ? WA_TAB_INK_DARK : WA_TAB_INK_LIGHT;
   const fill = isDark ? WA_TAB_ISLAND_FILL_DARK : WA_TAB_ISLAND_FILL_LIGHT;
+  const edge = isDark ? WA_TAB_ISLAND_EDGE_DARK : WA_TAB_ISLAND_EDGE_LIGHT;
   const activePill = isDark ? WA_TAB_ACTIVE_PILL_DARK : WA_TAB_ACTIVE_PILL_LIGHT;
 
   // Expo Router implements `href: null` by stamping `tabBarItemStyle: {display:
@@ -88,7 +91,13 @@ export function WaTabBar({ state, descriptors, navigation, badgeColor }: WaTabBa
       ]}
       pointerEvents="box-none"
     >
-      <View style={[styles.island, WA_ISLAND_SHADOW, { backgroundColor: fill }]}>
+      <View
+        style={[
+          styles.island,
+          WA_ISLAND_SHADOW,
+          { backgroundColor: fill, borderColor: edge },
+        ]}
+      >
         {visible.map((route) => {
           const { options } = descriptors[route.key];
           const focused = state.routes[state.index]?.key === route.key;
@@ -166,6 +175,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     height: WA_TAB_ISLAND_HEIGHT,
     borderRadius: WA_TAB_ISLAND_RADIUS,
+    // Keeps the near-white pill legible once it is floating over empty page
+    // rather than over rows — see WA_TAB_ISLAND_EDGE_* in metrics.
+    borderWidth: StyleSheet.hairlineWidth,
     paddingHorizontal: 6,
   },
   tab: {

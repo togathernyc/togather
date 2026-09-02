@@ -215,6 +215,19 @@ export const WA_TAB_ISLAND_FILL_LIGHT = 'rgba(255,255,255,0.97)';
 /** Dark-mode island fill. */
 export const WA_TAB_ISLAND_FILL_DARK = 'rgba(31,44,52,0.97)';
 /**
+ * Hairline edge on the island.
+ *
+ * The fill is near-opaque white on a white page (see the note above), which
+ * reads as a floating pill while rows are passing behind it — and as nothing
+ * but a soft shadow smudge once you reach the end of a list and there is no
+ * content behind it. WhatsApp's island is a real blur with a specular hairline,
+ * which is what keeps it legible over an empty background. This is the
+ * no-native-module equivalent: additive to the fill, not a change to it.
+ */
+export const WA_TAB_ISLAND_EDGE_LIGHT = 'rgba(0,0,0,0.10)';
+/** Dark-mode island edge. */
+export const WA_TAB_ISLAND_EDGE_DARK = 'rgba(255,255,255,0.12)';
+/**
  * Scrim painted behind the floating nav zone once a screen's content has
  * scrolled up under it (WA-VISUAL-DELTAS.md S1.1: the circles stay floating,
  * but the strip they sit in stops being see-through so rows don't smear
@@ -279,8 +292,15 @@ export function waTabBarIslandTop(bottomInset: number): number {
   return waTabBarBottomOffset(bottomInset) + WA_TAB_ISLAND_HEIGHT;
 }
 
-/** Breathing room between the last scroll row and the island's top edge. */
-export const WA_TAB_CONTENT_CLEARANCE = 12;
+/**
+ * Breathing room between the last scroll row and the island's top edge.
+ *
+ * 8, not 12, and deliberately the same number as `WA_TAB_ISLAND_BOTTOM_GAP`:
+ * the island then has one gap above it and the same gap below, instead of two
+ * unrelated ones. Trimmed from 12 as part of cutting the dead white the owner
+ * reported at the end of the Chats list (2026-09-02).
+ */
+export const WA_TAB_CONTENT_CLEARANCE = WA_TAB_ISLAND_BOTTOM_GAP;
 
 /**
  * Bottom padding for a flag-on scroll surface: the island's whole zone plus
