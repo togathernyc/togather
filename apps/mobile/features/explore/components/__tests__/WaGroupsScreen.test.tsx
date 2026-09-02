@@ -19,7 +19,7 @@ import { WaGroupsScreen, type ExploreGroup } from '../WaGroupsScreen';
 import {
   WA_LIST_AVATAR,
   WA_FLOATING_CTA_HEIGHT,
-  WA_FLOATING_CTA_CONTENT_CLEARANCE,
+  waFloatingCtaContentClearance,
   WA_TAB_ISLAND_HEIGHT,
   waFloatingCtaBottomOffset,
   waTabBarBottomOffset,
@@ -287,7 +287,7 @@ describe('WaGroupsScreen — CTA, empty states and the map (S5.1)', () => {
     );
     expect(
       StyleSheet.flatten(list!.props.contentContainerStyle).paddingBottom
-    ).toBe(WA_FLOATING_CTA_CONTENT_CLEARANCE);
+    ).toBe(waFloatingCtaContentClearance(0));
   });
 
   it('forwards the Add group press to the create/request flow', () => {

@@ -22,7 +22,7 @@ import {
   waNavScrimStyle,
   waListContentPadding,
 } from '../waInboxHeaderGeometry';
-import { WA_HEADER_CIRCLE_SIZE, WA_TAB_CONTENT_CLEARANCE } from '@components/wa';
+import { WA_HEADER_CIRCLE_SIZE, waTabBarContentClearance } from '@components/wa';
 
 /** Style keys that must never appear in a flag-on animated style. */
 const LAYOUT_KEYS = [
@@ -123,23 +123,30 @@ describe('waNavScrimStyle', () => {
 describe('waListContentPadding', () => {
   it('adds NOTHING flag-off — that header is in flow and pads itself', () => {
     expect(
-      waListContentPadding(false, { insetTop: 59, chipsHeight: 0, windowHeight: 844 })
+      waListContentPadding(false, {
+        insetTop: 59,
+        insetBottom: 34,
+        chipsHeight: 0,
+        windowHeight: 844,
+      })
     ).toBeNull();
   });
 
   it('reserves the overlay height at the top and the tab island at the bottom', () => {
     const style = waListContentPadding(true, {
       insetTop: 59,
+      insetBottom: 34,
       chipsHeight: 44,
       windowHeight: 844,
     })!;
     expect(style.paddingTop).toBe(waHeaderExpandedHeight(59, 44));
-    expect(style.paddingBottom).toBe(WA_TAB_CONTENT_CLEARANCE);
+    expect(style.paddingBottom).toBe(waTabBarContentClearance(34));
   });
 
   it('lets a short list scroll far enough to finish the collapse', () => {
     const style = waListContentPadding(true, {
       insetTop: 59,
+      insetBottom: 34,
       chipsHeight: 0,
       windowHeight: 844,
     })!;

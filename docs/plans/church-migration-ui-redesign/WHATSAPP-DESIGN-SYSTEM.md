@@ -436,17 +436,22 @@ kit (`WaFloatingButton.tsx`, `WaTabBar.tsx`) around it.
     glyph) as its tab icon, not a generic "You" icon.
   - Togather uses **4 tabs** (Chats · Events · Prayer · You per README §5); all
     four get identical island styling — there's no per-tab exception.
-  - A screen pairs the island with two paddings so its whole zone reads as ONE
-    page-colored surface: `waTabBarStripHeight(bottomInset)` on the container
-    carrying the page background — the **band**, running from the screen's
-    bottom edge to 8pt above the island's TOP edge (80pt at inset 0, 86pt at
-    inset 34) — and `WA_TAB_CONTENT_CLEARANCE` (12pt) as the scroll content's
-    bottom padding, which is only breathing room above that band.
-  - **Reserving just the strip *below* the island is not enough** (the bug the
-    owner reported on 2026-07-29 and again on 2026-07-30, "the bottom of these
-    pages is still not a uniform color"): the island is 64pt tall and inset
-    20pt from each edge, so rows kept rendering **beside** it in those side
-    margins and underneath it. The band must cover the island's full height.
+  - **The island floats over live content — content scrolls PAST it.** Rows
+    pass behind the island and through the 20pt of page either side of it as
+    the list moves, the way the reference does. A screen adds exactly ONE
+    padding for the island: `waTabBarContentClearance(bottomInset)` (84pt at
+    inset 0, 90pt at inset 34 — the island's top edge plus a 12pt breathing
+    gap) on its **scroll content**, so the LAST row can come to rest above the
+    island instead of being stranded under it.
+  - **Never reserve the island's zone on the container that paints the page
+    background.** An earlier cut did (`waTabBarStripHeight`, a page-colored
+    **band** across the bottom of every tab) to make that zone one uniform
+    color. It works, and it kills the floating illusion: content stops dead at
+    the band's top edge and can never scroll past, so the island reads as an
+    opaque docked bar with a strip of dead page under it (the owner's
+    2026-09-02 report, with a reference screenshot of a chart scrolling
+    cleanly behind a floating pill). Uniform color at rest is not worth a
+    docked-looking bar — the island is translucent-over-content by design.
 
 ---
 

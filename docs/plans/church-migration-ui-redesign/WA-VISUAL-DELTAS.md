@@ -286,14 +286,14 @@ the tab island use — not the material card shadow §7 bans).
 It also owns the clearance, which was genuinely broken (owner's dark-mode
 screenshot: the pill sitting on the tab island). **Yoga lays an absolutely
 positioned child out against its parent's *border* box and ignores the parent's
-padding** — unlike CSS — so `bottom: 0` inside a container reserving
-`waTabBarStripHeight` did *not* start above that band. The component instead
-sets `bottom: waFloatingCtaBottomOffset(insets.bottom)` = `waTabBarStripHeight`
-+ 12 (92pt at inset 0, 98pt at inset 34), measured from the screen edge, so the
-pill floats a gap above the island's page-colored band rather than landing
-inside it; scroll surfaces pad by `WA_FLOATING_CTA_CONTENT_CLEARANCE` (74pt =
-pill + 2 gaps) so the last row clears the pill. The band itself already clears
-the island — see §4's island entry.
+padding** — unlike CSS — so a `bottom: 0` pill inside a container with bottom
+padding did *not* start above that padding. The component instead sets
+`bottom: waFloatingCtaBottomOffset(insets.bottom)` = the island's top edge + 12
+(84pt at inset 0, 90pt at inset 34), measured from the screen edge, so the pill
+floats a gap above the island while content scrolls behind both; scroll
+surfaces pad by `waFloatingCtaContentClearance(bottomInset)` (146pt at inset 0
+= the island zone + pill + 2 gaps) so the last row clears the pill. Content
+scrolling past the island is the point — see §4's island entry.
 
 ---
 

@@ -7,7 +7,7 @@
  */
 import {
   WA_HEADER_CIRCLE_SIZE,
-  WA_TAB_CONTENT_CLEARANCE,
+  waTabBarContentClearance,
 } from "@components/wa";
 
 /** 34pt heavy title on its own line below the floating-button row (S1.2). */
@@ -111,17 +111,23 @@ export function waNavScrimStyle(progress: number) {
  * `minHeight` lets a short list still scroll far enough to complete the
  * collapse, so the header can't get stuck half-expanded on a small inbox.
  *
- * `paddingBottom` is only breathing room above the tab island's band — the
- * screen container reserves that band itself (`waTabBarStripHeight`).
+ * `paddingBottom` clears the floating tab island (S2), which the screen
+ * reserves nowhere else: rows scroll BEHIND the island and only the last one
+ * has to come to rest above it.
  */
 export function waListContentPadding(
   enabled: boolean,
-  { insetTop, chipsHeight, windowHeight }: { insetTop: number; chipsHeight: number; windowHeight: number }
+  {
+    insetTop,
+    insetBottom,
+    chipsHeight,
+    windowHeight,
+  }: { insetTop: number; insetBottom: number; chipsHeight: number; windowHeight: number }
 ): { paddingTop: number; paddingBottom: number; minHeight: number } | null {
   if (!enabled) return null;
   return {
     paddingTop: waHeaderExpandedHeight(insetTop, chipsHeight),
-    paddingBottom: WA_TAB_CONTENT_CLEARANCE,
+    paddingBottom: waTabBarContentClearance(insetBottom),
     minHeight: windowHeight + WA_HEADER_COLLAPSIBLE,
   };
 }

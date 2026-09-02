@@ -78,8 +78,7 @@ import {
   WA_TYPE_SUBTITLE,
   WA_TYPE_SECTION_HEADER,
   WA_WEIGHT_SEMIBOLD,
-  WA_FLOATING_CTA_CONTENT_CLEARANCE,
-  waTabBarStripHeight,
+  waFloatingCtaContentClearance,
 } from '@components/wa';
 import { useUserLocation } from '@features/location/hooks/useUserLocation';
 import { useConvexFeatureFlag } from '@hooks/useConvexFeatureFlag';
@@ -627,13 +626,10 @@ export function WaGroupsScreen({
     />
   );
 
-  // Flag-on the tab bar is a floating island (S2), so its whole BAND is
-  // reserved on the container that paints the page background — otherwise
-  // list rows show beside the island (in its 20pt side margins) and under it.
-  const containerStyle = [
-    styles.container,
-    { backgroundColor: colors.surface, paddingBottom: waTabBarStripHeight(insets.bottom) },
-  ];
+  // Flag-on the tab bar is a floating island (S2) the list scrolls behind, so
+  // the container reserves nothing — the scroll content clears the island (and
+  // the CTA floating above it) itself.
+  const containerStyle = [styles.container, { backgroundColor: colors.surface }];
 
   if (!hasCommunityContext) {
     return (
@@ -688,7 +684,10 @@ export function WaGroupsScreen({
       ) : null}
       <ScrollView
         style={styles.scroll}
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[
+          styles.scrollContent,
+          { paddingBottom: waFloatingCtaContentClearance(insets.bottom) },
+        ]}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
@@ -800,9 +799,8 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingTop: 8,
-    // Clear the CTA pill floating above the island band (the band itself is
-    // reserved by the container).
-    paddingBottom: WA_FLOATING_CTA_CONTENT_CLEARANCE,
+    // Bottom padding is applied inline — clearing the CTA pill (and the island
+    // it floats above) depends on the safe-area inset.
   },
   section: {
     marginTop: 12,

@@ -17,10 +17,11 @@ import {
   ActivityIndicator,
 } from "react-native";
 import { useRouter } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "@hooks/useTheme";
 import { useWhatsappShell } from "@hooks/useWhatsappShell";
-import { WA_TAB_CONTENT_CLEARANCE } from "@components/wa";
+import { waTabBarContentClearance } from "@components/wa";
 import type { Id } from "@services/api/convex";
 
 export type MessageSearchResult = {
@@ -94,6 +95,7 @@ export function InboxSearchResults({
   const router = useRouter();
   const { colors } = useTheme();
   const whatsappShellEnabled = useWhatsappShell();
+  const insets = useSafeAreaInsets();
 
   const openResult = useCallback(
     (result: MessageSearchResult) => {
@@ -176,10 +178,11 @@ export function InboxSearchResults({
       keyboardShouldPersistTaps="handled"
       contentContainerStyle={[
         styles.listContent,
-        // Flag-on, the tab bar is a floating island over the content (S2).
-        // The screen container reserves the island's whole band, so this list
-        // only needs breathing room above it — same as the inbox FlatList.
-        whatsappShellEnabled && { paddingBottom: WA_TAB_CONTENT_CLEARANCE },
+        // Flag-on, the tab bar is a floating island the results scroll behind
+        // (S2), so the list clears it itself — same as the inbox FlatList.
+        whatsappShellEnabled && {
+          paddingBottom: waTabBarContentClearance(insets.bottom),
+        },
       ]}
       ListFooterComponent={
         truncated ? (

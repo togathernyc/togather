@@ -260,9 +260,6 @@ export const WA_TAB_BADGE_OFFSET = -4;
 /** You-tab avatar glyph size (falls back to a person icon when no photo). */
 export const WA_TAB_AVATAR_SIZE = 24;
 
-/** Breathing room the page-colored band keeps ABOVE the island's top edge. */
-export const WA_TAB_ISLAND_BAND_TOP_GAP = 8;
-
 /**
  * How far the island's bottom edge sits above the screen's bottom edge.
  * WhatsApp's island rides LOW — nearly flush with the home indicator (owner's
@@ -275,35 +272,35 @@ export function waTabBarBottomOffset(bottomInset: number): number {
 }
 
 /**
- * Height of the page-colored BAND the island floats on: from the screen's
- * bottom edge up to `WA_TAB_ISLAND_BAND_TOP_GAP` above the island's TOP edge.
- * 80 at inset 0, 86 at inset 34.
- *
- * A flag-on screen reserves this as padding on the container that carries its
- * page background, so the whole island zone paints as page background instead
- * of live content. The island is absolutely positioned and takes no layout
- * space, so without this the scroll viewport runs to the screen edge and rows
- * render BESIDE the island (in its 20pt side margins) and underneath it — the
- * bottom of the page reads as content soup rather than one surface.
- *
- * Reserving only the strip BELOW the island (what this returned before) is not
- * enough: the island is 64pt tall and inset 20pt from each edge, so rows kept
- * showing to its left and right. The band has to cover the island's full
- * height for the bottom of the page to be a uniform color.
+ * Distance from the screen's bottom edge up to the island's TOP edge.
+ * 72 at inset 0, 78 at inset 34.
  */
-export function waTabBarStripHeight(bottomInset: number): number {
-  return (
-    waTabBarBottomOffset(bottomInset) + WA_TAB_ISLAND_HEIGHT + WA_TAB_ISLAND_BAND_TOP_GAP
-  );
+export function waTabBarIslandTop(bottomInset: number): number {
+  return waTabBarBottomOffset(bottomInset) + WA_TAB_ISLAND_HEIGHT;
 }
 
-/**
- * Bottom padding for a scroll surface whose container already reserves
- * `waTabBarStripHeight`. The band already clears the island, so this is only
- * breathing room between the last row and the band's top edge — not the
- * island's height (which it used to have to cover).
- */
+/** Breathing room between the last scroll row and the island's top edge. */
 export const WA_TAB_CONTENT_CLEARANCE = 12;
+
+/**
+ * Bottom padding for a flag-on scroll surface: the island's whole zone plus
+ * breathing room. 84 at inset 0, 90 at inset 34.
+ *
+ * This belongs on the SCROLL CONTENT, never on the container that paints the
+ * page background. The island floats over live content the way WhatsApp's
+ * does: rows pass behind it and through its 20pt side margins as you scroll,
+ * and this padding only guarantees the LAST row can come to rest above the
+ * island instead of being stranded under it.
+ *
+ * An earlier cut reserved the same zone as `paddingBottom` on the page
+ * container instead (`waTabBarStripHeight`), which painted a dead page-colored
+ * band across the bottom of every tab: content stopped at the band's top edge
+ * and never scrolled past it, so the island read as an opaque docked bar
+ * rather than a floating one (owner, 2026-09-02). Don't reintroduce it.
+ */
+export function waTabBarContentClearance(bottomInset: number): number {
+  return waTabBarIslandTop(bottomInset) + WA_TAB_CONTENT_CLEARANCE;
+}
 
 // --- S5.1 Floating screen CTA ------------------------------------------------
 //
@@ -313,7 +310,7 @@ export const WA_TAB_CONTENT_CLEARANCE = 12;
 
 /** CTA pill height — fully rounded at this height. */
 export const WA_FLOATING_CTA_HEIGHT = 50;
-/** Breathing gap the CTA keeps from the island band (and content keeps from the CTA). */
+/** Breathing gap the CTA keeps from the island (and content keeps from the CTA). */
 export const WA_FLOATING_CTA_GAP = 12;
 /** Leading glyph size inside the pill. */
 export const WA_FLOATING_CTA_ICON_SIZE = 22;
@@ -323,32 +320,29 @@ export const WA_FLOATING_CTA_LABEL_GAP = 6;
 export const WA_FLOATING_CTA_PADDING_H = 22;
 
 /**
- * How far the CTA's BOTTOM edge sits above the SCREEN's bottom edge: it floats
- * a gap above the island BAND, so it never overlaps the island or the band's
- * clean page-colored surface. 92 at inset 0, 98 at inset 34.
+ * How far the CTA's BOTTOM edge sits above the SCREEN's bottom edge: a gap
+ * above the island's top edge, so the pill floats clear of the island while
+ * content scrolls behind both. 84 at inset 0, 90 at inset 34.
  *
  * Measured from the screen bottom on purpose. Yoga positions an absolutely
  * positioned child against its parent's *border* box, ignoring the parent's
- * padding — so a `bottom: 0` CTA inside a container that reserves
- * `waTabBarStripHeight` does NOT start above that band the way CSS would, and
- * the pill lands on top of the island (the owner's 2026-07-29 dark-mode
- * screenshot). Setting `bottom` to this absolute value is padding-independent.
+ * padding — so a `bottom: 0` CTA inside a padded container does NOT start
+ * above that padding the way CSS would, and the pill lands on top of the
+ * island (the owner's 2026-07-29 dark-mode screenshot). Setting `bottom` to
+ * this absolute value is padding-independent.
  */
 export function waFloatingCtaBottomOffset(bottomInset: number): number {
-  return waTabBarStripHeight(bottomInset) + WA_FLOATING_CTA_GAP;
+  return waTabBarIslandTop(bottomInset) + WA_FLOATING_CTA_GAP;
 }
 
 /**
- * Bottom padding for a scroll surface that sits under a `WaFloatingCta`, on a
- * container that already reserves `waTabBarStripHeight`: the last row clears
- * the pill floating above the band (the band itself already clears the
- * island). = gap under the pill + the pill + gap above it.
- *
- * Inset-independent — the container's reserved band and the CTA's own offset
- * both move by exactly `waTabBarBottomOffset`, so they cancel.
+ * Bottom padding for a scroll surface that sits under a `WaFloatingCta`: the
+ * last row clears the pill, which itself floats above the island.
+ * = the island zone + the gap under the pill + the pill + the gap above it.
  */
-export const WA_FLOATING_CTA_CONTENT_CLEARANCE =
-  WA_TAB_CONTENT_CLEARANCE + WA_FLOATING_CTA_HEIGHT + WA_FLOATING_CTA_GAP; // 74
+export function waFloatingCtaContentClearance(bottomInset: number): number {
+  return waFloatingCtaBottomOffset(bottomInset) + WA_FLOATING_CTA_HEIGHT + WA_FLOATING_CTA_GAP;
+}
 
 // --- S7 Typography scale ------------------------------------------------------
 //

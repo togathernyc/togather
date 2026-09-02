@@ -68,12 +68,10 @@ import {
   WA_SEARCH_PILL_ICON_SIZE,
   WA_TYPE_ROW_TITLE,
   WA_TYPE_SUBTITLE,
-  WA_TAB_CONTENT_CLEARANCE,
   WA_NAV_SCRIM_LIGHT,
   WA_NAV_SCRIM_DARK,
   formatWaListTimestamp,
   waNeutralAvatarPalette,
-  waTabBarStripHeight,
 } from "@components/wa";
 import { ResourceIcon } from "@components/ui/ResourceIcon";
 // Flag-on collapsing-header geometry — see that module's header comment for
@@ -839,14 +837,6 @@ export function ChatInboxScreen({
   const Wrapper = React.Fragment;
   const headerPaddingTop = sidebarMode ? 16 : insets.top + 16;
 
-  // Flag-on: reserve the island BAND on the container that carries the page
-  // background — the whole zone the floating island occupies, not just the gap
-  // below it — so the bottom of the page is one uniform white surface instead
-  // of rows showing beside and under the island.
-  const waStripPadding = whatsappShellEnabled
-    ? { paddingBottom: waTabBarStripHeight(insets.bottom) }
-    : null;
-
   // Flag-on header geometry (see the note at the top of this file). In desktop
   // `sidebarMode` the screen renders inside a pane rather than under the status
   // bar, so there's no safe-area inset to clear.
@@ -1597,7 +1587,7 @@ export function ChatInboxScreen({
   if (!hasCommunity) {
     return (
       <Wrapper>
-        <View style={[styles.container, { backgroundColor: colors.surface }, waStripPadding]}>
+        <View style={[styles.container, { backgroundColor: colors.surface }]}>
           {renderHeader(false)}
           <View style={styles.centered}>
             <Ionicons
@@ -1636,7 +1626,7 @@ export function ChatInboxScreen({
   if (showLoadingSpinner) {
     return (
       <Wrapper>
-        <View style={[styles.container, { backgroundColor: colors.surface }, waStripPadding]}>
+        <View style={[styles.container, { backgroundColor: colors.surface }]}>
           {renderHeader(true)}
           <View style={styles.centered}>
             <ActivityIndicator size="large" color={primaryColor} />
@@ -1650,7 +1640,7 @@ export function ChatInboxScreen({
   if (!hasInboxItems) {
     return (
       <Wrapper>
-        <View style={[styles.container, { backgroundColor: colors.surface }, waStripPadding]}>
+        <View style={[styles.container, { backgroundColor: colors.surface }]}>
           {renderHeader(true)}
           <EnableNotificationsBanner />
           <ScrollView contentContainerStyle={styles.centeredScrollContent}>
@@ -1684,7 +1674,7 @@ export function ChatInboxScreen({
 
   return (
     <Wrapper>
-      <View style={[styles.container, { backgroundColor: colors.surface }, waStripPadding]}>
+      <View style={[styles.container, { backgroundColor: colors.surface }]}>
         {whatsappShellEnabled ? renderWaCollapsingHeader() : renderCollapsingHeader()}
         {isSearching ? (
           // Flag-on the header is an overlay, so results would start underneath
@@ -1728,11 +1718,12 @@ export function ChatInboxScreen({
                 styles.listContainer,
                 // Flag-on: reserve the floating header's height at the top
                 // (a plain style — no animated layout prop, see the geometry
-                // note at the top of this file) and breathing room at the
-                // bottom. The island's whole band is reserved by the container
-                // (`waStripPadding`), so this is only a gap above it.
+                // note at the top of this file) and the floating island's zone
+                // at the bottom, so rows scroll BEHIND the island and the last
+                // one still comes to rest above it.
                 waListContentPadding(whatsappShellEnabled, {
                   insetTop: waInsetTop,
+                  insetBottom: insets.bottom,
                   chipsHeight: waChipsHeight,
                   windowHeight,
                 }),
