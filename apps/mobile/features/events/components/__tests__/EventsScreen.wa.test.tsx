@@ -47,6 +47,16 @@ jest.mock('@hooks/useWhatsappShell', () => ({
   useWhatsappShell: jest.fn(() => true),
 }));
 
+// The global mock in jest.setup.js pins every inset to 0, which would let a
+// screen hardcode `waFloatingCtaContentClearance(0)` and still pass. Override
+// it here so the clearance assertions below run at a REAL home-indicator inset.
+let mockBottomInset = 0;
+jest.mock('react-native-safe-area-context', () => ({
+  useSafeAreaInsets: () => ({ top: 0, bottom: mockBottomInset, left: 0, right: 0 }),
+  SafeAreaProvider: ({ children }: any) => children,
+  SafeAreaView: ({ children }: any) => children,
+}));
+
 jest.mock('@hooks/useCommunityTheme', () => ({
   useCommunityTheme: () => ({ primaryColor: '#25D366' }),
 }));
@@ -387,6 +397,40 @@ describe('EventsScreen — WhatsApp parity (flag-on) vs legacy (flag-off)', () =
     render(<EventsScreen />);
     expect(screen.queryByTestId('wa-events-create')).toBeNull();
     expect(screen.getByText('Create Event')).toBeTruthy();
+  });
+
+  /**
+   * The island floats OVER the content: rows scroll behind it, so the page
+   * container must reserve nothing. Before PR #822 every screen reserved the
+   * island's zone as `paddingBottom` on this container — a page-colored band
+   * that content could never scroll past, which is what made the island read
+   * as a docked bar.
+   *
+   * Asserting only that the scroll content has clearance does NOT catch a
+   * reintroduced band: the old model had BOTH paddings at once, so the two
+   * facts are independent. This pins the half that was missing.
+   */
+  it('flag-on reserves NOTHING on the page-background container', () => {
+    render(<EventsScreen />);
+    const container = StyleSheet.flatten(
+      screen.getByTestId('wa-events-page').props.style
+    );
+    expect(container.paddingBottom).toBeUndefined();
+  });
+
+  it('forwards the real safe-area inset into the list clearance', () => {
+    mockBottomInset = 34;
+    render(<EventsScreen />);
+    const list = screen.UNSAFE_getAllByType(ScrollView)[0];
+    expect(
+      StyleSheet.flatten(list.props.contentContainerStyle).paddingBottom
+    ).toBe(waFloatingCtaContentClearance(34));
+    // …and that is genuinely a different number from the inset-0 value, so a
+    // screen hardcoding 0 fails here.
+    expect(waFloatingCtaContentClearance(34)).not.toBe(
+      waFloatingCtaContentClearance(0)
+    );
+    mockBottomInset = 0;
   });
 
   it('flag-on pads the list so the last row clears both the island and the CTA', () => {

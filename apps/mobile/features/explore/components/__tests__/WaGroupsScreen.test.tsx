@@ -32,8 +32,11 @@ jest.mock('expo-router', () => ({
   useRouter: () => ({ push: mockPush }),
 }));
 
+// Settable so the clearance assertions can run at a REAL home-indicator inset
+// — pinned at 0 they would pass even if the screen hardcoded inset 0.
+let mockBottomInset = 0;
 jest.mock('react-native-safe-area-context', () => ({
-  useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
+  useSafeAreaInsets: () => ({ top: 0, bottom: mockBottomInset, left: 0, right: 0 }),
 }));
 
 jest.mock('@hooks/useTheme', () => ({
@@ -278,6 +281,32 @@ describe('WaGroupsScreen — CTA, empty states and the map (S5.1)', () => {
     // The mocked safe-area inset is 0 here; the offset still has to clear the island.
     expect(wrap.bottom).toBe(waFloatingCtaBottomOffset(0));
     expect(wrap.bottom).toBeGreaterThan(waTabBarBottomOffset(0) + WA_TAB_ISLAND_HEIGHT);
+  });
+
+  /**
+   * The island floats OVER the content (see the twin guard in
+   * EventsScreen.wa.test.tsx): the page container must reserve nothing, or
+   * content stops at a dead band instead of scrolling behind the island.
+   * Scroll-content clearance alone does not catch a reintroduced band — the
+   * old model carried both paddings at once.
+   */
+  it('reserves NOTHING on the page-background container', () => {
+    const { getByTestId } = renderScreen();
+    const container = StyleSheet.flatten(getByTestId('wa-groups-page').props.style);
+    expect(container.paddingBottom).toBeUndefined();
+  });
+
+  it('forwards the real safe-area inset into the list clearance', () => {
+    mockBottomInset = 34;
+    const { UNSAFE_getAllByType } = renderScreen();
+    const list = UNSAFE_getAllByType(ScrollView).find((sv: any) =>
+      Boolean(StyleSheet.flatten(sv.props.contentContainerStyle)?.paddingBottom)
+    );
+    expect(
+      StyleSheet.flatten(list!.props.contentContainerStyle).paddingBottom
+    ).toBe(waFloatingCtaContentClearance(34));
+    expect(waFloatingCtaContentClearance(34)).not.toBe(waFloatingCtaContentClearance(0));
+    mockBottomInset = 0;
   });
 
   it('pads the list so the last row clears both the island and the CTA', () => {

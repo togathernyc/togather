@@ -18,7 +18,9 @@
  *     that paints the page background: a container padding there would freeze a
  *     dead page-colored band across the bottom of the screen and stop content
  *     scrolling past, which is precisely what makes an island read as a docked
- *     bar (owner, 2026-09-02);
+ *     bar (owner, 2026-09-02). The ONE exception is a FIXED footer — Prayer's
+ *     pinned prayed rail is not scroll content, so nothing can scroll it clear
+ *     of the island and its container has to lift it instead;
  *   - thin-line 24pt glyphs and 10pt labels, all in ONE neutral ink whether
  *     focused or not. The active tab is marked by a highlight pill wrapped
  *     around its icon+label — never by a green tint (S2.2, the single loudest

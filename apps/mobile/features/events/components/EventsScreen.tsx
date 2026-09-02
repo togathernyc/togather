@@ -633,7 +633,7 @@ export function EventsScreen() {
   // Flag-on: the tab bar is an island floating OVER the content (S2), so
   // nothing is reserved on the container — rows scroll behind it, and each
   // scroll surface clears the island (and the CTA above it) itself.
-  const waContentClearance = whatsappShellEnabled
+  const waCtaContentClearance = whatsappShellEnabled
     ? { paddingBottom: waFloatingCtaContentClearance(insets.bottom) }
     : null;
 
@@ -691,7 +691,7 @@ export function EventsScreen() {
           // RSVP chip, all three banned by §7/S5.1.
           <ScrollView
             style={styles.scrollView}
-            contentContainerStyle={[styles.waMyRsvpsContent, waContentClearance]}
+            contentContainerStyle={[styles.waMyRsvpsContent, waCtaContentClearance]}
           >
             {myEvents.map((event: any, index: number) => (
               <React.Fragment key={event.id}>
@@ -814,7 +814,10 @@ export function EventsScreen() {
     laterCards.length > 0;
 
   return (
-    <View style={[styles.container, { backgroundColor: pageBackground }]}>
+    <View
+      testID="wa-events-page"
+      style={[styles.container, { backgroundColor: pageBackground }]}
+    >
       {/* S1/S7 chrome, in flow (this screen doesn't scroll content under a
           floating nav zone — see metrics.ts's note on the nav scrim): the
           neutral List/Map circle pair over a 34pt heavy large title, identical
@@ -839,7 +842,7 @@ export function EventsScreen() {
                 // or every hairline stops 16pt short of both edges.
                 whatsappShellEnabled && styles.waScrollContent,
                 { paddingTop: mainContentTopPadding },
-                waContentClearance,
+                waCtaContentClearance,
               ]}
               onScroll={handleScroll}
               scrollEventThrottle={200}
@@ -1070,7 +1073,7 @@ const styles = StyleSheet.create({
   // --- WhatsApp-shell (flag-on) styles ------------------------------------
   waScrollContent: {
     paddingHorizontal: 0,
-    // `waContentClearance` supplies the bottom padding — it depends on the
+    // `waCtaContentClearance` supplies the bottom padding — it depends on the
     // safe-area inset, so it can't live in a static style.
   },
   // §3.2 "visibly more generous than the header-to-card gap" — the rhythm
@@ -1127,7 +1130,7 @@ const styles = StyleSheet.create({
   },
   waMyRsvpsContent: {
     paddingTop: 8,
-    // Bottom padding comes from `waContentClearance` (inset-dependent).
+    // Bottom padding comes from `waCtaContentClearance` (inset-dependent).
   },
   sectionTitle: {
     fontSize: 19,

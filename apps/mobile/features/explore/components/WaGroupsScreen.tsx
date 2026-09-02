@@ -630,10 +630,11 @@ export function WaGroupsScreen({
   // the container reserves nothing — the scroll content clears the island (and
   // the CTA floating above it) itself.
   const containerStyle = [styles.container, { backgroundColor: colors.surface }];
+  const containerProps = { testID: 'wa-groups-page', style: containerStyle };
 
   if (!hasCommunityContext) {
     return (
-      <View style={containerStyle}>
+      <View {...containerProps}>
         {header}
         <WaEmptyState
           icon="people-outline"
@@ -646,7 +647,7 @@ export function WaGroupsScreen({
 
   if (viewMode === 'map') {
     return (
-      <View style={containerStyle}>
+      <View {...containerProps}>
         {header}
         <View style={styles.mapArea}>
           <ExploreMap
@@ -667,7 +668,7 @@ export function WaGroupsScreen({
   const hasResults = searchedGroups.length > 0;
 
   return (
-    <View style={containerStyle}>
+    <View {...containerProps}>
       {header}
       <WaFilterChips
         chips={chips}

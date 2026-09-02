@@ -18,6 +18,7 @@ import { getGroupTypeLabel } from '@features/groups/utils';
 import { useAuth } from '@providers/AuthProvider';
 import { COLORS, getGroupTypeColor } from '../constants';
 import { useCommunityTheme } from '@hooks/useCommunityTheme';
+import { waTabBarContentClearance } from '@components/wa';
 
 const DAYS_OF_WEEK = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
@@ -311,7 +312,12 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     justifyContent: 'flex-end',
-    paddingBottom: 120, // Above the tab bar
+    // Clear the floating tab island. Derived, not a magic number: this used to
+    // be a hardcoded 120 that happened to clear the island only because the
+    // map area was shorter (the page container reserved the island's band).
+    // With the band gone the map runs to the screen edge, so this is the one
+    // thing holding the card off the island.
+    paddingBottom: waTabBarContentClearance(0),
     zIndex: 1000,
   },
   backdrop: {

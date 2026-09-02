@@ -297,6 +297,11 @@ export const WA_TAB_CONTENT_CLEARANCE = 12;
  * band across the bottom of every tab: content stopped at the band's top edge
  * and never scrolled past it, so the island read as an opaque docked bar
  * rather than a floating one (owner, 2026-09-02). Don't reintroduce it.
+ *
+ * The ONE screen that may put this on its container is one whose bottom
+ * element is a FIXED footer rather than scroll content — Prayer's pinned
+ * prayed rail, which nothing can scroll clear of the island. Everywhere else,
+ * container padding is the bug.
  */
 export function waTabBarContentClearance(bottomInset: number): number {
   return waTabBarIslandTop(bottomInset) + WA_TAB_CONTENT_CLEARANCE;
