@@ -21,7 +21,6 @@ import {
   Linking,
   Platform,
   Alert,
-  useWindowDimensions,
 } from "react-native";
 import Animated, {
   useSharedValue,
@@ -840,7 +839,6 @@ export function ChatInboxScreen({
   // Flag-on header geometry (see the note at the top of this file). In desktop
   // `sidebarMode` the screen renders inside a pane rather than under the status
   // bar, so there's no safe-area inset to clear.
-  const { height: windowHeight } = useWindowDimensions();
   const waInsetTop = sidebarMode ? 0 : insets.top;
 
   // B3: every inbox-flagged resource across every group, flattened into ONE
@@ -1725,7 +1723,6 @@ export function ChatInboxScreen({
                   insetTop: waInsetTop,
                   insetBottom: insets.bottom,
                   chipsHeight: waChipsHeight,
-                  windowHeight,
                 }),
               ]}
               style={styles.list}

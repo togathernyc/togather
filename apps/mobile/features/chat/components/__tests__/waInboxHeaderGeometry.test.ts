@@ -123,12 +123,7 @@ describe('waNavScrimStyle', () => {
 describe('waListContentPadding', () => {
   it('adds NOTHING flag-off — that header is in flow and pads itself', () => {
     expect(
-      waListContentPadding(false, {
-        insetTop: 59,
-        insetBottom: 34,
-        chipsHeight: 0,
-        windowHeight: 844,
-      })
+      waListContentPadding(false, { insetTop: 59, insetBottom: 34, chipsHeight: 0 })
     ).toBeNull();
   });
 
@@ -137,20 +132,27 @@ describe('waListContentPadding', () => {
       insetTop: 59,
       insetBottom: 34,
       chipsHeight: 44,
-      windowHeight: 844,
     })!;
     expect(style.paddingTop).toBe(waHeaderExpandedHeight(59, 44));
     expect(style.paddingBottom).toBe(waTabBarContentClearance(34));
   });
 
-  it('lets a short list scroll far enough to finish the collapse', () => {
+  /**
+   * There must be NO `minHeight`. It used to pad the content out to
+   * `windowHeight + 112` so a short inbox could still scroll far enough to
+   * finish the header collapse — but the list's viewport already IS the window
+   * height, so that made every inbox scrollable past its own content and left a
+   * screenful of empty page at the end, with the tab island floating in the
+   * middle of nothing. A header that stays expanded on a list too short to
+   * scroll is the correct trade.
+   */
+  it('pads the content and NOTHING else — no phantom scroll height', () => {
     const style = waListContentPadding(true, {
       insetTop: 59,
       insetBottom: 34,
       chipsHeight: 0,
-      windowHeight: 844,
     })!;
-    expect(style.minHeight).toBe(844 + WA_HEADER_COLLAPSIBLE);
-    expect(style.minHeight - 844).toBeGreaterThanOrEqual(WA_HEADER_COLLAPSIBLE);
+    expect(Object.keys(style).sort()).toEqual(['paddingBottom', 'paddingTop']);
+    expect((style as Record<string, unknown>).minHeight).toBeUndefined();
   });
 });

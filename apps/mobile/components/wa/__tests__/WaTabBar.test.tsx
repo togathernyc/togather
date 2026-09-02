@@ -15,6 +15,7 @@ import {
   WA_TAB_INK_LIGHT,
   WA_TAB_ISLAND_HEIGHT,
   WA_TAB_CONTENT_CLEARANCE,
+  WA_TAB_ISLAND_BOTTOM_GAP,
   waTabBarBottomOffset,
   waTabBarContentClearance,
   waTabBarIslandTop,
@@ -124,9 +125,13 @@ describe('waTabBarContentClearance — scroll clearance for the floating island'
     }
   );
 
-  it('is the island top plus a breathing gap — 84 at inset 0, 90 at inset 34', () => {
-    expect(waTabBarContentClearance(0)).toBe(84);
-    expect(waTabBarContentClearance(34)).toBe(90);
+  it('is the island top plus a breathing gap — 80 at inset 0, 86 at inset 34', () => {
+    expect(waTabBarContentClearance(0)).toBe(80);
+    expect(waTabBarContentClearance(34)).toBe(86);
+  });
+
+  it('uses the same gap above the island as below it', () => {
+    expect(WA_TAB_CONTENT_CLEARANCE).toBe(WA_TAB_ISLAND_BOTTOM_GAP);
   });
 
   /**

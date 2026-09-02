@@ -130,14 +130,12 @@ export function waListContentPadding(
     insetTop,
     insetBottom,
     chipsHeight,
-    windowHeight,
-  }: { insetTop: number; insetBottom: number; chipsHeight: number; windowHeight: number }
-): { paddingTop: number; paddingBottom: number; minHeight: number } | null {
+  }: { insetTop: number; insetBottom: number; chipsHeight: number }
+): { paddingTop: number; paddingBottom: number } | null {
   if (!enabled) return null;
   return {
     paddingTop: waHeaderExpandedHeight(insetTop, chipsHeight),
     paddingBottom: waTabBarContentClearance(insetBottom),
-    minHeight: windowHeight + WA_HEADER_COLLAPSIBLE,
   };
 }
 
