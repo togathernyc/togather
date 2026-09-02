@@ -115,21 +115,30 @@ describe('WaTabBar', () => {
  * CONTENT, and it is measured from the screen edge so it covers the island.
  */
 describe('waTabBarContentClearance — scroll clearance for the floating island', () => {
-  it.each([0, 20, 34, 59])('clears the whole island at inset %p', (inset) => {
-    expect(waTabBarContentClearance(inset)).toBeGreaterThan(waTabBarIslandTop(inset));
-  });
+  it.each([0, 20, 34, 59])(
+    'clears the island and leaves exactly the breathing gap at inset %p',
+    (inset) => {
+      expect(waTabBarContentClearance(inset) - waTabBarIslandTop(inset)).toBe(
+        WA_TAB_CONTENT_CLEARANCE
+      );
+    }
+  );
 
   it('is the island top plus a breathing gap — 84 at inset 0, 90 at inset 34', () => {
     expect(waTabBarContentClearance(0)).toBe(84);
     expect(waTabBarContentClearance(34)).toBe(90);
   });
 
-  it('measures the island top from the screen edge', () => {
-    expect(waTabBarIslandTop(0)).toBe(waTabBarBottomOffset(0) + WA_TAB_ISLAND_HEIGHT);
-    expect(waTabBarIslandTop(34)).toBe(waTabBarBottomOffset(34) + WA_TAB_ISLAND_HEIGHT);
-  });
-
-  it('leaves the breathing gap smaller than the island it sits above', () => {
-    expect(WA_TAB_CONTENT_CLEARANCE).toBeLessThan(WA_TAB_ISLAND_HEIGHT);
+  /**
+   * The band-era clearance was the bare 12pt breathing constant, because the
+   * container reserved the island's height. If someone reinstates the band,
+   * this is the value that shrinks back — so pin that it covers the island's
+   * full height, not just the gap above it.
+   */
+  it('covers the whole island, not just the breathing gap', () => {
+    expect(waTabBarContentClearance(0)).toBeGreaterThan(
+      WA_TAB_CONTENT_CLEARANCE + WA_TAB_ISLAND_HEIGHT - 1
+    );
+    expect(waTabBarContentClearance(0)).not.toBe(WA_TAB_CONTENT_CLEARANCE);
   });
 });

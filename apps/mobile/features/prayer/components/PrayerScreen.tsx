@@ -446,6 +446,7 @@ export function PrayerScreen() {
 
   return (
     <View
+      testID="prayer-page"
       style={[
         styles.container,
         { backgroundColor: colors.surfaceSecondary, paddingTop: insets.top + 12 },

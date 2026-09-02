@@ -111,6 +111,15 @@ export function waNavScrimStyle(progress: number) {
  * `minHeight` lets a short list still scroll far enough to complete the
  * collapse, so the header can't get stuck half-expanded on a small inbox.
  *
+ * NOTE: the margin here is thinner than it looks. Max scroll on a short inbox
+ * is `minHeight - viewportHeight` = `WA_HEADER_COLLAPSIBLE` (112) against a
+ * `COLLAPSE_DISTANCE` of 108 — 4pt of slack. It used to be ~84pt, because the
+ * screen container reserved an 80pt band that shrank the viewport; removing
+ * that band (the island now floats over the content) grew the viewport back.
+ * Still sufficient, but any growth in the nav row or search block will strand
+ * the header half-collapsed, and the test below only checks `minHeight`
+ * against the collapsible height — it does not model the viewport.
+ *
  * `paddingBottom` clears the floating tab island (S2), which the screen
  * reserves nowhere else: rows scroll BEHIND the island and only the last one
  * has to come to rest above it.

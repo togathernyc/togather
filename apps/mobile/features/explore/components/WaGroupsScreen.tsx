@@ -79,6 +79,8 @@ import {
   WA_TYPE_SECTION_HEADER,
   WA_WEIGHT_SEMIBOLD,
   waFloatingCtaContentClearance,
+  waTabBarContentClearance,
+  waTabBarIslandTop,
 } from '@components/wa';
 import { useUserLocation } from '@features/location/hooks/useUserLocation';
 import { useConvexFeatureFlag } from '@hooks/useConvexFeatureFlag';
@@ -630,10 +632,11 @@ export function WaGroupsScreen({
   // the container reserves nothing — the scroll content clears the island (and
   // the CTA floating above it) itself.
   const containerStyle = [styles.container, { backgroundColor: colors.surface }];
+  const containerProps = { testID: 'wa-groups-page', style: containerStyle };
 
   if (!hasCommunityContext) {
     return (
-      <View style={containerStyle}>
+      <View {...containerProps}>
         {header}
         <WaEmptyState
           icon="people-outline"
@@ -646,9 +649,24 @@ export function WaGroupsScreen({
 
   if (viewMode === 'map') {
     return (
-      <View style={containerStyle}>
+      <View {...containerProps}>
         {header}
-        <View style={styles.mapArea}>
+        {/*
+          * A map is a FIXED surface, not scroll content: nothing can scroll
+          * the provider attribution (Google's logo on Android, Apple's
+          * "Legal" link on iOS — both mandatory, both bottom-left) out from
+          * under the opaque island, and the island swallows taps over its own
+          * area, so the iOS link would not even be reachable. The map box
+          * therefore ends at the island's top edge — the same fixed-surface
+          * exception Prayer's rail uses. Lists still scroll behind the island.
+          */}
+        <View
+          testID="wa-groups-map-area"
+          style={[
+            styles.mapArea,
+            { paddingBottom: waTabBarIslandTop(insets.bottom) },
+          ]}
+        >
           <ExploreMap
             groups={groupsWithLocation}
             selectedGroupId={selectedGroupId}
@@ -657,7 +675,14 @@ export function WaGroupsScreen({
             mapboxToken={mapboxToken}
           />
           {selectedGroup ? (
-            <FloatingGroupCard group={selectedGroup} onClose={() => onGroupSelect(null)} />
+            <FloatingGroupCard
+              group={selectedGroup}
+              onClose={() => onGroupSelect(null)}
+              // The map runs under the island (see `mapArea` above), and this
+              // overlay is absolute, so Yoga ignores that padding — the card
+              // has to clear the island itself, at the live inset.
+              bottomClearance={waTabBarContentClearance(insets.bottom)}
+            />
           ) : null}
         </View>
       </View>
@@ -667,7 +692,7 @@ export function WaGroupsScreen({
   const hasResults = searchedGroups.length > 0;
 
   return (
-    <View style={containerStyle}>
+    <View {...containerProps}>
       {header}
       <WaFilterChips
         chips={chips}
