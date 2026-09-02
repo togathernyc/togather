@@ -118,7 +118,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"  # 22, not 20: eas-cli pulls @oclif/plugin-autocomplete@3.3.0, engines node >=22
           cache: "pnpm"
 
       - name: Install dependencies
