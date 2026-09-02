@@ -12,7 +12,12 @@ import { render, fireEvent } from "@testing-library/react-native";
 import { YouScreen } from "../YouScreen";
 import { useAuth } from "@providers/AuthProvider";
 import { useAuthenticatedQuery } from "@services/api/convex";
-import { WA_AVATAR_PROFILE, WA_TYPE_HERO_NAME } from "@components/wa";
+import { ScrollView } from "react-native";
+import {
+  WA_AVATAR_PROFILE,
+  WA_TYPE_HERO_NAME,
+  waTabBarContentClearance,
+} from "@components/wa";
 
 const mockPush = jest.fn();
 jest.mock("expo-router", () => ({
@@ -59,6 +64,34 @@ const COMMUNITY_ADMIN_ROWS = [
   "Attendance stats",
   "Community settings",
 ];
+
+describe("YouScreen — floating tab island clearance", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (useAuthenticatedQuery as jest.Mock).mockReturnValue(undefined);
+    (useAuth as jest.Mock).mockReturnValue(member);
+  });
+
+  /**
+   * The island floats OVER the content: cards scroll behind it, so the page
+   * container reserves nothing and the SCROLL CONTENT carries the clearance.
+   * Before PR #822 this container reserved the island's whole zone as a
+   * page-colored band that content could never scroll past.
+   */
+  it("reserves NOTHING on the page-background container", () => {
+    const { getByTestId } = render(<YouScreen />);
+    const container = StyleSheet.flatten(getByTestId("wa-you-page").props.style);
+    expect(container.paddingBottom).toBeUndefined();
+  });
+
+  it("clears the island on the scroll content instead", () => {
+    const { UNSAFE_getAllByType } = render(<YouScreen />);
+    const scroll = UNSAFE_getAllByType(ScrollView)[0];
+    expect(
+      StyleSheet.flatten(scroll.props.contentContainerStyle).paddingBottom
+    ).toBe(waTabBarContentClearance(0));
+  });
+});
 
 describe("YouScreen", () => {
   beforeEach(() => {

@@ -115,7 +115,9 @@ describe('waFloatingCtaContentClearance', () => {
       const lastRowBottom = waFloatingCtaContentClearance(inset);
       const ctaTop = waFloatingCtaBottomOffset(inset) + WA_FLOATING_CTA_HEIGHT;
       expect(lastRowBottom).toBe(ctaTop + WA_FLOATING_CTA_GAP);
-      expect(lastRowBottom).toBeGreaterThan(waTabBarContentClearance(inset));
+      // The CTA clearance has to cover the ISLAND as well as the pill — the
+      // band used to cover the island, and no longer exists.
+      expect(lastRowBottom).toBeGreaterThan(waTabBarIslandTop(inset));
     }
   );
 });

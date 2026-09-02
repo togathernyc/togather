@@ -20,6 +20,8 @@ import {
   WA_LIST_AVATAR,
   WA_FLOATING_CTA_HEIGHT,
   waFloatingCtaContentClearance,
+  waTabBarContentClearance,
+  waTabBarIslandTop,
   WA_TAB_ISLAND_HEIGHT,
   waFloatingCtaBottomOffset,
   waTabBarBottomOffset,
@@ -32,8 +34,11 @@ jest.mock('expo-router', () => ({
   useRouter: () => ({ push: mockPush }),
 }));
 
+// Settable so the clearance assertions can run at a REAL home-indicator inset
+// — pinned at 0 they would pass even if the screen hardcoded inset 0.
+let mockBottomInset = 0;
 jest.mock('react-native-safe-area-context', () => ({
-  useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
+  useSafeAreaInsets: () => ({ top: 0, bottom: mockBottomInset, left: 0, right: 0 }),
 }));
 
 jest.mock('@hooks/useTheme', () => ({
@@ -86,8 +91,13 @@ jest.mock('../ExploreMap', () => {
 jest.mock('../FloatingGroupCard', () => {
   const React = require('react');
   return {
-    FloatingGroupCard: () =>
-      React.createElement('View', { testID: 'floating-group-card' }, null),
+    // Renders the props it was given so the screen's clearance contract is
+    // assertable without reaching into the real card's internals.
+    FloatingGroupCard: (props: any) =>
+      React.createElement('View', {
+        testID: 'floating-group-card',
+        bottomClearance: props.bottomClearance,
+      }, null),
   };
 });
 
@@ -278,6 +288,70 @@ describe('WaGroupsScreen — CTA, empty states and the map (S5.1)', () => {
     // The mocked safe-area inset is 0 here; the offset still has to clear the island.
     expect(wrap.bottom).toBe(waFloatingCtaBottomOffset(0));
     expect(wrap.bottom).toBeGreaterThan(waTabBarBottomOffset(0) + WA_TAB_ISLAND_HEIGHT);
+  });
+
+  /**
+   * The island floats OVER the content (see the twin guard in
+   * EventsScreen.wa.test.tsx): the page container must reserve nothing, or
+   * content stops at a dead band instead of scrolling behind the island.
+   * Scroll-content clearance alone does not catch a reintroduced band — the
+   * old model carried both paddings at once.
+   */
+  /**
+   * The scroll-past rule has exactly two exceptions, both FIXED surfaces that
+   * cannot scroll anything clear of the opaque island: Prayer's pinned rail,
+   * and a map. A map carries mandatory provider attribution in its bottom-left
+   * corner (Google's logo on Android, Apple's tappable "Legal" link on iOS) —
+   * running the map to the screen edge buries it under the island, and the
+   * island swallows taps over its own area.
+   */
+  it('map view ends at the island top so provider attribution stays visible', () => {
+    mockBottomInset = 34;
+    const { getByTestId, getByLabelText } = renderScreen();
+    fireEvent.press(getByLabelText('Map view'));
+    const mapArea = StyleSheet.flatten(getByTestId('wa-groups-map-area').props.style);
+    expect(mapArea.paddingBottom).toBe(waTabBarIslandTop(34));
+    expect(mapArea.paddingBottom).toBeGreaterThan(0);
+    mockBottomInset = 0;
+  });
+
+  /**
+   * The map is not scroll content, and this card's overlay is absolutely
+   * positioned — Yoga lays it out against the parent's BORDER box, ignoring
+   * the mapArea padding that holds the map itself off the island. So the card
+   * carries its own clearance, and it has to track the live inset: at inset 34
+   * the island's top edge is 6pt higher than at 0, and above a 40pt inset a
+   * fixed value lets the island cover the card outright.
+   */
+  it('lifts the map card clear of the island at the real safe-area inset', () => {
+    mockBottomInset = 34;
+    const { getByLabelText, getByTestId } = renderScreen({ selectedGroup: YOUTH });
+    fireEvent.press(getByLabelText('Map view'));
+    expect(getByTestId('floating-group-card').props.bottomClearance).toBe(
+      waTabBarContentClearance(34)
+    );
+    // …and inset 34 is a different number from inset 0, so hardcoding 0 fails.
+    expect(waTabBarContentClearance(34)).not.toBe(waTabBarContentClearance(0));
+    mockBottomInset = 0;
+  });
+
+  it('reserves NOTHING on the page-background container', () => {
+    const { getByTestId } = renderScreen();
+    const container = StyleSheet.flatten(getByTestId('wa-groups-page').props.style);
+    expect(container.paddingBottom).toBeUndefined();
+  });
+
+  it('forwards the real safe-area inset into the list clearance', () => {
+    mockBottomInset = 34;
+    const { UNSAFE_getAllByType } = renderScreen();
+    const list = UNSAFE_getAllByType(ScrollView).find((sv: any) =>
+      Boolean(StyleSheet.flatten(sv.props.contentContainerStyle)?.paddingBottom)
+    );
+    expect(
+      StyleSheet.flatten(list!.props.contentContainerStyle).paddingBottom
+    ).toBe(waFloatingCtaContentClearance(34));
+    expect(waFloatingCtaContentClearance(34)).not.toBe(waFloatingCtaContentClearance(0));
+    mockBottomInset = 0;
   });
 
   it('pads the list so the last row clears both the island and the CTA', () => {

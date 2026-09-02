@@ -11,6 +11,7 @@ import React from 'react';
 import { render } from '@testing-library/react-native';
 import { PrayerScreen } from '../PrayerScreen';
 import { useAuthenticatedQuery } from '@services/api/convex';
+import { waTabBarContentClearance } from '@components/wa';
 
 jest.mock('@services/api/convex', () => ({
   api: {
@@ -163,6 +164,20 @@ describe('PrayerScreen — flag off (unchanged)', () => {
 describe('PrayerScreen — whatsapp-shell skin', () => {
   beforeEach(() => {
     mockWhatsappShell = true;
+  });
+
+  /**
+   * Prayer is the ONE flag-on screen that legitimately pads its page
+   * container for the island, and this pins why: the prayed rail is a FIXED
+   * footer, not scroll content, so nothing can ever scroll it clear of the
+   * island — the container has to lift it. Every other tab reserves nothing
+   * (see the guards in EventsScreen.wa / WaGroupsScreen / YouScreen tests);
+   * don't "make Prayer consistent" by deleting this.
+   */
+  it('lifts the fixed prayed rail clear of the island via the container', () => {
+    const { getByTestId } = render(<PrayerScreen />);
+    const container = flatten(getByTestId('prayer-page').props.style);
+    expect(container.paddingBottom).toBe(waTabBarContentClearance(0));
   });
 
   it('renders the S1 chrome: a 34pt "Prayer" large title over the content', () => {

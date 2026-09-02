@@ -414,7 +414,7 @@ kit (`WaFloatingButton.tsx`, `WaTabBar.tsx`) around it.
   original spec's biggest miss (S2.2: "Togather's green filled active icon + green
   label is the single loudest 'not WhatsApp' signal on every screen"). Shipped
   anatomy (`WaTabBar.tsx`):
-  - A pill inset **10pt** from each screen edge (`WA_TAB_ISLAND_MARGIN_H`),
+  - A pill inset **20pt** from each screen edge (`WA_TAB_ISLAND_MARGIN_H`),
     sitting **8pt** above the bottom safe inset (`WA_TAB_ISLAND_BOTTOM_GAP`),
     **64pt tall**, fully rounded (32pt radius), absolutely positioned so content
     scrolls *underneath* it (not a translucent-on-scroll bar — a real floating
@@ -434,8 +434,9 @@ kit (`WaFloatingButton.tsx`, `WaTabBar.tsx`) around it.
     badge.
   - **You tab shows the user's own avatar photo** (24pt, falls back to a person
     glyph) as its tab icon, not a generic "You" icon.
-  - Togather uses **4 tabs** (Chats · Events · Prayer · You per README §5); all
-    four get identical island styling — there's no per-tab exception.
+  - Togather uses **5 tabs** (Groups · Events · Chats · Prayer · You — D4 in
+    WA-VISUAL-DELTAS.md); all five get identical island styling — there's no
+    per-tab exception.
   - **The island floats over live content — content scrolls PAST it.** Rows
     pass behind the island and through the 20pt of page either side of it as
     the list moves, the way the reference does. A screen adds exactly ONE
@@ -451,7 +452,16 @@ kit (`WaFloatingButton.tsx`, `WaTabBar.tsx`) around it.
     opaque docked bar with a strip of dead page under it (the owner's
     2026-09-02 report, with a reference screenshot of a chart scrolling
     cleanly behind a floating pill). Uniform color at rest is not worth a
-    docked-looking bar — the island is translucent-over-content by design.
+    docked-looking bar. (The island's own fill stays near-opaque, per the Fill
+    entry above — what floats past it is the content *around* and *under* it as
+    the list moves, not content read through it.)
+  - **The one exception is a FIXED footer.** Prayer pins a prayed rail to the
+    bottom of the screen: it is not scroll content, so nothing can ever scroll
+    it clear of the island and its container must lift it
+    (`PrayerScreen.tsx`, `paddingBottom: waTabBarContentClearance`). That is
+    the *only* sanctioned container padding — a screen whose bottom content
+    scrolls never qualifies. `PrayerScreen.test.tsx` pins it so nobody
+    "makes Prayer consistent" and drops the rail under the island.
 
 ---
 

@@ -163,10 +163,8 @@ export function YouScreen() {
 
   return (
     <View
-      style={[
-        styles.container,
-        { backgroundColor: colors.backgroundGrouped },
-      ]}
+      testID="wa-you-page"
+      style={[styles.container, { backgroundColor: colors.backgroundGrouped }]}
     >
       {/* No large title here on purpose — WA's You/Settings tab shows floating
           buttons only (WA-VISUAL-DELTAS.md S1.3 / §4.1). */}
