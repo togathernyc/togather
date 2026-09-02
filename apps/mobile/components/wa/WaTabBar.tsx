@@ -9,14 +9,16 @@
  *   - a pill inset `WA_TAB_ISLAND_MARGIN_H` from each screen edge, sitting
  *     `WA_TAB_ISLAND_BOTTOM_GAP` above the bottom safe inset, ~64pt tall /
  *     fully rounded, near-white translucent fill + soft shadow;
- *   - absolutely positioned, so it takes no layout space. Flag-on screens pair
- *     that with two paddings: `waTabBarStripHeight(insets.bottom)` on the
- *     container carrying the page background — the BAND, running from the
- *     screen's bottom edge to 8pt above the island's top, so the island's whole
- *     zone (including the 20pt of page either side of it) paints as page
- *     background rather than as whatever row happens to be there — and
- *     `WA_TAB_CONTENT_CLEARANCE` on the scroll content, which is now only
- *     breathing room above that band;
+ *   - absolutely positioned, so it takes no layout space and content keeps
+ *     scrolling underneath it — rows pass behind the island and through the
+ *     20pt of page either side of it, exactly like the reference. The ONLY
+ *     padding a flag-on screen adds is `waTabBarContentClearance(insets.bottom)`
+ *     on its SCROLL CONTENT, so the last row can come to rest above the island
+ *     rather than being stranded under it. Nothing is reserved on the container
+ *     that paints the page background: a container padding there would freeze a
+ *     dead page-colored band across the bottom of the screen and stop content
+ *     scrolling past, which is precisely what makes an island read as a docked
+ *     bar (owner, 2026-09-02);
  *   - thin-line 24pt glyphs and 10pt labels, all in ONE neutral ink whether
  *     focused or not. The active tab is marked by a highlight pill wrapped
  *     around its icon+label — never by a green tint (S2.2, the single loudest

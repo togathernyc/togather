@@ -16,7 +16,8 @@ import {
   WA_TAB_ISLAND_HEIGHT,
   WA_TAB_CONTENT_CLEARANCE,
   waTabBarBottomOffset,
-  waTabBarStripHeight,
+  waTabBarContentClearance,
+  waTabBarIslandTop,
 } from '../metrics';
 
 type FakeRoute = {
@@ -103,28 +104,32 @@ describe('WaTabBar', () => {
 });
 
 /**
- * The band a flag-on screen reserves as page background under the island.
+ * Content clearance — the ONLY padding a flag-on screen adds for the island.
  *
- * This is the regression the owner reported twice (2026-07-29, 2026-07-30):
- * the island is inset 20pt from each screen edge and 64pt tall, so reserving
- * only the strip BELOW it left list rows rendering beside and under the island
- * — "the bottom of these pages is still not a uniform color". The band has to
- * cover the island's FULL height, not just the gap under it.
+ * The island floats over live content: rows scroll behind it and through its
+ * 20pt side margins. An earlier cut reserved the island's whole zone as
+ * `paddingBottom` on the page container instead, which froze a dead
+ * page-colored band across the bottom of every tab and stopped content
+ * scrolling past it — the island read as a docked bar (owner, 2026-09-02).
+ * These guards pin the scroll-past model: the clearance goes on scroll
+ * CONTENT, and it is measured from the screen edge so it covers the island.
  */
-describe('waTabBarStripHeight — the island band', () => {
-  it.each([0, 20, 34, 59])('covers the whole island at inset %p', (inset) => {
-    const islandTop = waTabBarBottomOffset(inset) + WA_TAB_ISLAND_HEIGHT;
-    expect(waTabBarStripHeight(inset)).toBeGreaterThanOrEqual(islandTop);
+describe('waTabBarContentClearance — scroll clearance for the floating island', () => {
+  it.each([0, 20, 34, 59])('clears the whole island at inset %p', (inset) => {
+    expect(waTabBarContentClearance(inset)).toBeGreaterThan(waTabBarIslandTop(inset));
   });
 
-  it('is the island top plus a breathing gap — 80 at inset 0, 86 at inset 34', () => {
-    expect(waTabBarStripHeight(0)).toBe(80);
-    expect(waTabBarStripHeight(34)).toBe(86);
+  it('is the island top plus a breathing gap — 84 at inset 0, 90 at inset 34', () => {
+    expect(waTabBarContentClearance(0)).toBe(84);
+    expect(waTabBarContentClearance(34)).toBe(90);
   });
 
-  it('keeps scroll clearance to breathing room — the band already clears the island', () => {
-    // Regression guard: when the clearance also had to cover the island it was
-    // 76, which double-counted the island once the band grew to include it.
+  it('measures the island top from the screen edge', () => {
+    expect(waTabBarIslandTop(0)).toBe(waTabBarBottomOffset(0) + WA_TAB_ISLAND_HEIGHT);
+    expect(waTabBarIslandTop(34)).toBe(waTabBarBottomOffset(34) + WA_TAB_ISLAND_HEIGHT);
+  });
+
+  it('leaves the breathing gap smaller than the island it sits above', () => {
     expect(WA_TAB_CONTENT_CLEARANCE).toBeLessThan(WA_TAB_ISLAND_HEIGHT);
   });
 });

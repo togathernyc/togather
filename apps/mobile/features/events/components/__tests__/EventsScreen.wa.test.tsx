@@ -24,7 +24,7 @@ import {
   WA_LARGE_TITLE_SIZE,
   WA_TAB_ISLAND_HEIGHT,
   WA_FLOATING_CTA_HEIGHT,
-  WA_FLOATING_CTA_CONTENT_CLEARANCE,
+  waFloatingCtaContentClearance,
   waFloatingCtaBottomOffset,
   waTabBarBottomOffset,
 } from '@components/wa';
@@ -394,7 +394,7 @@ describe('EventsScreen — WhatsApp parity (flag-on) vs legacy (flag-off)', () =
     const list = screen.UNSAFE_getAllByType(ScrollView)[0];
     expect(
       StyleSheet.flatten(list.props.contentContainerStyle).paddingBottom
-    ).toBe(WA_FLOATING_CTA_CONTENT_CLEARANCE);
+    ).toBe(waFloatingCtaContentClearance(0));
 
     screen.unmount();
     (useWhatsappShell as jest.Mock).mockReturnValue(false);

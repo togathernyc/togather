@@ -60,8 +60,7 @@ import {
   WA_TYPE_HERO_NAME,
   WA_TYPE_SUBTITLE,
   WA_WEIGHT_BOLD,
-  WA_TAB_CONTENT_CLEARANCE,
-  waTabBarStripHeight,
+  waTabBarContentClearance,
 } from "@components/wa";
 
 /**
@@ -167,10 +166,6 @@ export function YouScreen() {
       style={[
         styles.container,
         { backgroundColor: colors.backgroundGrouped },
-        // Reserve the island's whole BAND on the container that carries the
-        // page background, so the bottom of the page paints as one uniform
-        // page gray instead of cards showing beside and under the island.
-        { paddingBottom: waTabBarStripHeight(insets.bottom) },
       ]}
     >
       {/* No large title here on purpose — WA's You/Settings tab shows floating
@@ -189,9 +184,9 @@ export function YouScreen() {
       <ScrollView
         contentContainerStyle={[
           styles.scrollContent,
-          // The container reserves the island's band (S2), so the scroll
-          // content only needs breathing room above it.
-          { paddingBottom: WA_TAB_CONTENT_CLEARANCE },
+          // The island floats over the content (S2): cards scroll behind it,
+          // and this clears it so the last one can rest above it.
+          { paddingBottom: waTabBarContentClearance(insets.bottom) },
         ]}
         showsVerticalScrollIndicator={false}
       >

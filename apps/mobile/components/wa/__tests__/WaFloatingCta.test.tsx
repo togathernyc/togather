@@ -12,13 +12,14 @@ import { WaFloatingCta } from '../WaFloatingCta';
 import {
   WA_FLOATING_CTA_HEIGHT,
   WA_FLOATING_CTA_GAP,
-  WA_FLOATING_CTA_CONTENT_CLEARANCE,
+  waFloatingCtaContentClearance,
   WA_TAB_ISLAND_HEIGHT,
   WA_TYPE_ROW_TITLE,
   WA_WEIGHT_SEMIBOLD,
   waFloatingCtaBottomOffset,
   waTabBarBottomOffset,
-  waTabBarStripHeight,
+  waTabBarContentClearance,
+  waTabBarIslandTop,
 } from '../metrics';
 
 const flatten = (style: unknown) => StyleSheet.flatten(style as never) as Record<string, unknown>;
@@ -94,9 +95,9 @@ describe('WaFloatingCta', () => {
       // The wrapper's `bottom` is measured from the screen edge (Yoga ignores
       // parent padding for absolute children).
       const wrap = flatten(getByTestId('cta-wrap').props.style);
-      // The pill sits a gap above the page-colored band, not just above the
-      // island — otherwise it lands inside the band and breaks its uniformity.
-      expect(wrap.bottom).toBe(waTabBarStripHeight(inset) + WA_FLOATING_CTA_GAP);
+      // The pill floats a gap above the island's top edge, so the two never
+      // overlap while content scrolls behind both.
+      expect(wrap.bottom).toBe(waTabBarIslandTop(inset) + WA_FLOATING_CTA_GAP);
       const islandTop = waTabBarBottomOffset(inset) + WA_TAB_ISLAND_HEIGHT;
       expect(wrap.bottom as number).toBeGreaterThan(islandTop);
       expect(wrap.position).toBe('absolute');
@@ -104,19 +105,17 @@ describe('WaFloatingCta', () => {
   );
 });
 
-describe('WA_FLOATING_CTA_CONTENT_CLEARANCE', () => {
+describe('waFloatingCtaContentClearance', () => {
   it.each([0, 20, 34, 59])(
-    'lets the last scroll row clear the pill floating above the band at inset %p',
+    'lets the last scroll row clear the pill floating above the island at inset %p',
     (inset) => {
-      // A flag-on screen reserves the island BAND (`waTabBarStripHeight`) on
-      // the container that paints the page background, so scroll content ends
-      // that far above the screen edge — the band already clears the island.
-      // The content's bottom padding only has to reach past the pill's top.
-      const contentBottomEdge = waTabBarStripHeight(inset);
-      const lastRowBottom = contentBottomEdge + WA_FLOATING_CTA_CONTENT_CLEARANCE;
+      // Nothing is reserved on the container — content scrolls behind the
+      // island — so the scroll content's own padding has to reach past the
+      // island AND the pill floating above it.
+      const lastRowBottom = waFloatingCtaContentClearance(inset);
       const ctaTop = waFloatingCtaBottomOffset(inset) + WA_FLOATING_CTA_HEIGHT;
       expect(lastRowBottom).toBe(ctaTop + WA_FLOATING_CTA_GAP);
-      expect(lastRowBottom).toBeGreaterThan(ctaTop);
+      expect(lastRowBottom).toBeGreaterThan(waTabBarContentClearance(inset));
     }
   );
 });

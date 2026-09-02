@@ -20,14 +20,13 @@
  *
  * **Clearance.** The pill positions its own bottom edge at
  * `waFloatingCtaBottomOffset(bottomInset)` above the SCREEN bottom — a gap
- * above the page-colored island BAND (`waTabBarStripHeight`), so it never
- * overlaps the island or muddies that band. That is measured from the screen
- * and not from the parent's content box on purpose: Yoga lays an absolutely
- * positioned child out against its parent's border box and ignores the
- * parent's padding, so the old `bottom: 0` + `paddingBottom` pairing landed the
- * pill ON the island once the container reserved `waTabBarStripHeight` (the
- * owner's dark-mode screenshot). Scroll surfaces underneath must pad by
- * `WA_FLOATING_CTA_CONTENT_CLEARANCE` so the last row clears the pill.
+ * above the floating tab island, so the two never overlap while content
+ * scrolls behind both. That is measured from the screen and not from the
+ * parent's content box on purpose: Yoga lays an absolutely positioned child
+ * out against its parent's border box and ignores the parent's padding, so a
+ * `bottom: 0` + `paddingBottom` pairing landed the pill ON the island (the
+ * owner's dark-mode screenshot). Scroll surfaces underneath pad by
+ * `waFloatingCtaContentClearance(bottomInset)` so the last row clears the pill.
  *
  * Presentational: reads `useTheme()` for nothing but consistency with the kit —
  * the accent hex is an explicit prop, so this never reaches for

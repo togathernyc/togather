@@ -43,13 +43,12 @@ import {
   WA_LIST_SEPARATOR_INSET,
   WA_GROUP_MARGIN,
   WA_GROUP_SPACING,
-  WA_FLOATING_CTA_CONTENT_CLEARANCE,
+  waFloatingCtaContentClearance,
   WA_TYPE_SECTION_HEADER,
   WA_TYPE_ROW_TITLE,
   WA_TYPE_SUBTITLE,
   WA_TYPE_FOOTNOTE,
   WA_WEIGHT_SEMIBOLD,
-  waTabBarStripHeight,
 } from '@components/wa';
 import { formatWaEventWhen } from '../utils/waEventWhen';
 import { useEventsByTimeWindow } from '../hooks/useEventsByTimeWindow';
@@ -631,11 +630,11 @@ export function EventsScreen() {
     ? colors.surface
     : colors.backgroundSecondary;
 
-  // Flag-on: reserve the island's whole BAND on the container that carries the
-  // page background, so the bottom of the page is one uniform surface rather
-  // than rows showing beside the island and under it.
-  const waStripPadding = whatsappShellEnabled
-    ? { paddingBottom: waTabBarStripHeight(insets.bottom) }
+  // Flag-on: the tab bar is an island floating OVER the content (S2), so
+  // nothing is reserved on the container — rows scroll behind it, and each
+  // scroll surface clears the island (and the CTA above it) itself.
+  const waContentClearance = whatsappShellEnabled
+    ? { paddingBottom: waFloatingCtaContentClearance(insets.bottom) }
     : null;
 
   // Infinite scroll: trigger loadMore when the user gets within a page of
@@ -659,7 +658,7 @@ export function EventsScreen() {
   if (!hasCommunityContext) {
     const myEvents = myRsvpedEventsData?.events ?? [];
     return (
-      <View style={[styles.container, { backgroundColor: pageBackground }, waStripPadding]}>
+      <View style={[styles.container, { backgroundColor: pageBackground }]}>
         {whatsappShellEnabled && renderWaHeader()}
         {isLoadingMyRsvps ? (
           <View style={styles.centerContainer}>
@@ -692,7 +691,7 @@ export function EventsScreen() {
           // RSVP chip, all three banned by §7/S5.1.
           <ScrollView
             style={styles.scrollView}
-            contentContainerStyle={styles.waMyRsvpsContent}
+            contentContainerStyle={[styles.waMyRsvpsContent, waContentClearance]}
           >
             {myEvents.map((event: any, index: number) => (
               <React.Fragment key={event.id}>
@@ -815,7 +814,7 @@ export function EventsScreen() {
     laterCards.length > 0;
 
   return (
-    <View style={[styles.container, { backgroundColor: pageBackground }, waStripPadding]}>
+    <View style={[styles.container, { backgroundColor: pageBackground }]}>
       {/* S1/S7 chrome, in flow (this screen doesn't scroll content under a
           floating nav zone — see metrics.ts's note on the nav scrim): the
           neutral List/Map circle pair over a 34pt heavy large title, identical
@@ -840,6 +839,7 @@ export function EventsScreen() {
                 // or every hairline stops 16pt short of both edges.
                 whatsappShellEnabled && styles.waScrollContent,
                 { paddingTop: mainContentTopPadding },
+                waContentClearance,
               ]}
               onScroll={handleScroll}
               scrollEventThrottle={200}
@@ -1070,10 +1070,8 @@ const styles = StyleSheet.create({
   // --- WhatsApp-shell (flag-on) styles ------------------------------------
   waScrollContent: {
     paddingHorizontal: 0,
-    // Clear the Create Event pill floating above the island band (the band
-    // itself is reserved by the container) — the flat 120 the flag-off layout
-    // uses doesn't line up with either.
-    paddingBottom: WA_FLOATING_CTA_CONTENT_CLEARANCE,
+    // `waContentClearance` supplies the bottom padding — it depends on the
+    // safe-area inset, so it can't live in a static style.
   },
   // §3.2 "visibly more generous than the header-to-card gap" — the rhythm
   // between one section's last row and the next section's header.
@@ -1129,8 +1127,7 @@ const styles = StyleSheet.create({
   },
   waMyRsvpsContent: {
     paddingTop: 8,
-    // Clears the Create Event pill floating above the island band.
-    paddingBottom: WA_FLOATING_CTA_CONTENT_CLEARANCE,
+    // Bottom padding comes from `waContentClearance` (inset-dependent).
   },
   sectionTitle: {
     fontSize: 19,

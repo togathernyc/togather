@@ -39,7 +39,6 @@ import {
   WaScreenHeader,
   WA_GROUP_MARGIN,
   WA_GROUP_RADIUS,
-  WA_TAB_CONTENT_CLEARANCE,
   WA_TYPE_FOOTNOTE,
   WA_TYPE_HEADER_BLOCK,
   WA_TYPE_ROW_TITLE,
@@ -47,7 +46,7 @@ import {
   WA_WEIGHT_BOLD,
   WA_WEIGHT_REGULAR,
   WA_WEIGHT_SEMIBOLD,
-  waTabBarStripHeight,
+  waTabBarContentClearance,
 } from '@components/wa';
 import {
   useAuthenticatedQuery,
@@ -451,12 +450,10 @@ export function PrayerScreen() {
         styles.container,
         { backgroundColor: colors.surfaceSecondary, paddingTop: insets.top + 12 },
         // Flag-on, the tab bar is a floating island over the content (S2).
-        // The prayed rail is a fixed footer (not scroll content), so the
-        // container reserves the island's whole BAND plus the usual breathing
-        // room — the rail then sits just above a uniform page-colored band.
-        wa && {
-          paddingBottom: waTabBarStripHeight(insets.bottom) + WA_TAB_CONTENT_CLEARANCE,
-        },
+        // The prayed rail is a fixed footer, not scroll content — nothing can
+        // scroll it out from under the island — so the container lifts it
+        // clear of the island instead.
+        wa && { paddingBottom: waTabBarContentClearance(insets.bottom) },
       ]}
     >
       {wa ? (
