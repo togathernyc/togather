@@ -20,6 +20,7 @@ import {
   WA_LIST_AVATAR,
   WA_FLOATING_CTA_HEIGHT,
   waFloatingCtaContentClearance,
+  waTabBarContentClearance,
   waTabBarIslandTop,
   WA_TAB_ISLAND_HEIGHT,
   waFloatingCtaBottomOffset,
@@ -90,8 +91,13 @@ jest.mock('../ExploreMap', () => {
 jest.mock('../FloatingGroupCard', () => {
   const React = require('react');
   return {
-    FloatingGroupCard: () =>
-      React.createElement('View', { testID: 'floating-group-card' }, null),
+    // Renders the props it was given so the screen's clearance contract is
+    // assertable without reaching into the real card's internals.
+    FloatingGroupCard: (props: any) =>
+      React.createElement('View', {
+        testID: 'floating-group-card',
+        bottomClearance: props.bottomClearance,
+      }, null),
   };
 });
 
@@ -306,6 +312,26 @@ describe('WaGroupsScreen — CTA, empty states and the map (S5.1)', () => {
     const mapArea = StyleSheet.flatten(getByTestId('wa-groups-map-area').props.style);
     expect(mapArea.paddingBottom).toBe(waTabBarIslandTop(34));
     expect(mapArea.paddingBottom).toBeGreaterThan(0);
+    mockBottomInset = 0;
+  });
+
+  /**
+   * The map is not scroll content, and this card's overlay is absolutely
+   * positioned — Yoga lays it out against the parent's BORDER box, ignoring
+   * the mapArea padding that holds the map itself off the island. So the card
+   * carries its own clearance, and it has to track the live inset: at inset 34
+   * the island's top edge is 6pt higher than at 0, and above a 40pt inset a
+   * fixed value lets the island cover the card outright.
+   */
+  it('lifts the map card clear of the island at the real safe-area inset', () => {
+    mockBottomInset = 34;
+    const { getByLabelText, getByTestId } = renderScreen({ selectedGroup: YOUTH });
+    fireEvent.press(getByLabelText('Map view'));
+    expect(getByTestId('floating-group-card').props.bottomClearance).toBe(
+      waTabBarContentClearance(34)
+    );
+    // …and inset 34 is a different number from inset 0, so hardcoding 0 fails.
+    expect(waTabBarContentClearance(34)).not.toBe(waTabBarContentClearance(0));
     mockBottomInset = 0;
   });
 

@@ -18,7 +18,6 @@ import { getGroupTypeLabel } from '@features/groups/utils';
 import { useAuth } from '@providers/AuthProvider';
 import { COLORS, getGroupTypeColor } from '../constants';
 import { useCommunityTheme } from '@hooks/useCommunityTheme';
-import { waTabBarContentClearance } from '@components/wa';
 
 const DAYS_OF_WEEK = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
@@ -79,14 +78,34 @@ const formatTime12Hour = (hours: number, minutes: number): string => {
 interface FloatingGroupCardProps {
   group: Group;
   onClose: () => void;
+  /**
+   * Gap between the card's bottom edge and the screen's, in pt.
+   *
+   * Flag-on the card floats over a map that runs under the tab island, so the
+   * caller passes `waTabBarContentClearance(insets.bottom)` — inset-aware,
+   * because at a 34pt bottom inset the island's top edge is 6pt higher than it
+   * is at inset 0, and above a 40pt inset a fixed value lets the island cover
+   * the card outright.
+   *
+   * Defaults to the flag-off layout's long-standing 120, so the flag-off
+   * `GroupsScreen` (which renders this same card over its own map, with no
+   * island) is untouched.
+   */
+  bottomClearance?: number;
 }
 
 const { width: screenWidth } = Dimensions.get('window');
 const CARD_MARGIN = 16;
 const CARD_WIDTH = screenWidth - CARD_MARGIN * 2;
 const IMAGE_HEIGHT = 200;
+/** The flag-off map layout's original clearance above the bottom of the screen. */
+const FLAG_OFF_BOTTOM_CLEARANCE = 120;
 
-export function FloatingGroupCard({ group, onClose }: FloatingGroupCardProps) {
+export function FloatingGroupCard({
+  group,
+  onClose,
+  bottomClearance = FLAG_OFF_BOTTOM_CLEARANCE,
+}: FloatingGroupCardProps) {
   const router = useRouter();
   const { user } = useAuth();
   const { primaryColor } = useCommunityTheme();
@@ -185,7 +204,7 @@ export function FloatingGroupCard({ group, onClose }: FloatingGroupCardProps) {
   }, [router, group._id, group.id, onClose]);
 
   return (
-    <View style={styles.overlay}>
+    <View style={[styles.overlay, { paddingBottom: bottomClearance }]}>
       <TouchableOpacity style={styles.backdrop} onPress={onClose} activeOpacity={1} />
       <View style={styles.card}>
         {/* Close button */}
@@ -312,12 +331,11 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     justifyContent: 'flex-end',
-    // Clear the floating tab island. Derived, not a magic number: this used to
-    // be a hardcoded 120 that happened to clear the island only because the
-    // map area was shorter (the page container reserved the island's band).
-    // With the band gone the map runs to the screen edge, so this is the one
-    // thing holding the card off the island.
-    paddingBottom: waTabBarContentClearance(0),
+    // `bottomClearance` supplies the bottom padding — it depends on the
+    // safe-area inset flag-on, so it can't live in a static style. Yoga lays
+    // this absolutely positioned overlay out against its parent's BORDER box
+    // and ignores the parent's padding, so this padding is the only thing
+    // holding the card clear of the tab island.
     zIndex: 1000,
   },
   backdrop: {

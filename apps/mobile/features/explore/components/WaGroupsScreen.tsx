@@ -79,6 +79,7 @@ import {
   WA_TYPE_SECTION_HEADER,
   WA_WEIGHT_SEMIBOLD,
   waFloatingCtaContentClearance,
+  waTabBarContentClearance,
   waTabBarIslandTop,
 } from '@components/wa';
 import { useUserLocation } from '@features/location/hooks/useUserLocation';
@@ -674,7 +675,14 @@ export function WaGroupsScreen({
             mapboxToken={mapboxToken}
           />
           {selectedGroup ? (
-            <FloatingGroupCard group={selectedGroup} onClose={() => onGroupSelect(null)} />
+            <FloatingGroupCard
+              group={selectedGroup}
+              onClose={() => onGroupSelect(null)}
+              // The map runs under the island (see `mapArea` above), and this
+              // overlay is absolute, so Yoga ignores that padding — the card
+              // has to clear the island itself, at the live inset.
+              bottomClearance={waTabBarContentClearance(insets.bottom)}
+            />
           ) : null}
         </View>
       </View>
