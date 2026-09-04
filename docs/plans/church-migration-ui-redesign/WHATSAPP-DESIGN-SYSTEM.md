@@ -440,10 +440,17 @@ kit (`WaFloatingButton.tsx`, `WaTabBar.tsx`) around it.
   - **The island floats over live content — content scrolls PAST it.** Rows
     pass behind the island and through the 20pt of page either side of it as
     the list moves, the way the reference does. A screen adds exactly ONE
-    padding for the island: `waTabBarContentClearance(bottomInset)` (84pt at
-    inset 0, 90pt at inset 34 — the island's top edge plus a 12pt breathing
-    gap) on its **scroll content**, so the LAST row can come to rest above the
-    island instead of being stranded under it.
+    padding for the island: `waTabBarContentClearance(bottomInset)` (72pt at
+    inset 0, 78pt at inset 34 — **exactly the island's top edge, no gap**) on
+    its **scroll content**, so the LAST row comes to rest flush against the
+    island rather than being stranded under it.
+  - **`WA_TAB_CONTENT_CLEARANCE` is 0, and stays 0.** Any positive value paints
+    a band of empty page between the last row and the pill at rest, and the
+    owner reported exactly that band three separate times as "the white bar on
+    the bottom" — at 124pt, then 12, then 8. It is the same artifact at every
+    size. The list is meant to read as running underneath the pill, the way the
+    reference apps do; the clearance still covers the island's full height, so
+    no part of the last row is ever inside the pill's touch rect.
   - **Never reserve the island's zone on the container that paints the page
     background.** An earlier cut did (`waTabBarStripHeight`, a page-colored
     **band** across the bottom of every tab) to make that zone one uniform

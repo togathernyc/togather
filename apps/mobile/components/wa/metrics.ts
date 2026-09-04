@@ -295,12 +295,19 @@ export function waTabBarIslandTop(bottomInset: number): number {
 /**
  * Breathing room between the last scroll row and the island's top edge.
  *
- * 8, not 12, and deliberately the same number as `WA_TAB_ISLAND_BOTTOM_GAP`:
- * the island then has one gap above it and the same gap below, instead of two
- * unrelated ones. Trimmed from 12 as part of cutting the dead white the owner
- * reported at the end of the Chats list (2026-09-02).
+ * ZERO, deliberately. Any positive value paints a band of empty page between
+ * the last row and the pill at rest, and the owner reported that band three
+ * times as "the white bar on the bottom" (2026-09-02/03) — first at 124pt,
+ * then 12, then 8. It is the same artifact at every size, and the only value
+ * that removes it is 0: the last row's bottom edge lands exactly on the
+ * island's top edge, so the list reads as running underneath the pill rather
+ * than stopping short of it, which is what the reference apps do.
+ *
+ * The row stays fully tappable — the clearance still covers the island's whole
+ * height, so no part of the last row is inside the pill's touch rect. What is
+ * gone is only the empty page ABOVE the pill. See `waTabBarContentClearance`.
  */
-export const WA_TAB_CONTENT_CLEARANCE = WA_TAB_ISLAND_BOTTOM_GAP;
+export const WA_TAB_CONTENT_CLEARANCE = 0;
 
 /**
  * Bottom padding for a flag-on scroll surface: the island's whole zone plus
