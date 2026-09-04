@@ -15,7 +15,6 @@ import {
   WA_TAB_INK_LIGHT,
   WA_TAB_ISLAND_HEIGHT,
   WA_TAB_CONTENT_CLEARANCE,
-  WA_TAB_ISLAND_BOTTOM_GAP,
   waTabBarBottomOffset,
   waTabBarContentClearance,
   waTabBarIslandTop,
@@ -117,21 +116,30 @@ describe('WaTabBar', () => {
  */
 describe('waTabBarContentClearance — scroll clearance for the floating island', () => {
   it.each([0, 20, 34, 59])(
-    'clears the island and leaves exactly the breathing gap at inset %p',
+    'covers the island exactly at inset %p, so the last row is never under it',
     (inset) => {
-      expect(waTabBarContentClearance(inset) - waTabBarIslandTop(inset)).toBe(
-        WA_TAB_CONTENT_CLEARANCE
+      expect(waTabBarContentClearance(inset)).toBeGreaterThanOrEqual(
+        waTabBarIslandTop(inset)
       );
     }
   );
 
-  it('is the island top plus a breathing gap — 80 at inset 0, 86 at inset 34', () => {
-    expect(waTabBarContentClearance(0)).toBe(80);
-    expect(waTabBarContentClearance(34)).toBe(86);
+  it('lands the last row exactly on the island top — 72 at inset 0, 78 at inset 34', () => {
+    expect(waTabBarContentClearance(0)).toBe(72);
+    expect(waTabBarContentClearance(34)).toBe(78);
   });
 
-  it('uses the same gap above the island as below it', () => {
-    expect(WA_TAB_CONTENT_CLEARANCE).toBe(WA_TAB_ISLAND_BOTTOM_GAP);
+  /**
+   * The gap is 0 on purpose. Any positive value paints empty page between the
+   * last row and the pill at rest, which the owner reported three times as
+   * "the white bar on the bottom" — at 124pt, then 12, then 8. Don't reinstate
+   * one; the list is meant to run right up to the pill's edge.
+   */
+  it('leaves NO empty band above the island', () => {
+    expect(WA_TAB_CONTENT_CLEARANCE).toBe(0);
+    for (const inset of [0, 20, 34, 59]) {
+      expect(waTabBarContentClearance(inset)).toBe(waTabBarIslandTop(inset));
+    }
   });
 
   /**
@@ -140,10 +148,8 @@ describe('waTabBarContentClearance — scroll clearance for the floating island'
    * this is the value that shrinks back — so pin that it covers the island's
    * full height, not just the gap above it.
    */
-  it('covers the whole island, not just the breathing gap', () => {
-    expect(waTabBarContentClearance(0)).toBeGreaterThan(
-      WA_TAB_CONTENT_CLEARANCE + WA_TAB_ISLAND_HEIGHT - 1
-    );
-    expect(waTabBarContentClearance(0)).not.toBe(WA_TAB_CONTENT_CLEARANCE);
+  it('still covers the whole island height, so the last row stays tappable', () => {
+    expect(waTabBarContentClearance(0)).toBeGreaterThanOrEqual(WA_TAB_ISLAND_HEIGHT);
+    expect(waTabBarContentClearance(34)).toBeGreaterThanOrEqual(WA_TAB_ISLAND_HEIGHT);
   });
 });
