@@ -38,6 +38,8 @@ import {
 
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const AVAILABLE_ROLES = ["preacher", "ml", "worship", "creative", "production", "admin", "av"];
+// MIRRORS `BOT_LOCATIONS` in `apps/convex/functions/slackServiceBot/configHelpers.ts`
+// — mobile doesn't import convex source, so keep the two in sync by hand.
 const AVAILABLE_LOCATIONS = ["Manhattan", "Brooklyn"];
 
 export function SlackBotConfigScreen() {
@@ -133,25 +135,42 @@ export function SlackBotConfigScreen() {
   const [editItemPreserveSections, setEditItemPreserveSections] = useState("");
   const [editItemAiInstructions, setEditItemAiInstructions] = useState("");
 
+  // Locations the bot currently runs for — absent from the map means enabled,
+  // matching getEnabledLocations on the backend.
+  const enabledLocations = useMemo(
+    () =>
+      AVAILABLE_LOCATIONS.filter(
+        (location) => config?.locationsEnabled?.[location] ?? true,
+      ),
+    [config],
+  );
+
   // Send Nag
   const [nagLocation, setNagLocation] = useState<string>("Manhattan");
   const [nagUrgency, setNagUrgency] = useState<string>("direct");
   const [isSendingNag, setIsSendingNag] = useState(false);
   const [nagResult, setNagResult] = useState<string | null>(null);
 
+  // A campus toggled off while this screen is open must not stay selected and
+  // get nagged — sendNag passes the location explicitly, which the backend
+  // honours as a deliberate override.
+  const effectiveNagLocation = enabledLocations.includes(nagLocation)
+    ? nagLocation
+    : (enabledLocations[0] ?? null);
+
   const handleSendNag = useCallback(async () => {
-    if (!communityId) return;
+    if (!communityId || !effectiveNagLocation) return;
     setIsSendingNag(true);
     setNagResult(null);
     try {
-      await sendNag({ communityId, location: nagLocation, urgency: nagUrgency });
+      await sendNag({ communityId, location: effectiveNagLocation, urgency: nagUrgency });
       setNagResult("Nag sent successfully!");
     } catch (error) {
       setNagResult(`Failed: ${error instanceof Error ? error.message : "Unknown error"}`);
     } finally {
       setIsSendingNag(false);
     }
-  }, [communityId, sendNag, nagLocation, nagUrgency]);
+  }, [communityId, sendNag, effectiveNagLocation, nagUrgency]);
 
   const handleToggleBot = useCallback(async () => {
     if (!config || !communityId) return;
@@ -1052,19 +1071,19 @@ export function SlackBotConfigScreen() {
         <View style={[styles.card, { backgroundColor: colors.surface }]}>
           <Text style={[styles.configLabel, { color: colors.textSecondary }]}>Location</Text>
           <View style={[styles.chipContainer, { marginTop: 6, marginBottom: 12 }]}>
-            {AVAILABLE_LOCATIONS.map((loc) => (
+            {enabledLocations.map((loc) => (
               <TouchableOpacity
                 key={loc}
                 style={[
                   styles.selectChip, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
-                  nagLocation === loc && { backgroundColor: primaryColor },
+                  effectiveNagLocation === loc && { backgroundColor: primaryColor },
                 ]}
                 onPress={() => setNagLocation(loc)}
               >
                 <Text
                   style={[
                     styles.selectChipText, { color: colors.text },
-                    nagLocation === loc && { color: "#fff" },
+                    effectiveNagLocation === loc && { color: "#fff" },
                   ]}
                 >
                   {loc}
@@ -1107,10 +1126,10 @@ export function SlackBotConfigScreen() {
             style={[
               styles.sendNagButton,
               { backgroundColor: primaryColor },
-              isSendingNag && { opacity: 0.6 },
+              (isSendingNag || !effectiveNagLocation) && { opacity: 0.6 },
             ]}
             onPress={handleSendNag}
-            disabled={isSendingNag}
+            disabled={isSendingNag || !effectiveNagLocation}
           >
             {isSendingNag ? (
               <ActivityIndicator size="small" color="#fff" />

@@ -1020,10 +1020,15 @@ export const triggerNag = internalAction({
         continue;
       }
 
-      // Filter by location if specified
+      // Filter by location if specified. An explicit location is an
+      // intentional override (re-sending a bad nag, testing a single campus) so
+      // it fires even for a disabled one; a blanket nag is the same "nag what's
+      // live" intent as the scheduled sweep, so it respects the toggles.
       const targetThreads = args.location
         ? threads.filter((t: { location: string }) => t.location === args.location)
-        : threads;
+        : threads.filter((t: { location: string }) =>
+            isLocationEnabled(config.locationsEnabled, t.location),
+          );
 
       const results: Array<{ location: string; toolsUsed: string[]; nagged: boolean }> = [];
 
