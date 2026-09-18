@@ -155,3 +155,47 @@ export function sanitizeV2Item(item: ServicePlanItemV2): ServicePlanItemV2 {
   if (item.aiInstructions !== undefined) sanitized.aiInstructions = item.aiInstructions;
   return sanitized;
 }
+
+// ============================================================================
+// Per-location toggles
+// ============================================================================
+
+/**
+ * Locations the bot runs a weekly service thread for, in display order. This is
+ * the canonical list — the thread-creation loop, the nag sweep, and the admin
+ * screen's toggle rows all read it instead of repeating the literal.
+ */
+export const BOT_LOCATIONS = ["Manhattan", "Brooklyn"] as const;
+
+/** One of the locations the bot runs for. */
+export type BotLocation = (typeof BOT_LOCATIONS)[number];
+
+/** `slackBotConfig.locationsEnabled` — location -> whether the bot runs for it. */
+export type LocationsEnabled = Record<string, boolean> | undefined;
+
+/**
+ * True when the bot should run for `location`.
+ *
+ * A location is enabled unless the config explicitly turns it off, so config
+ * rows written before this toggle existed — and any location missing from the
+ * map — keep running exactly as they did.
+ */
+export function isLocationEnabled(
+  locationsEnabled: LocationsEnabled,
+  location: string,
+): boolean {
+  return locationsEnabled?.[location] ?? true;
+}
+
+/**
+ * The locations the bot should run for this week. Disabling a location stops
+ * BOTH its weekly thread and its nags — a church that isn't meeting at a campus
+ * doesn't want a thread asking who's preaching there, reminders or not.
+ */
+export function getEnabledLocations(
+  locationsEnabled: LocationsEnabled,
+): BotLocation[] {
+  return BOT_LOCATIONS.filter((location) =>
+    isLocationEnabled(locationsEnabled, location),
+  );
+}

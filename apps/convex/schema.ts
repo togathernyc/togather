@@ -2324,6 +2324,12 @@ export default defineSchema({
     ),
     threadMentions: v.record(v.string(), v.array(v.string())), // location -> slackUserIds
 
+    // Per-location kill switch: location -> whether the bot runs for it. A
+    // location missing from the map is enabled, so rows written before this
+    // existed keep both campuses running. Turning one off stops BOTH its weekly
+    // thread and its nags — see getEnabledLocations in configHelpers.ts.
+    locationsEnabled: v.optional(v.record(v.string(), v.boolean())),
+
     // Schedule
     nagSchedule: v.array(
       v.object({

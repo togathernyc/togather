@@ -48,6 +48,44 @@ export const toggleSlackBot = mutation({
 });
 
 /**
+ * Turn the bot on/off for a single location (campus).
+ *
+ * Disabling stops BOTH the weekly service thread and its nags for that
+ * location — the case this exists for is a campus pausing for a season (e.g.
+ * only meeting in Brooklyn), where a thread asking who's preaching in Manhattan
+ * is noise whether or not it gets reminders. Other locations are untouched, and
+ * re-enabling resumes on the next thread-creation day.
+ */
+export const setLocationEnabled = mutation({
+  args: {
+    token: v.string(),
+    communityId: v.id("communities"),
+    location: v.string(),
+    enabled: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    await requireCommunityAdmin(ctx, args.communityId, userId);
+
+    const config = await ctx.db
+      .query("slackBotConfig")
+      .withIndex("by_community", (q) => q.eq("communityId", args.communityId))
+      .first();
+    if (!config) throw new Error("Slack bot not configured for this community");
+
+    await ctx.db.patch(config._id, {
+      locationsEnabled: {
+        ...(config.locationsEnabled ?? {}),
+        [args.location]: args.enabled,
+      },
+      updatedAt: Date.now(),
+    });
+
+    return { success: true, location: args.location, enabled: args.enabled };
+  },
+});
+
+/**
  * Update team members list.
  */
 export const updateTeamMembers = mutation({

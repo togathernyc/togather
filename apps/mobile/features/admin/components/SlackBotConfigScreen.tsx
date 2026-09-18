@@ -51,6 +51,7 @@ export function SlackBotConfigScreen() {
     isLoading,
     communityId,
     toggleBot,
+    setLocationEnabled,
     toggleDevMode,
     updateTeamMembers,
     updateThreadMentions,
@@ -172,6 +173,18 @@ export function SlackBotConfigScreen() {
       Alert.alert("Error", "Failed to toggle dev mode");
     }
   }, [config, communityId, toggleDevMode]);
+
+  const handleToggleLocation = useCallback(
+    async (location: string, enabled: boolean) => {
+      if (!config || !communityId) return;
+      try {
+        await setLocationEnabled({ communityId, location, enabled });
+      } catch (error) {
+        Alert.alert("Error", `Failed to toggle ${location}`);
+      }
+    },
+    [config, communityId, setLocationEnabled],
+  );
 
   // ---- Thread Creation Schedule ----
 
@@ -785,6 +798,43 @@ export function SlackBotConfigScreen() {
             </View>
             <Ionicons name="chevron-forward" size={16} color={colors.textTertiary} />
           </TouchableOpacity>
+        </View>
+      </View>
+
+      {/* Locations Section */}
+      <View style={styles.section}>
+        <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>Locations</Text>
+        <Text style={[styles.sectionSubtitle, { color: colors.textTertiary }]}>
+          Turn a campus off while you're not meeting there — no weekly thread and
+          no reminders for it. Other campuses keep running.
+        </Text>
+        <View style={[styles.card, { backgroundColor: colors.surface }]}>
+          {AVAILABLE_LOCATIONS.map((location, index) => {
+            // Absent from the map means enabled — see getEnabledLocations.
+            const enabled = config.locationsEnabled?.[location] ?? true;
+            return (
+              <React.Fragment key={location}>
+                {index > 0 && (
+                  <View style={[styles.divider, { backgroundColor: colors.border }]} />
+                )}
+                <View style={styles.row}>
+                  <View style={styles.rowLeft}>
+                    <Ionicons
+                      name="location-outline"
+                      size={18}
+                      color={enabled ? colors.textSecondary : colors.iconSecondary}
+                    />
+                    <Text style={[styles.rowLabel, { color: colors.text }]}>{location}</Text>
+                  </View>
+                  <Switch
+                    value={enabled}
+                    onValueChange={(value) => handleToggleLocation(location, value)}
+                    trackColor={{ true: primaryColor }}
+                  />
+                </View>
+              </React.Fragment>
+            );
+          })}
         </View>
       </View>
 
