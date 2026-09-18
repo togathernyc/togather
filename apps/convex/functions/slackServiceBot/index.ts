@@ -39,6 +39,7 @@ export {
 } from "./adminQueries";
 export {
   toggleSlackBot,
+  setLocationEnabled,
   updateTeamMembers,
   updateThreadMentions,
   updateNagSchedule,

@@ -43,6 +43,9 @@ import {
 import {
   v2ToV1Fields,
   sanitizeV2Item,
+  isLocationEnabled,
+  getEnabledLocations,
+  BOT_LOCATIONS,
   type ServicePlanItemV2,
 } from "../functions/slackServiceBot/configHelpers";
 
@@ -931,5 +934,50 @@ describe("resolveSlackMentions", () => {
     const text = "<@U001> is preaching";
     expect(resolveSlackMentions(text, teamMembers))
       .toBe("Kevin Myers is preaching");
+  });
+});
+
+// ============================================================================
+// Per-location toggles
+// ============================================================================
+
+describe("isLocationEnabled", () => {
+  test("a location the config says nothing about is enabled", () => {
+    expect(isLocationEnabled(undefined, "Manhattan")).toBe(true);
+    expect(isLocationEnabled({}, "Manhattan")).toBe(true);
+    expect(isLocationEnabled({ Brooklyn: true }, "Manhattan")).toBe(true);
+  });
+
+  test("an explicitly disabled location is disabled", () => {
+    expect(isLocationEnabled({ Manhattan: false }, "Manhattan")).toBe(false);
+  });
+
+  test("disabling one location leaves the others alone", () => {
+    const config = { Manhattan: false, Brooklyn: true };
+    expect(isLocationEnabled(config, "Manhattan")).toBe(false);
+    expect(isLocationEnabled(config, "Brooklyn")).toBe(true);
+  });
+});
+
+describe("getEnabledLocations", () => {
+  test("defaults to every known location when nothing is configured", () => {
+    expect(getEnabledLocations(undefined)).toEqual([...BOT_LOCATIONS]);
+  });
+
+  test("drops a disabled location", () => {
+    expect(getEnabledLocations({ Manhattan: false })).toEqual(["Brooklyn"]);
+  });
+
+  test("returns nothing when every location is off", () => {
+    const allOff = Object.fromEntries(BOT_LOCATIONS.map((l) => [l, false]));
+    expect(getEnabledLocations(allOff)).toEqual([]);
+  });
+
+  test("preserves the canonical location order", () => {
+    expect(getEnabledLocations({})).toEqual([...BOT_LOCATIONS]);
+  });
+
+  test("ignores toggles for locations the bot doesn't run", () => {
+    expect(getEnabledLocations({ Queens: false })).toEqual([...BOT_LOCATIONS]);
   });
 });

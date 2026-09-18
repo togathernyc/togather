@@ -20,6 +20,7 @@ import {
   buildThreadCreationMessage,
   buildThreadIntroMessage,
 } from "./ai";
+import { getEnabledLocations, isLocationEnabled } from "./configHelpers";
 import { runAgentLoop } from "./agent";
 import { buildMentionPrompt, buildNagPrompt, buildCatchupSyncPrompt, computeItemStatuses } from "./prompts";
 import { fetchPcoContextCore } from "./pcoSync";
@@ -308,7 +309,7 @@ export const createWeeklyThreads = internalAction({
         { serviceDate, channelId }
       );
 
-      const locations = ["Manhattan", "Brooklyn"] as const;
+      const locations = getEnabledLocations(config.locationsEnabled);
       const results: Array<{ location: string; threadTs: string; created: boolean }> = [];
 
       for (const location of locations) {
@@ -847,6 +848,14 @@ export const checkAndNag = internalAction({
         const location = thread.location as "Manhattan" | "Brooklyn";
         const nagStartTime = Date.now();
 
+        // A location turned off mid-week still has this week's thread open —
+        // skip it so the campus goes quiet immediately rather than after the
+        // next thread-creation day.
+        if (!isLocationEnabled(config.locationsEnabled, location)) {
+          console.log(`[SlackServiceBot] Skipping nag for ${location} — location is disabled`);
+          continue;
+        }
+
         try {
           const alreadySent = await ctx.runQuery(
             internal.functions.slackServiceBot.index.isNagSent,
@@ -1011,10 +1020,15 @@ export const triggerNag = internalAction({
         continue;
       }
 
-      // Filter by location if specified
+      // Filter by location if specified. An explicit location is an
+      // intentional override (re-sending a bad nag, testing a single campus) so
+      // it fires even for a disabled one; a blanket nag is the same "nag what's
+      // live" intent as the scheduled sweep, so it respects the toggles.
       const targetThreads = args.location
         ? threads.filter((t: { location: string }) => t.location === args.location)
-        : threads;
+        : threads.filter((t: { location: string }) =>
+            isLocationEnabled(config.locationsEnabled, t.location),
+          );
 
       const results: Array<{ location: string; toolsUsed: string[]; nagged: boolean }> = [];
 
@@ -1106,7 +1120,7 @@ export const createTestThreads = internalAction({
       { serviceDate, channelId: args.channelId }
     );
 
-    const locations = ["Manhattan", "Brooklyn"] as const;
+    const locations = getEnabledLocations(config.locationsEnabled);
     const results: Array<{ location: string; threadTs: string; created: boolean }> = [];
 
     for (const location of locations) {

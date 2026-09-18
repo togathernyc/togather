@@ -105,6 +105,10 @@ export function useSlackBotConfig() {
     api.functions.slackServiceBot.index.toggleSlackBot
   );
 
+  const setLocationEnabled = useAuthenticatedMutation(
+    api.functions.slackServiceBot.index.setLocationEnabled
+  );
+
   const updateTeamMembers = useAuthenticatedMutation(
     api.functions.slackServiceBot.index.updateTeamMembers
   );
@@ -216,6 +220,7 @@ export function useSlackBotConfig() {
     isLoading: config === undefined,
     communityId,
     toggleBot,
+    setLocationEnabled,
     updateTeamMembers,
     updateThreadMentions,
     updateNagSchedule,
