@@ -49,7 +49,7 @@ export const registerNewUser = action({
       phoneVerified: boolean;
     };
   }> => {
-    const normalizedPhone = normalizePhone(args.phone);
+    const normalizedPhone = normalizePhone(args.phone, args.countryCode);
 
     // Security: Verify that the phone was actually verified via verifyPhoneOTP.
     // This prevents attackers from calling registerNewUser directly without
@@ -302,7 +302,7 @@ export const signup = action({
     // Normalize phone if provided
     let normalizedPhone: string | undefined;
     if (args.phone) {
-      normalizedPhone = normalizePhone(args.phone);
+      normalizedPhone = normalizePhone(args.phone, args.countryCode);
     }
 
     // Create user
