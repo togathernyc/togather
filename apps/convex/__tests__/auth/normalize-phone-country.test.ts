@@ -19,6 +19,9 @@ describe("normalizePhone with the picked country", () => {
   it("does not double the country code when the user already typed it", () => {
     expect(normalizePhone("61 412 345 678", "AU")).toBe("+61412345678");
     expect(normalizePhone("+61 412 345 678", "AU")).toBe("+61412345678");
+    // German numbers vary in length, so a short one can still carry +49
+    expect(normalizePhone("49 30 1234567", "DE")).toBe("+49301234567");
+    expect(normalizePhone("030 1234567", "DE")).toBe("+49301234567");
   });
 
   it("handles other picker countries", () => {
@@ -26,6 +29,9 @@ describe("normalizePhone with the picked country", () => {
     expect(normalizePhone("0803 123 4567", "NG")).toBe("+2348031234567");
     // Italian numbers keep their leading 0
     expect(normalizePhone("06 1234 5678", "IT")).toBe("+390612345678");
+    // An Italian mobile starting 39 is not mistaken for +39
+    expect(normalizePhone("339 123 4567", "IT")).toBe("+393391234567");
+    expect(normalizePhone("39 339 123 4567", "IT")).toBe("+393391234567");
     // A Brazilian mobile in area code 55 is not mistaken for +55
     expect(normalizePhone("55 91234 5678", "BR")).toBe("+5555912345678");
   });

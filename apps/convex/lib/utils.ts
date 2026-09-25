@@ -69,30 +69,34 @@ export function isValidPhone(phone: string): boolean {
  * Dialing info for the non-NANP countries the mobile country picker offers
  * (keep in sync with COUNTRIES in apps/mobile/components/ui/PhoneInput.tsx).
  * - dialCode: the country calling code, without "+"
- * - maxNational: longest national number (trunk "0" removed). A longer input
- *   that starts with dialCode was typed with the country code already.
+ * - minNational: shortest national number (trunk "0" removed). An input that
+ *   starts with dialCode and still has at least this many digits after it was
+ *   typed with the country code already (e.g. "61 412 345 678" for AU). Set
+ *   high enough that a national number starting with the same digits (a
+ *   Brazilian mobile in area code 55, an Italian mobile starting 39) isn't
+ *   mistaken for one.
  * - keepLeadingZero: Italy's leading 0 is part of the number, not a trunk prefix.
  */
 const COUNTRY_DIALING: Record<
   string,
-  { dialCode: string; maxNational: number; keepLeadingZero?: boolean }
+  { dialCode: string; minNational: number; keepLeadingZero?: boolean }
 > = {
-  GB: { dialCode: "44", maxNational: 10 },
-  AU: { dialCode: "61", maxNational: 9 },
-  DE: { dialCode: "49", maxNational: 11 },
-  FR: { dialCode: "33", maxNational: 9 },
-  IT: { dialCode: "39", maxNational: 11, keepLeadingZero: true },
-  ES: { dialCode: "34", maxNational: 9 },
-  BR: { dialCode: "55", maxNational: 11 },
-  MX: { dialCode: "52", maxNational: 10 },
-  IN: { dialCode: "91", maxNational: 10 },
-  CN: { dialCode: "86", maxNational: 11 },
-  JP: { dialCode: "81", maxNational: 10 },
-  KR: { dialCode: "82", maxNational: 10 },
-  NG: { dialCode: "234", maxNational: 10 },
-  GH: { dialCode: "233", maxNational: 9 },
-  KE: { dialCode: "254", maxNational: 9 },
-  ZA: { dialCode: "27", maxNational: 9 },
+  GB: { dialCode: "44", minNational: 9 },
+  AU: { dialCode: "61", minNational: 9 },
+  DE: { dialCode: "49", minNational: 6 },
+  FR: { dialCode: "33", minNational: 9 },
+  IT: { dialCode: "39", minNational: 9, keepLeadingZero: true },
+  ES: { dialCode: "34", minNational: 9 },
+  BR: { dialCode: "55", minNational: 10 },
+  MX: { dialCode: "52", minNational: 10 },
+  IN: { dialCode: "91", minNational: 10 },
+  CN: { dialCode: "86", minNational: 10 },
+  JP: { dialCode: "81", minNational: 9 },
+  KR: { dialCode: "82", minNational: 8 },
+  NG: { dialCode: "234", minNational: 8 },
+  GH: { dialCode: "233", minNational: 9 },
+  KE: { dialCode: "254", minNational: 9 },
+  ZA: { dialCode: "27", minNational: 9 },
 };
 
 /**
@@ -109,7 +113,8 @@ export function normalizePhone(phone: string, countryCode?: string): string {
   const country = countryCode ? COUNTRY_DIALING[countryCode.toUpperCase()] : undefined;
   if (country && !phone.trim().startsWith("+")) {
     const alreadyInternational =
-      digits.startsWith(country.dialCode) && digits.length > country.maxNational;
+      digits.startsWith(country.dialCode) &&
+      digits.length - country.dialCode.length >= country.minNational;
     if (alreadyInternational) {
       return `+${digits}`;
     }
