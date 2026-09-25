@@ -34,6 +34,11 @@ interface InviteGroupMembersSheetProps {
 }
 
 const NOTE_MAX = 140;
+// Max recipients per invite. Keep in sync with MAX_INVITE_RECIPIENTS in
+// apps/convex/functions/eventInvites.ts, which enforces the same cap server-side.
+const MAX_INVITE_RECIPIENTS = 20;
+// Debounce for the server-side member search so we don't fire a query per keystroke.
+const SEARCH_DEBOUNCE_MS = 250;
 
 export function InviteGroupMembersSheet({
   visible,
@@ -47,14 +52,32 @@ export function InviteGroupMembersSheet({
   const { colors } = useTheme();
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [note, setNote] = useState("");
   const [confirming, setConfirming] = useState(false);
   const [sending, setSending] = useState(false);
   const [initialized, setInitialized] = useState(false);
 
+  // Debounce the search term before hitting the server so typing doesn't fire
+  // a query per keystroke.
+  React.useEffect(() => {
+    const handle = setTimeout(
+      () => setDebouncedSearch(search.trim()),
+      SEARCH_DEBOUNCE_MS,
+    );
+    return () => clearTimeout(handle);
+  }, [search]);
+
+  // Members are searched and paginated server-side (see
+  // listGroupMembersForInvite) so large groups don't blow the read limit.
   const members = useAuthenticatedQuery(
     api.functions.eventInvites.listGroupMembersForInvite,
-    visible ? { meetingId: meetingId as Id<"meetings"> } : "skip",
+    visible
+      ? {
+          meetingId: meetingId as Id<"meetings">,
+          search: debouncedSearch || undefined,
+        }
+      : "skip",
   );
 
   // Fetch the caller from Convex so the preview shows their actual first
@@ -80,11 +103,15 @@ export function InviteGroupMembersSheet({
       setSelectedIds(new Set());
       setNote("");
       setSearch("");
+      setDebouncedSearch("");
       return;
     }
     if (initialized || !members) return;
     const defaultIds = new Set<string>();
     for (const m of members) {
+      // Cap the default selection at the server-enforced limit so a routine
+      // "open the sheet and send" doesn't hit the recipient cap.
+      if (defaultIds.size >= MAX_INVITE_RECIPIENTS) break;
       const reachable = m.hasPhone || m.hasPushTokens;
       // Self is included in the roster (for test sends) but excluded from
       // the default selection so a routine "Invite everyone" tap doesn't
@@ -97,15 +124,9 @@ export function InviteGroupMembersSheet({
     setInitialized(true);
   }, [visible, members, initialized]);
 
-  const filtered = useMemo(() => {
-    if (!members) return [];
-    const q = search.trim().toLowerCase();
-    if (!q) return members;
-    return members.filter((m) => {
-      const name = `${m.firstName || ""} ${m.lastName || ""}`.toLowerCase();
-      return name.includes(q);
-    });
-  }, [members, search]);
+  // Members already arrive filtered by the server-side `search` argument, so
+  // the list is rendered as-is.
+  const filtered = members ?? [];
 
   // "Eligible" = reachable (phone or push), not already invited, not already
   // RSVP'd, and not self. Self stays tappable individually for test sends but
@@ -122,8 +143,13 @@ export function InviteGroupMembersSheet({
     [members],
   );
 
+  const selectionAtCap = selectedIds.size >= MAX_INVITE_RECIPIENTS;
+
   const allEligibleSelected = useMemo(() => {
     if (!members) return false;
+    // At the cap we can't select any more, so treat the row as "all selected"
+    // — a second tap then clears the selection.
+    if (selectionAtCap) return true;
     return members
       .filter(
         (m) =>
@@ -133,13 +159,23 @@ export function InviteGroupMembersSheet({
           !m.isSelf,
       )
       .every((m) => selectedIds.has(m.userId));
-  }, [members, selectedIds]);
+  }, [members, selectedIds, selectionAtCap]);
 
   const toggle = (userId: string) => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
-      if (next.has(userId)) next.delete(userId);
-      else next.add(userId);
+      if (next.has(userId)) {
+        next.delete(userId);
+        return next;
+      }
+      if (next.size >= MAX_INVITE_RECIPIENTS) {
+        Alert.alert(
+          "Invite limit reached",
+          `You can invite up to ${MAX_INVITE_RECIPIENTS} people at a time.`,
+        );
+        return prev;
+      }
+      next.add(userId);
       return next;
     });
   };
@@ -149,11 +185,22 @@ export function InviteGroupMembersSheet({
     setSelectedIds((prev) => {
       if (allEligibleSelected) return new Set();
       const next = new Set(prev);
+      let hitLimit = false;
       for (const m of members) {
+        if (next.size >= MAX_INVITE_RECIPIENTS) {
+          hitLimit = true;
+          break;
+        }
         const reachable = m.hasPhone || m.hasPushTokens;
         if (reachable && !m.alreadyInvited && !m.alreadyRsvped && !m.isSelf) {
           next.add(m.userId);
         }
+      }
+      if (hitLimit) {
+        Alert.alert(
+          "Invite limit reached",
+          `You can invite up to ${MAX_INVITE_RECIPIENTS} people at a time. The first ${MAX_INVITE_RECIPIENTS} eligible members are selected.`,
+        );
       }
       return next;
     });
@@ -302,6 +349,12 @@ export function InviteGroupMembersSheet({
                     Select all ({eligibleCount} with phone)
                   </Text>
                 </TouchableOpacity>
+
+                {(selectedIds.size > 0 || eligibleCount > MAX_INVITE_RECIPIENTS) && (
+                  <Text style={[styles.limitHint, { color: colors.textSecondary }]}>
+                    {`${selectedIds.size}/${MAX_INVITE_RECIPIENTS} selected · up to ${MAX_INVITE_RECIPIENTS} per invite`}
+                  </Text>
+                )}
 
                 {members === undefined && (
                   <View style={styles.loadingRow}>
@@ -635,6 +688,7 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   selectAllText: { fontSize: 14, fontWeight: "500" },
+  limitHint: { fontSize: 12, marginTop: 2, marginBottom: 4 },
 
   loadingRow: { paddingVertical: 20, alignItems: "center" },
   emptyText: { fontSize: 14, paddingVertical: 16, textAlign: "center" },
