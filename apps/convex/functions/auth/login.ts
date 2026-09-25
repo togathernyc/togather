@@ -48,10 +48,12 @@ export const phoneLookup = action({
     } | null;
   }> => {
     // Validate and normalize phone
-    if (!isValidPhone(args.phone)) {
+    // Normalize first: a local number like "412 345 678" (AU) is only 9
+    // digits until the picked country's calling code is added.
+    const normalizedPhone = normalizePhone(args.phone, args.countryCode);
+    if (!isValidPhone(normalizedPhone)) {
       throw new Error("Invalid phone number");
     }
-    const normalizedPhone = normalizePhone(args.phone);
 
     // Look up user
     const result = await ctx.runQuery(

@@ -66,10 +66,56 @@ export function isValidPhone(phone: string): boolean {
 }
 
 /**
- * Normalize phone number to E.164 format
+ * Dialing info for the non-NANP countries the mobile country picker offers
+ * (keep in sync with COUNTRIES in apps/mobile/components/ui/PhoneInput.tsx).
+ * - dialCode: the country calling code, without "+"
+ * - maxNational: longest national number (trunk "0" removed). A longer input
+ *   that starts with dialCode was typed with the country code already.
+ * - keepLeadingZero: Italy's leading 0 is part of the number, not a trunk prefix.
  */
-export function normalizePhone(phone: string): string {
+const COUNTRY_DIALING: Record<
+  string,
+  { dialCode: string; maxNational: number; keepLeadingZero?: boolean }
+> = {
+  GB: { dialCode: "44", maxNational: 10 },
+  AU: { dialCode: "61", maxNational: 9 },
+  DE: { dialCode: "49", maxNational: 11 },
+  FR: { dialCode: "33", maxNational: 9 },
+  IT: { dialCode: "39", maxNational: 11, keepLeadingZero: true },
+  ES: { dialCode: "34", maxNational: 9 },
+  BR: { dialCode: "55", maxNational: 11 },
+  MX: { dialCode: "52", maxNational: 10 },
+  IN: { dialCode: "91", maxNational: 10 },
+  CN: { dialCode: "86", maxNational: 11 },
+  JP: { dialCode: "81", maxNational: 10 },
+  KR: { dialCode: "82", maxNational: 10 },
+  NG: { dialCode: "234", maxNational: 10 },
+  GH: { dialCode: "233", maxNational: 9 },
+  KE: { dialCode: "254", maxNational: 9 },
+  ZA: { dialCode: "27", maxNational: 9 },
+};
+
+/**
+ * Normalize phone number to E.164 format.
+ *
+ * `countryCode` is the ISO country the user picked in the phone input (e.g.
+ * "AU"). Without it, or for US/CA, a 10-digit number is assumed to be US.
+ * With a non-US country, a locally-typed number ("0412 345 678") gets that
+ * country's calling code instead of "+1" — previously every non-US login
+ * number was sent to Twilio as a bogus US/unknown number and no code arrived.
+ */
+export function normalizePhone(phone: string, countryCode?: string): string {
   const digits = phone.replace(/\D/g, "");
+  const country = countryCode ? COUNTRY_DIALING[countryCode.toUpperCase()] : undefined;
+  if (country && !phone.trim().startsWith("+")) {
+    const alreadyInternational =
+      digits.startsWith(country.dialCode) && digits.length > country.maxNational;
+    if (alreadyInternational) {
+      return `+${digits}`;
+    }
+    const national = country.keepLeadingZero ? digits : digits.replace(/^0/, "");
+    return `+${country.dialCode}${national}`;
+  }
   // Assume US number if 10 digits
   if (digits.length === 10) {
     return `+1${digits}`;

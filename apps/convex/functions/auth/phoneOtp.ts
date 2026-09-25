@@ -113,7 +113,7 @@ export const sendPhoneOTP = action({
     ctx,
     args
   ): Promise<{ success: boolean; expiresIn: number }> => {
-    const normalizedPhone = normalizePhone(args.phone);
+    const normalizedPhone = normalizePhone(args.phone, args.countryCode);
 
     // Skip for test phones (no rate limiting, no Twilio)
     if (isTestPhone(normalizedPhone)) {
@@ -244,7 +244,7 @@ export const verifyPhoneOTP = action({
       activeCommunityName?: string;
     };
   }> => {
-    const normalizedPhone = normalizePhone(args.phone);
+    const normalizedPhone = normalizePhone(args.phone, args.countryCode);
     const confirmIdentity = args.confirmIdentity ?? true;
 
     // Check magic code bypass
@@ -490,7 +490,7 @@ export const registerPhone = action({
     }
     const userId = resolved.userId;
 
-    const normalizedPhone = normalizePhone(args.phone);
+    const normalizedPhone = normalizePhone(args.phone, args.countryCode);
 
     // Verify OTP
     const isMagicCode =
