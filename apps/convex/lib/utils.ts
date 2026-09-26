@@ -66,10 +66,61 @@ export function isValidPhone(phone: string): boolean {
 }
 
 /**
- * Normalize phone number to E.164 format
+ * Dialing info for the non-NANP countries the mobile country picker offers
+ * (keep in sync with COUNTRIES in apps/mobile/components/ui/PhoneInput.tsx).
+ * - dialCode: the country calling code, without "+"
+ * - minNational: shortest national number (trunk "0" removed). An input that
+ *   starts with dialCode and still has at least this many digits after it was
+ *   typed with the country code already (e.g. "61 412 345 678" for AU). Set
+ *   high enough that a national number starting with the same digits (a
+ *   Brazilian mobile in area code 55, an Italian mobile starting 39) isn't
+ *   mistaken for one.
+ * - keepLeadingZero: Italy's leading 0 is part of the number, not a trunk prefix.
  */
-export function normalizePhone(phone: string): string {
+const COUNTRY_DIALING: Record<
+  string,
+  { dialCode: string; minNational: number; keepLeadingZero?: boolean }
+> = {
+  GB: { dialCode: "44", minNational: 9 },
+  AU: { dialCode: "61", minNational: 9 },
+  DE: { dialCode: "49", minNational: 6 },
+  FR: { dialCode: "33", minNational: 9 },
+  IT: { dialCode: "39", minNational: 9, keepLeadingZero: true },
+  ES: { dialCode: "34", minNational: 9 },
+  BR: { dialCode: "55", minNational: 10 },
+  MX: { dialCode: "52", minNational: 10 },
+  IN: { dialCode: "91", minNational: 10 },
+  CN: { dialCode: "86", minNational: 10 },
+  JP: { dialCode: "81", minNational: 9 },
+  KR: { dialCode: "82", minNational: 8 },
+  NG: { dialCode: "234", minNational: 8 },
+  GH: { dialCode: "233", minNational: 9 },
+  KE: { dialCode: "254", minNational: 9 },
+  ZA: { dialCode: "27", minNational: 9 },
+};
+
+/**
+ * Normalize phone number to E.164 format.
+ *
+ * `countryCode` is the ISO country the user picked in the phone input (e.g.
+ * "AU"). Without it, or for US/CA, a 10-digit number is assumed to be US.
+ * With a non-US country, a locally-typed number ("0412 345 678") gets that
+ * country's calling code instead of "+1" — previously every non-US login
+ * number was sent to Twilio as a bogus US/unknown number and no code arrived.
+ */
+export function normalizePhone(phone: string, countryCode?: string): string {
   const digits = phone.replace(/\D/g, "");
+  const country = countryCode ? COUNTRY_DIALING[countryCode.toUpperCase()] : undefined;
+  if (country && !phone.trim().startsWith("+")) {
+    const alreadyInternational =
+      digits.startsWith(country.dialCode) &&
+      digits.length - country.dialCode.length >= country.minNational;
+    if (alreadyInternational) {
+      return `+${digits}`;
+    }
+    const national = country.keepLeadingZero ? digits : digits.replace(/^0/, "");
+    return `+${country.dialCode}${national}`;
+  }
   // Assume US number if 10 digits
   if (digits.length === 10) {
     return `+1${digits}`;

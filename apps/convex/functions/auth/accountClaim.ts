@@ -63,7 +63,7 @@ export const claimAccount = action({
       phoneVerified: boolean;
     };
   }> => {
-    const normalizedPhone = normalizePhone(args.phone);
+    const normalizedPhone = normalizePhone(args.phone, args.countryCode);
 
     // ACTION: LOOKUP - Check if email exists
     if (args.action === "lookup") {
@@ -229,7 +229,7 @@ export const submitAccountClaimRequest = action({
     request_id: string;
     message: string;
   }> => {
-    const normalizedPhone = normalizePhone(args.phone);
+    const normalizedPhone = normalizePhone(args.phone, args.countryCode);
 
     // Create account claim request
     const claimId = await ctx.runMutation(
