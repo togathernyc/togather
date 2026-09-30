@@ -46,6 +46,7 @@ import {
   api,
 } from "@services/api/convex";
 import { formatError } from "@/utils/error-handling";
+import { AdminViewNote } from "@components/ui/AdminViewNote";
 
 // Validation schema for group edit form
 const groupEditSchema = z.object({
@@ -354,6 +355,13 @@ export function EditGroupScreen() {
 
     return isCommunityAdmin || isGroupLeader;
   }, [group, user?.id, isCommunityAdmin]);
+  // Admins can reach this screen from a group they haven't joined (the
+  // non-member page's COMMUNITY ADMIN section); say so up front.
+  const isEditingAsNonMemberAdmin =
+    isCommunityAdmin &&
+    !!group &&
+    !(group as any).user_role &&
+    (group as any).user_request_status !== "accepted";
 
   const handleToggleHiddenFromDiscovery = async (next: boolean) => {
     const previous = hiddenFromDiscovery;
@@ -511,6 +519,13 @@ export function EditGroupScreen() {
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
+          {isEditingAsNonMemberAdmin && (
+            <AdminViewNote
+              style={styles.adminNote}
+              text="Editing as a community admin. You're not a member of this group."
+            />
+          )}
+
           {/* Basic Information Section */}
           <View style={[styles.section, { backgroundColor: colors.surface }]}>
             <Text style={[styles.sectionTitle, { color: colors.text }]}>Basic Information</Text>
@@ -818,8 +833,8 @@ export function EditGroupScreen() {
                   <Text style={[styles.toggleLabel, { color: colors.text }]}>Let group leaders approve requests</Text>
                   <Text style={[styles.toggleDescription, { color: colors.textSecondary }]}>
                     When off, community admins approve join requests. When on,
-                    the group's leaders approve them from a Requests section on
-                    the group page, and are notified of new requests.
+                    the group's leaders approve them from the group chat or the
+                    group page, and are notified of new requests.
                   </Text>
                 </View>
                 <Switch
@@ -858,6 +873,9 @@ export function EditGroupScreen() {
 }
 
 const styles = StyleSheet.create({
+  adminNote: {
+    marginBottom: 12,
+  },
   container: {
     flex: 1,
     backgroundColor: "#F5F5F5",

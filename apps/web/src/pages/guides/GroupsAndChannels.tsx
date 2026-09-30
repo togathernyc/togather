@@ -611,11 +611,14 @@ export function GroupsAndChannels() {
           the admin dashboard). A community admin can hand that off per group:
           in <Term>Edit group</Term> &rarr; <Term>Approvals</Term>, turning on{" "}
           &ldquo;Let group leaders approve requests&rdquo; moves it to the
-          leaders. When it&rsquo;s on, a <Term>Requests</Term> section appears on
-          the group page whenever someone is waiting, the group&rsquo;s leaders
-          get a notification for each new request, and those requests no longer
-          show in the admin dashboard. Only community admins can change this
-          setting.
+          leaders. When it&rsquo;s on, whenever someone is waiting a card appears
+          at the top of the group chat and a <Term>Requests</Term> section
+          appears on the group page, the group&rsquo;s leaders get a
+          notification for each new request, and those requests no longer show
+          in the admin dashboard. Only community admins can change this
+          setting, and they can do it without joining the group: the group
+          page shows admins a <Term>Community admin</Term> section with the
+          same switch.
         </Callout>
       </Section>
 

@@ -47,6 +47,7 @@ import { ExternalChatModal } from "./ExternalChatModal";
 import { MessageList } from "./MessageList";
 import { MessageInput } from "./MessageInput";
 import { ChatRequestBanner } from "./ChatRequestBanner";
+import { JoinRequestsBar } from "./JoinRequestsBar";
 import { TypingIndicator } from "./TypingIndicator";
 import { MessageActionsOverlay } from "./MessageActionsOverlay";
 import { ChannelMembersModal } from "@features/channels";
@@ -1310,6 +1311,11 @@ const ConvexChatRoomScreenInner: React.FC = () => {
             groupId={resolvedGroupId ?? undefined}
             onToolPress={handleToolPress}
           />
+        )}
+        {/* Pending join requests, pinned for whoever can review them.
+            Renders nothing for everyone else. */}
+        {!isAdHocChannel && resolvedGroupId && (
+          <JoinRequestsBar groupId={resolvedGroupId} />
         )}
         <ChatMenuModal
           visible={menuVisible}

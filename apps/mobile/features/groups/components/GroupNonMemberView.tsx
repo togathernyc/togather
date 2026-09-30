@@ -21,6 +21,7 @@ import { HighlightsGrid } from "./HighlightsGrid";
 import { JoinGroupButton } from "./JoinGroupButton";
 import { GroupOptionsModal } from "./GroupOptionsModal";
 import { ChannelsSection } from "./ChannelsSection";
+import { GroupAdminSection } from "./GroupAdminSection";
 import { sectionStyles } from "./sectionStyles";
 import { Group } from "../types";
 import { ImageViewerManager } from "@/providers/ImageViewerProvider";
@@ -211,7 +212,11 @@ export function GroupNonMemberView({
         <GroupHeader
           group={group}
           onSharePress={() => setShowOptionsModal(true)}
+          canEdit={isAdmin}
         />
+
+        {/* COMMUNITY ADMIN — edit, approvals and requests without joining. */}
+        {isAdmin && !!group._id && <GroupAdminSection group={group} />}
 
         {/* DESCRIPTION — wrapped in the shared section/card pattern so it
             sits in the same visual rhythm as the rest of the page. */}

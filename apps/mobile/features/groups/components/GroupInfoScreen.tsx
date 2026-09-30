@@ -243,14 +243,14 @@ export function GroupInfoScreen() {
   }, [group, user?.id, user?.is_admin]);
   const canArchiveGroup = isAdmin && !group?.is_announcement_group;
 
-  // Requests badge (item 4): only meaningful in leader-approval mode.
+  // Requests badge (item 4). The count is 0 for anyone who can't review this
+  // group's requests, so it shows only for leaders in leader-approval mode
+  // and for community admins in either mode.
   const pendingRequestCount = useAuthenticatedQuery(
     api.functions.groupMembers.countGroupJoinRequests,
     group?._id ? { groupId: group._id as Id<"groups"> } : "skip",
   ) as number | undefined;
-  const hasPendingRequests = (pendingRequestCount ?? 0) > 0;
-  const showRequestsBadge =
-    (group as any)?.join_approval_mode === "leaders" && hasPendingRequests;
+  const showRequestsBadge = (pendingRequestCount ?? 0) > 0;
 
   // ---------------------------------------------------------------------
   // Mute toggle (item 3) — the exact per-group notification mutation/query
