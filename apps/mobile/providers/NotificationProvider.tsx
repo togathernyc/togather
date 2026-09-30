@@ -140,7 +140,17 @@ export const useNotifications = () => useContext(NotificationContext);
 export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
-  const { user, isAuthenticated, community, setCommunity } = useAuth();
+  const {
+    user,
+    isAuthenticated,
+    isLoading: isAuthLoading,
+    community,
+    setCommunity,
+  } = useAuth();
+  // A tap can only switch community once auth has restored the user's profile:
+  // before that, AuthProvider.setCommunity has no user and silently no-ops, and
+  // the in-flight profile fetch then lands the user's previous active community.
+  const isAuthReady = !!user && !isAuthLoading;
   // Store the auth token from AsyncStorage for passing to Convex functions
   const [authToken, setAuthToken] = useState<string | null>(null);
   const [expoPushToken, setExpoPushToken] = useState<string | null>(null);
@@ -159,6 +169,9 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
   const activeChannelIdRef = useRef<string | null>(null);
   // Track handled notification IDs to prevent duplicate navigation
   const handledNotificationIds = useRef<Set<string>>(new Set());
+  // A tap that arrived before auth was ready (cold start from a notification),
+  // replayed once it is — see the effect after handleNotificationTap.
+  const pendingTapRef = useRef<Record<string, unknown> | null>(null);
 
   // Keep refs in sync with state
   useEffect(() => {
@@ -370,6 +383,11 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
   // Notification-feed taps route identically. This callback only adds the
   // push-specific concern of switching community before navigating.
   const handleNotificationTap = useCallback(async (data: Record<string, unknown>) => {
+    if (!isAuthReady) {
+      pendingTapRef.current = data;
+      return;
+    }
+
     // WORKAROUND: iOS push notifications sometimes have fields nested inside data.data
     // while other fields are at the top level. Extract from both for robustness (Issue #48).
     const nestedData = data.data as Record<string, unknown> | undefined;
@@ -394,12 +412,21 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
       awaitPrefetch,
       activeChannelId: activeChannelIdRef.current,
     });
-  }, [community?.id, setCommunity, awaitPrefetch]);
+  }, [isAuthReady, community?.id, setCommunity, awaitPrefetch]);
 
   // Keep handleNotificationTapRef in sync
   useEffect(() => {
     handleNotificationTapRef.current = handleNotificationTap;
   }, [handleNotificationTap]);
+
+  // Replay a tap that arrived before auth was ready, now that the user's
+  // profile and current community are loaded.
+  useEffect(() => {
+    if (!isAuthReady || !pendingTapRef.current) return;
+    const data = pendingTapRef.current;
+    pendingTapRef.current = null;
+    void handleNotificationTap(data);
+  }, [isAuthReady, handleNotificationTap]);
 
   // Configure notification handler
   useEffect(() => {
@@ -454,6 +481,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
       // User logged out - just clear local state
       // AuthProvider handles unregistering the token with the backend before clearing auth
       setExpoPushToken(null);
+      pendingTapRef.current = null;
       setIsReady(true);
       return;
     }
