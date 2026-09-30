@@ -7,7 +7,7 @@ export default function SlackBotConfigRoute() {
       <Stack.Screen
         options={{
           headerShown: true,
-          title: "Slack Bot Config",
+          title: "Slack Bot",
           headerBackTitle: "Back",
         }}
       />
