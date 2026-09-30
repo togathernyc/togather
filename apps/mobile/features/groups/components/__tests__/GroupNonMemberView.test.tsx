@@ -76,6 +76,11 @@ jest.mock("../GroupHeader", () => {
   };
 });
 
+jest.mock("../GroupAdminSection", () => {
+  const { View } = require("react-native");
+  return { GroupAdminSection: () => <View testID="group-admin-section" /> };
+});
+
 jest.mock("../MembersRow", () => {
   const { View, Text } = require("react-native");
   return {
@@ -187,6 +192,8 @@ describe("GroupNonMemberView", () => {
 
     // Admins CAN see member list even if not a member
     expect(screen.getByTestId("members-row")).toBeTruthy();
+    // ...and the COMMUNITY ADMIN section (edit, approvals, requests)
+    expect(screen.getByTestId("group-admin-section")).toBeTruthy();
 
     // Reset mock to default non-admin user
     useAuth.mockReturnValue({
@@ -205,6 +212,7 @@ describe("GroupNonMemberView", () => {
     render(<GroupNonMemberView group={mockGroup} onJoinPress={onJoinPress} />);
 
     expect(screen.queryByTestId("channels-section")).toBeNull();
+    expect(screen.queryByTestId("group-admin-section")).toBeNull();
   });
 
   it("shows the channels section to community admins and routes taps to chat", () => {

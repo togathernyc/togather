@@ -513,15 +513,12 @@ export function GroupDetailScreen() {
           </View>
         )}
 
-        {/* REQUESTS — the group-page review surface for the "leaders approve"
-            handoff. Shown only when the group hands approval to leaders and
-            there are pending requests the viewer may review (its leaders, plus
-            community admins). In the default "admins" mode requests live in the
-            admin dashboard instead, so this row stays hidden. Taps into the
-            full review page (also the target of the incoming-request push). */}
-        {group._id &&
-          (group as any).join_approval_mode === "leaders" &&
-          hasPendingRequests && (
+        {/* REQUESTS — the group-page review surface. Shown whenever there are
+            pending requests the viewer may review: the group's leaders in
+            "leaders" mode, and community admins in either mode (the count is
+            0 for everyone else). Taps into the full review page (also the
+            target of the incoming-request push and the chat's requests card). */}
+        {group._id && hasPendingRequests && (
           <View style={{ paddingHorizontal: 12, marginTop: 4 }}>
             <TouchableOpacity
               onPress={() =>

@@ -247,6 +247,11 @@ jest.mock('../MessageInput', () => ({
   },
 }));
 
+// Covered by JoinRequestsBar.test.tsx; stubbed so this suite needn't mock its queries.
+jest.mock('../JoinRequestsBar', () => ({
+  JoinRequestsBar: () => null,
+}));
+
 jest.mock('../TypingIndicator', () => ({
   TypingIndicator: () => null,
 }));
