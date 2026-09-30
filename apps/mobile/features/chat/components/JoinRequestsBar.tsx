@@ -36,22 +36,19 @@ import { formatError } from "@/utils/error-handling";
 type PendingRequest = {
   membershipId: Id<"groupMembers">;
   requestedAt: number;
-  user: {
-    firstName: string;
-    lastName: string;
-    profilePhoto: string | null;
-  } | null;
+  firstName: string;
+  lastName: string;
+  profilePhoto: string | null;
 };
 
 const MAX_STACKED_AVATARS = 3;
 
 function fullName(request: PendingRequest): string {
-  if (!request.user) return "Someone";
-  return `${request.user.firstName} ${request.user.lastName}`.trim() || "Someone";
+  return `${request.firstName} ${request.lastName}`.trim() || "Someone";
 }
 
 function namesSummary(requests: PendingRequest[], total: number): string {
-  const first = requests.slice(0, 2).map((r) => r.user?.firstName || "Someone");
+  const first = requests.slice(0, 2).map((r) => r.firstName || "Someone");
   const rest = total - first.length;
   if (rest <= 0) return first.join(" and ");
   return `${first.join(", ")} and ${rest} more`;
@@ -62,14 +59,12 @@ export function JoinRequestsBar({ groupId }: { groupId: Id<"groups"> }) {
   const { colors } = useTheme();
   const [processing, setProcessing] = useState(false);
 
-  const count = useAuthenticatedQuery(
-    api.functions.groupMembers.countGroupJoinRequests,
+  // Bounded preview (total + newest few); the full per-requester detail is
+  // only loaded on the Requests screen.
+  const preview = useAuthenticatedQuery(
+    api.functions.groupMembers.previewGroupJoinRequests,
     { groupId },
-  ) as number | undefined;
-  const requests = useAuthenticatedQuery(
-    api.functions.groupMembers.listGroupJoinRequests,
-    count && count > 0 ? { groupId } : "skip",
-  ) as PendingRequest[] | undefined;
+  ) as { total: number; requests: PendingRequest[] } | undefined;
   const reviewRequest = useAuthenticatedMutation(
     api.functions.groupMembers.reviewGroupJoinRequest,
   );
@@ -109,9 +104,12 @@ export function JoinRequestsBar({ groupId }: { groupId: Id<"groups"> }) {
     [review],
   );
 
-  if (!count || !requests || requests.length === 0) return null;
+  if (!preview || preview.total === 0 || preview.requests.length === 0) {
+    return null;
+  }
 
-  const single = requests.length === 1 ? requests[0] : null;
+  const { total, requests } = preview;
+  const single = total === 1 ? requests[0] : null;
   const stacked = requests.slice(0, MAX_STACKED_AVATARS);
 
   return (
@@ -140,7 +138,7 @@ export function JoinRequestsBar({ groupId }: { groupId: Id<"groups"> }) {
             >
               <Avatar
                 name={fullName(r)}
-                imageUrl={r.user?.profilePhoto}
+                imageUrl={r.profilePhoto}
                 size={single ? 36 : 30}
               />
             </View>
@@ -150,12 +148,12 @@ export function JoinRequestsBar({ groupId }: { groupId: Id<"groups"> }) {
           <Text style={[styles.title, { color: colors.text }]} numberOfLines={1}>
             {single
               ? `${fullName(single)} wants to join`
-              : `${requests.length} people want to join`}
+              : `${total} people want to join`}
           </Text>
           <Text style={[styles.subtitle, { color: colors.textSecondary }]} numberOfLines={1}>
             {single
               ? `Requested ${formatDistanceToNow(single.requestedAt, { addSuffix: true })}`
-              : namesSummary(requests, requests.length)}
+              : namesSummary(requests, total)}
           </Text>
         </View>
       </TouchableOpacity>

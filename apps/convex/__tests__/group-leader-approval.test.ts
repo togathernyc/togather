@@ -297,6 +297,68 @@ describe("Group leader approval — listing visibility", () => {
   });
 });
 
+describe("Group leader approval — chat preview", () => {
+  test("returns the total and at most three requesters, newest first", async () => {
+    const t = convexTest(schema, modules);
+    const setup = await setupData(t);
+    await setMode(t, setup.groupId, "leaders");
+    const requesterIds = await t.run(async (ctx) => {
+      const ids: Id<"users">[] = [];
+      for (let i = 0; i < 4; i++) {
+        ids.push(
+          await ctx.db.insert("users", {
+            firstName: `Req${i}`,
+            lastName: "Person",
+            phone: `+1202555200${i}`,
+            isActive: true,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+          } as any),
+        );
+      }
+      return ids;
+    });
+    for (const [i, userId] of requesterIds.entries()) {
+      await t.run(async (ctx) => {
+        await ctx.db.insert("groupMembers", {
+          groupId: setup.groupId,
+          userId,
+          role: "member",
+          joinedAt: 1000 + i,
+          leftAt: 1000 + i,
+          notificationsEnabled: true,
+          requestStatus: "pending",
+          requestedAt: 1000 + i,
+        });
+      });
+    }
+
+    const preview = await t.query(
+      api.functions.groupMembers.previewGroupJoinRequests,
+      { token: setup.leaderToken, groupId: setup.groupId },
+    );
+    expect(preview.total).toBe(4);
+    expect(preview.requests.map((r) => r.firstName)).toEqual([
+      "Req3",
+      "Req2",
+      "Req1",
+    ]);
+  });
+
+  test("is empty for people who can't review", async () => {
+    const t = convexTest(schema, modules);
+    const setup = await setupData(t);
+    await setMode(t, setup.groupId, "leaders");
+    await createPendingRequest(t, setup.groupId, setup.requesterId);
+
+    const preview = await t.query(
+      api.functions.groupMembers.previewGroupJoinRequests,
+      { token: setup.memberToken, groupId: setup.groupId },
+    );
+    expect(preview).toEqual({ total: 0, requests: [] });
+  });
+});
+
 describe("Group leader approval — setting the mode", () => {
   test("leader CANNOT change the approval mode", async () => {
     const t = convexTest(schema, modules);
