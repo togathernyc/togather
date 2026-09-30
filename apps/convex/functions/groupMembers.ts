@@ -1296,6 +1296,74 @@ export const listGroupJoinRequests = query({
 });
 
 /**
+ * Bounded preview of pending join requests for the group chat's requests card:
+ * the total plus the newest few requesters' names and photos. Kept separate
+ * from `listGroupJoinRequests`, which fans out over every requester's
+ * memberships and history and is meant for the full Requests screen only.
+ *
+ * Same authorization as `countGroupJoinRequests`; returns an empty preview for
+ * callers who cannot review.
+ */
+const JOIN_REQUEST_PREVIEW_LIMIT = 3;
+
+export const previewGroupJoinRequests = query({
+  args: {
+    token: v.string(),
+    groupId: v.id("groups"),
+  },
+  handler: async (ctx, args) => {
+    const empty = {
+      total: 0,
+      requests: [] as Array<{
+        membershipId: Id<"groupMembers">;
+        requestedAt: number;
+        firstName: string;
+        lastName: string;
+        profilePhoto: string | null;
+      }>,
+    };
+    const userId = await requireAuth(ctx, args.token);
+
+    const group = await ctx.db.get(args.groupId);
+    if (!group || !(await canReviewGroupRequests(ctx, group, userId))) {
+      return empty;
+    }
+
+    const pending = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group_requestStatus", (q) =>
+        q.eq("groupId", args.groupId).eq("requestStatus", "pending"),
+      )
+      .collect();
+    if (pending.length === 0) {
+      return empty;
+    }
+
+    const newest = pending
+      .sort(
+        (a, b) =>
+          (b.requestedAt ?? b.joinedAt) - (a.requestedAt ?? a.joinedAt),
+      )
+      .slice(0, JOIN_REQUEST_PREVIEW_LIMIT);
+
+    const requests = await Promise.all(
+      newest.map(async (request) => {
+        const user = await ctx.db.get(request.userId);
+        return {
+          membershipId: request._id,
+          requestedAt: request.requestedAt ?? request.joinedAt,
+          firstName: user?.firstName || "",
+          lastName: user?.lastName || "",
+          profilePhoto: user ? getMediaUrl(user.profilePhoto) ?? null : null,
+        };
+      }),
+    );
+
+    return { total: pending.length, requests };
+  },
+});
+
+/**
  * Lightweight count of pending join requests the caller may review for a group.
  *
  * Powers the "Requests" row on the group page (badge + whether to show it at

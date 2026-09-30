@@ -27,8 +27,7 @@ jest.mock("@services/api/convex", () => ({
   api: {
     functions: {
       groupMembers: {
-        countGroupJoinRequests: "countGroupJoinRequests",
-        listGroupJoinRequests: "listGroupJoinRequests",
+        previewGroupJoinRequests: "previewGroupJoinRequests",
         reviewGroupJoinRequest: "reviewGroupJoinRequest",
       },
     },
@@ -43,13 +42,13 @@ import { JoinRequestsBar } from "../JoinRequestsBar";
 const request = (id: string, firstName: string) => ({
   membershipId: id,
   requestedAt: Date.now() - 60 * 60 * 1000,
-  user: { firstName, lastName: "Doe", profilePhoto: null },
+  firstName,
+  lastName: "Doe",
+  profilePhoto: null,
 });
 
-function mockQueries(count: number | undefined, list: unknown[] | undefined) {
-  (useAuthenticatedQuery as jest.Mock).mockImplementation((fn: string) =>
-    fn === "countGroupJoinRequests" ? count : list,
-  );
+function mockPreview(total: number, requests: unknown[]) {
+  (useAuthenticatedQuery as jest.Mock).mockReturnValue({ total, requests });
 }
 
 describe("JoinRequestsBar", () => {
@@ -59,13 +58,13 @@ describe("JoinRequestsBar", () => {
   });
 
   it("renders nothing when the viewer has no requests to review", () => {
-    mockQueries(0, undefined);
+    mockPreview(0, []);
     const { toJSON } = render(<JoinRequestsBar groupId={"g1" as any} />);
     expect(toJSON()).toBeNull();
   });
 
   it("approves a single request inline", () => {
-    mockQueries(1, [request("m1", "Maya")]);
+    mockPreview(1, [request("m1", "Maya")]);
     render(<JoinRequestsBar groupId={"g1" as any} />);
 
     expect(screen.getByText("Maya Doe wants to join")).toBeTruthy();
@@ -78,15 +77,15 @@ describe("JoinRequestsBar", () => {
   });
 
   it("summarizes several requests and opens the requests screen", () => {
-    mockQueries(3, [
+    mockPreview(5, [
       request("m1", "Maya"),
       request("m2", "David"),
       request("m3", "Jasmine"),
     ]);
     render(<JoinRequestsBar groupId={"g1" as any} />);
 
-    expect(screen.getByText("3 people want to join")).toBeTruthy();
-    expect(screen.getByText("Maya, David and 1 more")).toBeTruthy();
+    expect(screen.getByText("5 people want to join")).toBeTruthy();
+    expect(screen.getByText("Maya, David and 3 more")).toBeTruthy();
     fireEvent.press(screen.getByText("Review"));
     expect(mockPush).toHaveBeenCalledWith("/groups/g1/requests");
   });
