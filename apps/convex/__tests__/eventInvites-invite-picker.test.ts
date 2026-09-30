@@ -1,0 +1,543 @@
+/**
+ * Tests for the event-invite recipient picker backend
+ * (`eventInvites.listGroupMembersForInvite`) and the recipient cap on
+ * `eventInvites.initiate`.
+ *
+ * Background: the picker query used to `.collect()` every group member and then
+ * fire a user-row read + a push-token query for each one. In large groups that
+ * blew past Convex's per-execution read limit (4096) — the production error
+ * "Too many reads in a single function execution" seen in
+ * `listGroupMembersForInvite`. The query now:
+ *
+ *  - returns at most MEMBER_PICKER_LIMIT (50) members per call, so it never
+ *    fans reads out across the whole group;
+ *  - searches server-side against the users full-text index, so a member beyond
+ *    the first page is still findable by name;
+ *  - always surfaces the caller (test-invite-to-self) in the default view.
+ *
+ * And `initiate`/`reinvite` reject more than 20 recipients per call.
+ *
+ * Run with: cd apps/convex && pnpm test __tests__/eventInvites-invite-picker.test.ts
+ */
+
+import { convexTest } from "convex-test";
+import { expect, test, describe, vi, afterEach } from "vitest";
+import schema from "../schema";
+import { api } from "../_generated/api";
+import { modules } from "../test.setup";
+import type { Id } from "../_generated/dataModel";
+import { generateTokens } from "../lib/auth";
+
+// JWT secret must be at least 32 characters
+process.env.JWT_SECRET = "test-jwt-secret-for-unit-tests-minimum-32-chars";
+
+vi.useFakeTimers();
+afterEach(() => {
+  vi.clearAllTimers();
+});
+
+// The picker caps its result at this many members (mirrors MEMBER_PICKER_LIMIT
+// in functions/eventInvites.ts).
+const PICKER_LIMIT = 50;
+// Enough ordinary members to exceed the picker limit and prove bounding.
+const MEMBER_COUNT = 60;
+
+interface PickerTestData {
+  groupId: Id<"groups">;
+  meetingId: Id<"meetings">;
+  leaderId: Id<"users">;
+  leaderToken: string;
+  // A member who joins last, so they fall beyond the default (un-searched) page.
+  farawayId: Id<"users">;
+  memberIds: Id<"users">[];
+}
+
+async function seedLargeGroupWithMeeting(
+  t: ReturnType<typeof convexTest>,
+): Promise<PickerTestData> {
+  const ids = await t.run(async (ctx) => {
+    const ts = Date.now();
+    const future = ts + 86_400_000;
+
+    const communityId = await ctx.db.insert("communities", {
+      name: "Big Community",
+      slug: "big-community-invite",
+      isPublic: true,
+      timezone: "America/New_York",
+      createdAt: ts,
+      updatedAt: ts,
+    });
+
+    const groupTypeId = await ctx.db.insert("groupTypes", {
+      communityId,
+      name: "Group",
+      slug: "group",
+      isActive: true,
+      displayOrder: 1,
+      createdAt: ts,
+    });
+
+    const groupId = await ctx.db.insert("groups", {
+      communityId,
+      groupTypeId,
+      name: "Big Group",
+      isArchived: false,
+      createdAt: ts,
+      updatedAt: ts,
+    });
+
+    // Caller is a leader so they pass canEditMeeting.
+    const leaderId = await ctx.db.insert("users", {
+      firstName: "Caller",
+      lastName: "Leader",
+      email: "caller@test.com",
+      phone: "+15551110000",
+      searchText: "caller leader caller@test.com +15551110000",
+      createdAt: ts,
+      updatedAt: ts,
+    });
+    await ctx.db.insert("groupMembers", {
+      groupId,
+      userId: leaderId,
+      role: "leader",
+      joinedAt: ts,
+      notificationsEnabled: true,
+    });
+
+    const memberIds: Id<"users">[] = [];
+    for (let i = 0; i < MEMBER_COUNT; i++) {
+      const userId = await ctx.db.insert("users", {
+        firstName: `Member${i}`,
+        lastName: "Test",
+        email: `member${i}@test.com`,
+        phone: `+1555200${String(i).padStart(4, "0")}`,
+        searchText: `member${i} test member${i}@test.com`,
+        createdAt: ts,
+        updatedAt: ts,
+      });
+      await ctx.db.insert("groupMembers", {
+        groupId,
+        userId,
+        role: "member",
+        joinedAt: ts + i + 1,
+        notificationsEnabled: true,
+      });
+      memberIds.push(userId);
+    }
+
+    // Joins last, so they land beyond the default first page.
+    const farawayId = await ctx.db.insert("users", {
+      firstName: "Zelda",
+      lastName: "Faraway",
+      email: "zelda@test.com",
+      phone: "+15559990000",
+      searchText: "zelda faraway zelda@test.com +15559990000",
+      createdAt: ts,
+      updatedAt: ts,
+    });
+    await ctx.db.insert("groupMembers", {
+      groupId,
+      userId: farawayId,
+      role: "member",
+      joinedAt: ts + MEMBER_COUNT + 1000,
+      notificationsEnabled: true,
+    });
+
+    const meetingId = await ctx.db.insert("meetings", {
+      groupId,
+      title: "Big Event",
+      scheduledAt: future,
+      status: "scheduled",
+      meetingType: 1,
+      createdAt: ts,
+      rsvpEnabled: true,
+      rsvpOptions: [{ id: 1, label: "Going", enabled: true }],
+      visibility: "group",
+      shortId: "bigevt01",
+    });
+
+    return { groupId, meetingId, leaderId, farawayId, memberIds };
+  });
+
+  const { accessToken: leaderToken } = await generateTokens(ids.leaderId);
+
+  return { ...ids, leaderToken };
+}
+
+describe("listGroupMembersForInvite (bounded picker query)", () => {
+  test("caps the default result well below the group size", async () => {
+    const t = convexTest(schema, modules);
+    const data = await seedLargeGroupWithMeeting(t);
+
+    const rows = await t.query(
+      api.functions.eventInvites.listGroupMembersForInvite,
+      { token: data.leaderToken, meetingId: data.meetingId },
+    );
+
+    // Group has MEMBER_COUNT + leader + faraway members, but the query must not
+    // return (or read) the whole group — that was the "too many reads" bug.
+    expect(rows.length).toBeLessThanOrEqual(PICKER_LIMIT);
+    expect(rows.length).toBeGreaterThan(0);
+  });
+
+  test("always includes the caller for a test-invite-to-self", async () => {
+    const t = convexTest(schema, modules);
+    const data = await seedLargeGroupWithMeeting(t);
+
+    const rows = await t.query(
+      api.functions.eventInvites.listGroupMembersForInvite,
+      { token: data.leaderToken, meetingId: data.meetingId },
+    );
+
+    const self = rows.find((r) => r.userId === data.leaderId);
+    expect(self).toBeDefined();
+    expect(self?.isSelf).toBe(true);
+  });
+
+  test("excludes members who have left the group from the default view", async () => {
+    const t = convexTest(schema, modules);
+    const data = await seedLargeGroupWithMeeting(t);
+
+    // Mark one member as having left the group.
+    const leftMember = data.memberIds[0];
+    await t.run(async (ctx) => {
+      const membership = await ctx.db
+        .query("groupMembers")
+        .withIndex("by_group_user", (q) =>
+          q.eq("groupId", data.groupId).eq("userId", leftMember),
+        )
+        .first();
+      await ctx.db.patch(membership!._id, { leftAt: Date.now() });
+    });
+
+    const rows = await t.query(
+      api.functions.eventInvites.listGroupMembersForInvite,
+      { token: data.leaderToken, meetingId: data.meetingId },
+    );
+
+    expect(rows.map((r) => r.userId)).not.toContain(leftMember);
+  });
+
+  test("finds active members that sort after a wall of departed rows", async () => {
+    const t = convexTest(schema, modules);
+
+    // A group whose by_group index is front-loaded with many left members, with
+    // the only reachable active members inserted last. A fixed small raw page
+    // would miss them; the scan must continue (up to the cap) to surface them.
+    const seeded = await t.run(async (ctx) => {
+      const ts = Date.now();
+      const communityId = await ctx.db.insert("communities", {
+        name: "Churn Community",
+        slug: "churn-community",
+        isPublic: true,
+        timezone: "America/New_York",
+        createdAt: ts,
+        updatedAt: ts,
+      });
+      const groupTypeId = await ctx.db.insert("groupTypes", {
+        communityId,
+        name: "Group",
+        slug: "group",
+        isActive: true,
+        displayOrder: 1,
+        createdAt: ts,
+      });
+      const groupId = await ctx.db.insert("groups", {
+        communityId,
+        groupTypeId,
+        name: "Churn Group",
+        isArchived: false,
+        createdAt: ts,
+        updatedAt: ts,
+      });
+      const leaderId = await ctx.db.insert("users", {
+        firstName: "Churn",
+        lastName: "Leader",
+        phone: "+15551110001",
+        searchText: "churn leader",
+        createdAt: ts,
+        updatedAt: ts,
+      });
+      await ctx.db.insert("groupMembers", {
+        groupId,
+        userId: leaderId,
+        role: "leader",
+        joinedAt: ts,
+        notificationsEnabled: true,
+      });
+      // 120 members who have LEFT — they precede the active members in the index.
+      for (let i = 0; i < 120; i++) {
+        const uid = await ctx.db.insert("users", {
+          firstName: `Left${i}`,
+          lastName: "Gone",
+          phone: `+1555300${String(i).padStart(4, "0")}`,
+          createdAt: ts,
+          updatedAt: ts,
+        });
+        await ctx.db.insert("groupMembers", {
+          groupId,
+          userId: uid,
+          role: "member",
+          joinedAt: ts + i + 1,
+          notificationsEnabled: true,
+          leftAt: ts + 1000 + i,
+        });
+      }
+      // A single active member inserted last.
+      const activeId = await ctx.db.insert("users", {
+        firstName: "Still",
+        lastName: "Here",
+        phone: "+15559990001",
+        searchText: "still here",
+        createdAt: ts,
+        updatedAt: ts,
+      });
+      await ctx.db.insert("groupMembers", {
+        groupId,
+        userId: activeId,
+        role: "member",
+        joinedAt: ts + 5000,
+        notificationsEnabled: true,
+      });
+      const meetingId = await ctx.db.insert("meetings", {
+        groupId,
+        title: "Churn Event",
+        scheduledAt: ts + 86_400_000,
+        status: "scheduled",
+        meetingType: 1,
+        createdAt: ts,
+        rsvpEnabled: true,
+        rsvpOptions: [{ id: 1, label: "Going", enabled: true }],
+        visibility: "group",
+        shortId: "churn001",
+      });
+      return { leaderId, activeId, meetingId };
+    });
+
+    const { accessToken: leaderToken } = await generateTokens(seeded.leaderId);
+    const rows = await t.query(
+      api.functions.eventInvites.listGroupMembersForInvite,
+      { token: leaderToken, meetingId: seeded.meetingId },
+    );
+
+    const ids = rows.map((r) => r.userId);
+    expect(ids).toContain(seeded.activeId);
+    // No left member should appear.
+    expect(rows.every((r) => r.userId === seeded.leaderId || r.userId === seeded.activeId)).toBe(true);
+  });
+
+  test("surfaces invite-eligible members even when the leading rows are all already invited", async () => {
+    const t = convexTest(schema, modules);
+    const data = await seedLargeGroupWithMeeting(t);
+
+    // Invite the first 55 members directly, so the leading active rows in the
+    // group index are all already-invited. Only the tail is still eligible.
+    const alreadyInvited = data.memberIds.slice(0, 55);
+    const stillEligible = data.memberIds.slice(55);
+    expect(stillEligible.length).toBeGreaterThan(0);
+
+    await t.run(async (ctx) => {
+      const ts = Date.now();
+      const group = await ctx.db.get(data.groupId);
+      for (const uid of alreadyInvited) {
+        await ctx.db.insert("eventInvites", {
+          meetingId: data.meetingId,
+          groupId: data.groupId,
+          communityId: group!.communityId,
+          sentById: data.leaderId,
+          recipientUserId: uid,
+          channels: ["push", "sms"],
+          status: "sent",
+          inviteRound: 1,
+          lastSentAt: ts,
+          createdAt: ts,
+        });
+      }
+    });
+
+    const rows = await t.query(
+      api.functions.eventInvites.listGroupMembersForInvite,
+      { token: data.leaderToken, meetingId: data.meetingId },
+    );
+
+    // The default picker must still show invitable members, not just a page of
+    // disabled already-invited rows.
+    const eligible = rows.filter(
+      (r) => r.hasPhone && !r.alreadyInvited && !r.alreadyRsvped && !r.isSelf,
+    );
+    expect(eligible.length).toBeGreaterThan(0);
+    // Every still-eligible member should be reachable through the default view.
+    const returnedEligibleIds = new Set(eligible.map((r) => r.userId));
+    for (const id of stillEligible) {
+      expect(returnedEligibleIds.has(id)).toBe(true);
+    }
+  });
+
+  test("a member beyond the first page is absent by default but found via server-side search", async () => {
+    const t = convexTest(schema, modules);
+    const data = await seedLargeGroupWithMeeting(t);
+
+    const defaultRows = await t.query(
+      api.functions.eventInvites.listGroupMembersForInvite,
+      { token: data.leaderToken, meetingId: data.meetingId },
+    );
+    expect(defaultRows.map((r) => r.userId)).not.toContain(data.farawayId);
+
+    const searched = await t.query(
+      api.functions.eventInvites.listGroupMembersForInvite,
+      { token: data.leaderToken, meetingId: data.meetingId, search: "zelda" },
+    );
+    expect(searched.map((r) => r.userId)).toContain(data.farawayId);
+  });
+
+  test("search only returns members of the meeting's group", async () => {
+    const t = convexTest(schema, modules);
+    const data = await seedLargeGroupWithMeeting(t);
+
+    // An outsider whose name matches the search term but who is not in the group.
+    await t.run(async (ctx) => {
+      await ctx.db.insert("users", {
+        firstName: "Zelda",
+        lastName: "Outsider",
+        email: "zelda-out@test.com",
+        searchText: "zelda outsider zelda-out@test.com",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+    });
+
+    const searched = await t.query(
+      api.functions.eventInvites.listGroupMembersForInvite,
+      { token: data.leaderToken, meetingId: data.meetingId, search: "zelda" },
+    );
+
+    // Only the in-group Zelda comes back.
+    expect(searched.map((r) => r.userId)).toEqual([data.farawayId]);
+  });
+});
+
+describe("initiate recipient cap", () => {
+  test("rejects more than 20 recipients", async () => {
+    const t = convexTest(schema, modules);
+    const data = await seedLargeGroupWithMeeting(t);
+
+    const twentyOne = data.memberIds.slice(0, 21);
+    expect(twentyOne.length).toBe(21);
+
+    await expect(
+      t.mutation(api.functions.eventInvites.initiate, {
+        token: data.leaderToken,
+        meetingId: data.meetingId,
+        recipientUserIds: twentyOne,
+      }),
+    ).rejects.toThrow(/up to 20 people/i);
+  });
+
+  test("accepts exactly 20 recipients", async () => {
+    const t = convexTest(schema, modules);
+    const data = await seedLargeGroupWithMeeting(t);
+
+    const twenty = data.memberIds.slice(0, 20);
+    const result = await t.mutation(api.functions.eventInvites.initiate, {
+      token: data.leaderToken,
+      meetingId: data.meetingId,
+      recipientUserIds: twenty,
+    });
+
+    expect(result.invited).toBe(20);
+  });
+
+  // Locks in the indexed per-recipient validation (no whole-group / whole-
+  // meeting collection): non-members, RSVP'd members, and already-invited
+  // members are each classified correctly.
+  test("validates each requested recipient with indexed lookups", async () => {
+    const t = convexTest(schema, modules);
+    const data = await seedLargeGroupWithMeeting(t);
+
+    const rsvpdMember = data.memberIds[0];
+    const invitedMember = data.memberIds[1];
+    const freshMember = data.memberIds[2];
+
+    const outsiderId = await t.run(async (ctx) => {
+      const ts = Date.now();
+      const group = await ctx.db.get(data.groupId);
+      // A member already RSVP'd — should be skipped, not re-texted.
+      await ctx.db.insert("meetingRsvps", {
+        meetingId: data.meetingId,
+        userId: rsvpdMember,
+        rsvpOptionId: 1,
+        createdAt: ts,
+        updatedAt: ts,
+      });
+      // A member already invited — should be counted as alreadyInvited.
+      await ctx.db.insert("eventInvites", {
+        meetingId: data.meetingId,
+        groupId: data.groupId,
+        communityId: group!.communityId,
+        sentById: data.leaderId,
+        recipientUserId: invitedMember,
+        channels: ["push", "sms"],
+        status: "pending",
+        inviteRound: 1,
+        lastSentAt: ts,
+        createdAt: ts,
+      });
+      // A user who is not a member of the group at all.
+      return await ctx.db.insert("users", {
+        firstName: "Not",
+        lastName: "AMember",
+        createdAt: ts,
+        updatedAt: ts,
+      });
+    });
+
+    const result = await t.mutation(api.functions.eventInvites.initiate, {
+      token: data.leaderToken,
+      meetingId: data.meetingId,
+      recipientUserIds: [rsvpdMember, invitedMember, freshMember, outsiderId],
+    });
+
+    expect(result).toEqual({
+      invited: 1,
+      alreadyInvited: 1,
+      skippedNotMember: 1,
+      skippedRsvped: 1,
+    });
+  });
+});
+
+describe("reinvite recipient handling", () => {
+  test("dedupes duplicate ids so a recipient is only re-sent once", async () => {
+    const t = convexTest(schema, modules);
+    const data = await seedLargeGroupWithMeeting(t);
+
+    const target = data.memberIds[0];
+    await t.run(async (ctx) => {
+      const ts = Date.now();
+      const group = await ctx.db.get(data.groupId);
+      // Existing invite, last sent well outside the re-invite cooldown window.
+      await ctx.db.insert("eventInvites", {
+        meetingId: data.meetingId,
+        groupId: data.groupId,
+        communityId: group!.communityId,
+        sentById: data.leaderId,
+        recipientUserId: target,
+        channels: ["push", "sms"],
+        status: "sent",
+        inviteRound: 1,
+        lastSentAt: ts - 25 * 60 * 60 * 1000,
+        createdAt: ts - 25 * 60 * 60 * 1000,
+      });
+    });
+
+    // Same id submitted many times (a direct, non-UI caller) must collapse to
+    // a single re-invite — otherwise the send action texts them once per entry.
+    const result = await t.mutation(api.functions.eventInvites.reinvite, {
+      token: data.leaderToken,
+      meetingId: data.meetingId,
+      recipientUserIds: [target, target, target, target, target],
+    });
+
+    expect(result.reinvited).toBe(1);
+  });
+});
