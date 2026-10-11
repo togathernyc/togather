@@ -8,9 +8,9 @@
  * (AvailabilityRequestCardFromMessage) owns the mutations and the busy state;
  * this component just draws pills and surfaces taps.
  *
- * Mirrors PollCard's visual density: rounded card, themed surface, compact
- * rows. Each event shows a title + date/time line on the left and two pill
- * buttons ("Available" / "Can't") on the right. The selected pill is filled.
+ * Mirrors PollCard's visual density: rounded card, themed surface. Each event
+ * stacks title, date/time, then full-width pill buttons ("Available" / "Can't")
+ * so long titles and multi-slot times are never truncated in chat.
  */
 import React, { useCallback, useMemo, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
@@ -118,71 +118,62 @@ export function AvailabilityRequestCard({
           const isUnavailable = event.myStatus === 'unavailable';
 
           return (
-            <View key={event._id} style={styles.eventRow}>
-              <View style={styles.eventTextWrap}>
-                <Text style={[styles.eventTitle, { color: colors.text }]} numberOfLines={2}>
-                  {event.title}
-                </Text>
-                {dateLine ? (
-                  <Text
-                    style={[styles.eventDate, { color: colors.textTertiary }]}
-                    numberOfLines={2}
-                  >
-                    {dateLine}
-                  </Text>
-                ) : null}
-              </View>
+            <View key={event._id} style={styles.eventBlock}>
+              <Text style={[styles.eventTitle, { color: colors.text }]}>{event.title}</Text>
+              {dateLine ? (
+                <Text style={[styles.eventDate, { color: colors.textTertiary }]}>{dateLine}</Text>
+              ) : null}
 
-              <View style={styles.pills}>
-                {isBusy ? (
+              {isBusy ? (
+                <View style={styles.busyRow}>
                   <ActivityIndicator size="small" color={colors.textSecondary} />
-                ) : (
-                  <>
-                    <Pressable
-                      onPress={() => onSetStatus(event._id, 'available')}
-                      hitSlop={4}
-                      style={({ pressed }) => [
-                        styles.pill,
-                        {
-                          backgroundColor: isAvailable ? colors.success : 'transparent',
-                          borderColor: isAvailable ? colors.success : colors.border,
-                        },
-                        pressed && styles.pillPressed,
+                </View>
+              ) : (
+                <View style={styles.pills}>
+                  <Pressable
+                    onPress={() => onSetStatus(event._id, 'available')}
+                    hitSlop={4}
+                    style={({ pressed }) => [
+                      styles.pill,
+                      {
+                        backgroundColor: isAvailable ? colors.success : 'transparent',
+                        borderColor: isAvailable ? colors.success : colors.border,
+                      },
+                      pressed && styles.pillPressed,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.pillLabel,
+                        { color: isAvailable ? '#fff' : colors.textSecondary },
                       ]}
                     >
-                      <Text
-                        style={[
-                          styles.pillLabel,
-                          { color: isAvailable ? '#fff' : colors.textSecondary },
-                        ]}
-                      >
-                        Available
-                      </Text>
-                    </Pressable>
-                    <Pressable
-                      onPress={() => onSetStatus(event._id, 'unavailable')}
-                      hitSlop={4}
-                      style={({ pressed }) => [
-                        styles.pill,
-                        {
-                          backgroundColor: isUnavailable ? colors.destructive : 'transparent',
-                          borderColor: isUnavailable ? colors.destructive : colors.border,
-                        },
-                        pressed && styles.pillPressed,
+                      Available
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => onSetStatus(event._id, 'unavailable')}
+                    hitSlop={4}
+                    style={({ pressed }) => [
+                      styles.pill,
+                      {
+                        backgroundColor: isUnavailable ? colors.destructive : 'transparent',
+                        borderColor: isUnavailable ? colors.destructive : colors.border,
+                      },
+                      pressed && styles.pillPressed,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.pillLabel,
+                        { color: isUnavailable ? '#fff' : colors.textSecondary },
                       ]}
                     >
-                      <Text
-                        style={[
-                          styles.pillLabel,
-                          { color: isUnavailable ? '#fff' : colors.textSecondary },
-                        ]}
-                      >
-                        Can't
-                      </Text>
-                    </Pressable>
-                  </>
-                )}
-              </View>
+                      Can't
+                    </Text>
+                  </Pressable>
+                </View>
+              )}
             </View>
           );
         })}
@@ -202,9 +193,7 @@ export function AvailabilityRequestCard({
                 {copied ? 'Copied' : 'Copy link'}
               </Text>
             </Pressable>
-          ) : (
-            <View />
-          )}
+          ) : null}
           {onOpenPage ? (
             <Pressable onPress={onOpenPage} hitSlop={6} style={styles.footer}>
               <Text style={[styles.footerText, { color: colors.link }]}>
@@ -226,6 +215,7 @@ const styles = StyleSheet.create({
     padding: 12,
     minWidth: 240,
     maxWidth: 360,
+    alignSelf: 'stretch',
   },
   headerBadgeRow: {
     flexDirection: 'row',
@@ -250,36 +240,39 @@ const styles = StyleSheet.create({
   },
   events: {
     marginTop: 12,
-    gap: 10,
+    gap: 12,
   },
-  eventRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  eventTextWrap: {
-    flex: 1,
+  eventBlock: {
+    gap: 2,
   },
   eventTitle: {
     fontSize: 14,
     fontWeight: '600',
+    lineHeight: 19,
   },
   eventDate: {
     fontSize: 12,
-    marginTop: 2,
+    lineHeight: 17,
+  },
+  busyRow: {
+    marginTop: 10,
+    height: 34,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   pills: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    minWidth: 56,
-    justifyContent: 'flex-end',
+    gap: 8,
+    marginTop: 10,
   },
   pill: {
+    flex: 1,
     borderWidth: 1,
     borderRadius: 999,
     paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingVertical: 6,
+    alignItems: 'center',
   },
   pillPressed: {
     opacity: 0.7,
@@ -289,9 +282,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   footerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
     gap: 8,
     marginTop: 12,
     paddingTop: 10,
@@ -301,6 +291,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
+    alignSelf: 'flex-start',
   },
   footerText: {
     fontSize: 13,
