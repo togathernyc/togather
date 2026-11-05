@@ -62,7 +62,7 @@ togather/
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-org/togather.git
+git clone https://github.com/togathernyc/togather.git
 cd togather
 
 # Install dependencies
