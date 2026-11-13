@@ -39,6 +39,7 @@ import { StatusBarAwareContainer } from "@components/ui/StatusBarAwareContainer"
 import { ConnectionProvider } from "@providers/ConnectionProvider";
 import { NativeUpdateModal } from "@components/ui/NativeUpdateModal";
 import { OTAUpdateModal } from "@components/ui/OTAUpdateModal";
+import { KingdomCityMigrationNotice } from "@components/ui/KingdomCityMigrationNotice";
 import { PostUpdateRecoveryBanner } from "@components/ui/PostUpdateRecoveryBanner";
 import { OTAUpdateProvider } from "@providers/OTAUpdateProvider";
 import { BirthdayCollectionModal } from "@components/legal/BirthdayCollectionModal";
@@ -250,6 +251,7 @@ function AppLayout() {
                     <NativeUpdateModal />
                     <OTAUpdateModal />
                     <BirthdayCollectionModal />
+                    <KingdomCityMigrationNotice />
                     <PostUpdateRecoveryBanner />
                     <TestFlightBanner />
                     <ThemedStack />

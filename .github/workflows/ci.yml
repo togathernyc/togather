@@ -199,7 +199,10 @@ jobs:
 
   test-e2e:
     name: E2E Tests (Playwright)
-    runs-on: ubuntu-latest
+    # NOTE: Pinned because ubuntu-latest moved to 26.04, which the repo's
+    # Playwright version can't install browsers on ("Playwright does not
+    # support chromium on ubuntu26.04-x64"). Unpin after upgrading Playwright.
+    runs-on: ubuntu-24.04
     needs: detect-changes
     if: needs.detect-changes.outputs.e2e == 'true'
     steps:
