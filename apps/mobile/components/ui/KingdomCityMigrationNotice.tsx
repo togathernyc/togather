@@ -8,12 +8,14 @@
  * - "Join new groups" opens the site but leaves the sheet up, so people can
  *   come back to it.
  * - "Got it" or the X dismisses it for good, per person per device
- *   (AsyncStorage). A second device shows it once more there.
+ *   (AsyncStorage). A second device shows it once more there. The key
+ *   survives the web logout wipe (see utils/webStorage.ts).
  * - It waits while BirthdayCollectionModal is up, so two modals never stack.
  *
  * Mounted once in the root layout, next to the other app-wide modals.
  *
- * TODO: Delete this component (and its mount in app/_layout.tsx) once the
+ * TODO: Delete this component (its mount in app/_layout.tsx and its prefix in
+ * utils/webStorage.ts) once the
  * KingdomCity migration is finished.
  */
 import React, { useEffect, useState } from 'react';
@@ -25,6 +27,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuth } from '@providers/AuthProvider';
 import { useTheme } from '@hooks/useTheme';
 import { useCommunityTheme } from '@hooks/useCommunityTheme';
+import { PRESERVED_ACROSS_LOGOUT_PREFIXES } from '@utils/webStorage';
 
 export const KINGDOMCITY_CONNECT_URL = 'https://kingdomcity.com/connect';
 
@@ -42,7 +45,8 @@ export function isKingdomCityCommunity(name: string | null | undefined): boolean
 }
 
 export function dismissedStorageKey(userId: string, communityId: string): string {
-  return `kingdomcity-migration-notice-dismissed:${userId}:${communityId}`;
+  // Listed in PRESERVED_ACROSS_LOGOUT_PREFIXES so web logout keeps it.
+  return `${PRESERVED_ACROSS_LOGOUT_PREFIXES[0]}${userId}:${communityId}`;
 }
 
 export function KingdomCityMigrationNotice() {

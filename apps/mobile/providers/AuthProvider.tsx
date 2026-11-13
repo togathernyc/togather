@@ -14,6 +14,7 @@ import { api } from "@services/api";
 import { convexVanilla, api as convexApi } from "@services/api/convex";
 import { queryKeys } from "@utils/query-keys";
 import NetInfo from "@react-native-community/netinfo";
+import { clearStorageExcept, PRESERVED_ACROSS_LOGOUT_PREFIXES } from "@utils/webStorage";
 import { SentryUtils } from "@providers/SentryProvider";
 import { useInboxCache } from "../stores/inboxCache";
 import { useMessageCache } from "../stores/messageCache";
@@ -692,7 +693,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // On web, clear localStorage
     if (Platform.OS === "web" && typeof window !== "undefined" && window.localStorage) {
       console.log("🔐 AuthProvider: Clearing localStorage for web");
-      window.localStorage.clear();
+      clearStorageExcept(window.localStorage, PRESERVED_ACROSS_LOGOUT_PREFIXES);
     }
 
     // Clear React state
